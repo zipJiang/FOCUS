@@ -1,0 +1,30 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+.venv/
+.uv-cache/
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+
+# Local experiments, not committed.
+configurations/
+
+# Local data
+/data/
+runs/
+logs/
+
+# OS
+.DS_Store

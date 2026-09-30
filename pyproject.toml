@@ -1,0 +1,156 @@
+[project]
+name = "focus"
+version = "0.1.0"
+description = "Focused Optimization on Critical Underperforming Segments for multi-turn language-model agents"
+requires-python = ">=3.12"
+dependencies = ["regex>=2026.4.4"]
+
+[project.optional-dependencies]
+config = ["omegaconf"]
+# `openai-chat` targets the hosted OpenAI Chat Completions API; tiktoken is the
+# recommended codec for exact completion-token/logprob recovery.
+openai-chat = ["openai", "tiktoken"]
+vllm = ["openai"]
+sglang = ["httpx"]
+# `reward` scores against a vLLM pooling/reward model over its raw `POST /pooling` endpoint
+# (not an OpenAI-typed route), so it speaks httpx directly.
+reward = ["httpx"]
+tinker = ["tinker>=0.22.3"]
+# `chat` provides an `apply_chat_template` tokenizer for the harness `ChatCodec`.
+chat = ["transformers"]
+# LocBench can read JSONL with the core install; its pinned upstream release is Parquet.
+locbench = ["pyarrow"]
+
+[dependency-groups]
+dev = [
+    "jinja2>=3.1.6",
+    "mypy>=2.3.1",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# `perf` is the one mark here: a test that asserts an *algorithmic shape* by timing it
+# (tests/test_perf.py). It runs with the rest -- a fraction of a second, under a bound
+# far above the real cost -- and is registered so it can be deselected (`-m "not perf"`)
+# on a machine where no wall-clock assertion is welcome at all.
+markers = ["perf: guards a complexity class by timing it; loose bound, deselectable"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["focus"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+# Beyond pycodestyle/pyflakes/isort: bugbear (B) and the pytest set (PT) are the two
+# that caught real defects here; UP keeps the code in the 3.12 dialect the project
+# already requires. PIE/PERF/ISC/TID/PGH found nothing at all and are kept purely as
+# guards on new code -- they cost nothing to leave on and say what the house style is.
+select = [
+    "E",     # pycodestyle
+    "F",     # pyflakes
+    "I",     # isort
+    "B",     # flake8-bugbear -- mutable defaults, unstrict zip, silent excepts
+    "UP",    # pyupgrade -- the project is >=3.12, so PEP 695 generics are in dialect
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff's own lints
+    "PIE",   # flake8-pie
+    "PERF",  # perflint
+    "C4",    # flake8-comprehensions
+    "PT",    # flake8-pytest-style
+    "RET",   # flake8-return
+    "ISC001", # implicit concatenation on one line
+    "ISC002", # implicit concatenation with a backslash
+    "TID",   # flake8-tidy-imports
+    "PGH",   # pygrep-hooks -- no bare `# type: ignore` / `# noqa`
+]
+ignore = [
+    # The docstrings mean the math symbols they use: `N x K` is a product, `r - b` is a
+    # subtraction, and the ASCII lookalikes RUF002 proposes would flatten notation that
+    # is load-bearing for the reader.
+    "RUF002",
+    # In direct tension with B027: an optional ABC hook whose body is only a docstring
+    # reads as an unimplemented stub, so those hooks spell their no-op `return None`.
+    "RET501",
+    # Every hit is the same shape: `Tool.parameters`, a class-level JSON schema that a
+    # subclass overrides at class level and that `ReadTool`/`SubmitTool` build per
+    # instance. `ClassVar` -- the rule's only fix -- would make those two illegal, so
+    # the rule cannot be satisfied where it fires. Six sites, so a config-level note
+    # beats six inline directives.
+    "RUF012",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The scheduler, allocation, and preparation packages re-export in dependency order (protocols, then
+# the implementations built on them), which reads better than the alphabetical order
+# RUF022 wants -- but only in `__init__`, where the ordering is documentation.
+"focus/**/__init__.py" = ["RUF022"]
+
+# Static type gate:
+#     uv run mypy
+# Full `strict` is reachable for the library (0 errors), and `files` below is what a
+# bare `uv run mypy` checks. `strict` already
+# implies warn_unused_ignores / warn_redundant_casts / disallow_untyped_defs /
+# no_implicit_optional / check_untyped_defs / warn_return_any / strict_equality, so
+# they are not repeated here.
+[tool.mypy]
+python_version = "3.12"
+files = ["focus", "tests"]
+strict = true
+# Tests contain namespace-package directories without top-level ``__init__.py``.
+explicit_package_bases = true
+mypy_path = "."
+
+# Tests run under the same `strict` as the library, minus two things that would only be
+# satisfiable by writing worse test code:
+#
+#  * annotations on every `def` -- a test function has no signature worth stating, and a
+#    throwaway fake's `__init__` is read by no one; the *bodies* are still checked,
+#    which is where the real mistakes live.
+#  * `type-abstract` / `no-untyped-call` -- `build(Interface, cfg)` is the registry's
+#    whole idiom, and mypy reads passing an ABC as a value as an error on principle;
+#    test fakes are duck-typed against Protocols rather than subclassed, so calling one
+#    is "untyped" by definition.
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disable_error_code = ["type-abstract", "no-untyped-call"]
+
+# BrowserComp's retrieval client is intentionally structural (deployments provide
+# different corpus clients), and Deontic tools accept the harness' runtime-built tool
+# set. Their bodies remain checked; only annotations at these dynamic seams are relaxed.
+[[tool.mypy.overrides]]
+module = [
+    "focus.environments.browsercomp_plus.*",
+    "focus.environments.deontic.*",
+]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disable_error_code = ["no-untyped-call"]
+
+# The optional backends are lazily imported and deliberately not installed in the dev
+# environment, so neither they nor their stubs are available to the checker.
+[[tool.mypy.overrides]]
+module = [
+    "openai.*",
+    "tiktoken.*",
+    "tinker.*",
+    "transformers.*",
+    "torch.*",
+    "numpy.*",
+    "safetensors.*",
+    "tokenizers.*",
+    "httpx.*",
+    "omegaconf.*",
+    "pyarrow.*",
+]
+ignore_missing_imports = true

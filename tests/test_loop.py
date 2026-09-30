@@ -1,0 +1,1569 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import math
+from collections.abc import Mapping, Sequence
+from copy import deepcopy
+from dataclasses import dataclass, replace
+from typing import Any
+
+import pytest
+
+from focus import (
+    AllocationSession,
+    Allocator,
+    ConcurrencyGating,
+    FifoAllocator,
+    RefinedTdEstimator,
+    SearchPass,
+    WidthGating,
+    prepare_samples,
+    run_search,
+)
+from focus.allocation import (
+    NodeWorth,
+    Observations,
+    RolloutLedger,
+    ScoredSession,
+    ValueRefinement,
+)
+from focus.codec import ChatCodec
+from focus.config import RolloutConfig
+from focus.generation import (
+    GenerateResult,
+    Policy,
+    PolicyFormat,
+    SamplingParams,
+)
+from focus.generation.parsing import TextActionParser
+from focus.harness import (
+    Compaction,
+    CompactionResult,
+    Compactor,
+    Env,
+    Runner,
+    StepResult,
+    Workspace,
+)
+from focus.integrations.slime import to_samples
+from focus.loop import Runtime, _budget, _value_head, rescore_anchor
+from focus.preparation.records import ActorSample, PreparedBatch
+from focus.reward import RewardModel, RewardResult
+from focus.reward.config import RewardConfig
+from focus.scheduler import (
+    AnchorProposal,
+    MixtureProposal,
+    SchedulerState,
+    SchedulerView,
+)
+from focus.scheduler.core.execution import provenance_of
+from focus.scheduler.core.tree import STAT_FAILURES, STAT_TURNS
+from tests.estimators import FixedWeight
+from tests.helpers import (
+    VERSION,
+    ConstantScorer,
+    DeadReward,
+    FakeChatTokenizer,
+    InexactBridge,
+    ShortBatchReward,
+    StalledGenerator,
+    StalledReward,
+    WhenTrigger,
+    prepared,
+    rollout,
+    turn,
+)
+from tests.trees import root_state, stamped_child
+
+
+class CyclingGenerator(Policy[Any]):
+    """Deterministic: cycles fixed completions, with per-token logprobs."""
+
+    def __init__(self, completions: Sequence[str]) -> None:
+        self._completions = list(completions)
+        self.calls = 0
+
+    async def agenerate_tokens(
+        self,
+        prefix_tokens: Sequence[int],
+        sampling_params: SamplingParams | None = None,
+    ) -> GenerateResult:
+        text = self._completions[self.calls % len(self._completions)]
+        self.calls += 1
+        return GenerateResult(
+            text=text,
+            tokens=tuple(ord(c) for c in text),
+            logprobs=[-0.5 - 0.1 * i for i in range(len(text))],
+        )
+
+
+@dataclass(frozen=True)
+class CountState:
+    n: int = 0
+
+
+class CountEnv(Env[CountState, str]):
+    """'stop' ends with an outcome reward keyed to the action; everything else steps."""
+
+    async def reset(self) -> CountState:
+        return CountState()
+
+    async def step(
+        self, state: CountState, action: str, *, workspace: Workspace | None = None
+    ) -> StepResult[CountState]:
+        nxt = CountState(state.n + 1)
+        done = action.startswith("stop") or nxt.n >= 6
+        return StepResult(
+            next_state=nxt,
+            messages=({"role": "user", "content": f"obs{nxt.n}"},),
+            reward_outcome=(2.0 if action == "stop-good" else 0.5) if done else 0.0,
+            reward_step=0.1,
+            done=done,
+        )
+
+
+class EveryTurnCompactor(Compactor[CountState]):
+    """Folds after every turn, so the rollout offers real branch points to work with."""
+
+    trigger = WhenTrigger(lambda prompt, state: state.n > 0)
+
+    async def compact(
+        self, compaction: Compaction[CountState]
+    ) -> CompactionResult[CountState]:
+        return CompactionResult(compaction.seed, replace(compaction.state, n=0))
+
+
+def _runner(
+    generator: Policy[Any] | None = None,
+    version: str = "policy",
+    **kwargs: Any,
+) -> Runner[CountState, str]:
+    """The folding toy runner every runtime here drives.
+
+    ``generator`` is a parameter rather than a fixture because what a *backend* does --
+    answer, fail, stall -- is the one thing a robustness test varies about the runner.
+    """
+    generator = generator or CyclingGenerator(["go", "stop-good", "go", "stop-bad"])
+    return Runner(
+        policy=Policy(
+            format=PolicyFormat(
+                "custom", ChatCodec(FakeChatTokenizer()), TextActionParser()
+            ),
+            complete=generator.agenerate_tokens,
+            exact=generator.provides_exact_tokens,
+            native=generator.provides_native_tool_calls,
+            version=version,
+        ),
+        env=CountEnv(),
+        system_prompt="sys",
+        compactor=EveryTurnCompactor(),
+        max_steps=4,
+        **kwargs,
+    )
+
+
+#: What a runtime *holds* -- plus the bound on the endpoint it holds -- rather than what
+#: it is configured with: the only kwargs below that are not `RolloutConfig` knobs.
+LIVE_FIELDS = frozenset(
+    {"runner", "scorer", "value_model", "value_serialize", "score_timeout"}
+)
+
+
+def _runtime(**kwargs) -> Runtime:
+    """A runtime around the fake runner, with this file's small search budgets.
+
+    Keyword arguments are routed by what they are: a live object goes on the
+    `Runtime`, everything else onto its `RolloutConfig`.
+    """
+    defaults: dict[str, Any] = {
+        "passes": (
+            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+            SearchPass(FifoAllocator(), budget=48, gating=ConcurrencyGating(4)),
+            SearchPass(FifoAllocator(), budget=8, gating=ConcurrencyGating(4)),
+        ),
+        "max_concurrency": 1,
+    }
+    defaults.update({k: v for k, v in kwargs.items() if k not in LIVE_FIELDS})
+    live = {k: v for k, v in kwargs.items() if k in LIVE_FIELDS}
+    live.setdefault("value_model", ConstantReward(0.0))
+    runner = live.pop("runner", None) or _runner()
+    return Runtime(runner=runner, config=RolloutConfig(**defaults), **live)
+
+
+def test_search_has_no_implicit_passes() -> None:
+    assert RolloutConfig().passes == ()
+    assert not hasattr(RefinedTdEstimator(), "build")
+    assert not hasattr(FifoAllocator(), "assign")
+
+
+@pytest.mark.asyncio
+async def test_one_call_runs_every_pass_and_returns_training_records() -> None:
+    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+
+    assert isinstance(result, PreparedBatch)
+    assert result.reward_config is not None
+    assert len(result) > 0
+    assert result.critic
+    assert result.actor
+    assert {r.estimator for r in result.actor} == {"refined_td"}
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_that_is_neither_text_nor_a_checkpoint_is_refused() -> None:
+    """The trainer's sample object arriving instead of its prompt fails here, once.
+
+    It used to reach the chat template, which raised inside every expansion; the
+    scheduler charged each as a dead rollout and the caller got an empty sample list
+    with nothing in it naming the cause.
+    """
+
+    @dataclass
+    class TrainerSample:
+        prompt: str
+
+    with pytest.raises(TypeError, match="prompt must be"):
+        await prepared(
+            TrainerSample("solve it"), _runtime(), estimator=RefinedTdEstimator()
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_reward_configuration_is_stamped_on_every_record() -> None:
+    runtime = _runtime(reward_config=RewardConfig(beta_step=0.25, config_id="rc-9"))
+
+    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+
+    every = result.actor
+    assert every
+    assert all(r.reward_config_id == "rc-9" for r in every)
+
+
+# -- A/B symmetry --------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_later_pass_edges_are_actor_data() -> None:
+    """A/B symmetry: later-pass edges are actor data too.
+
+    A later-pass edge is drawn under the same generative law as a first-pass edge, so
+    nothing about how it was scheduled disqualifies it from training the actor.
+    """
+    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+
+    assert result.actor
+    pass_ids = {r.provenance.pass_id for r in result.actor if r.provenance}
+    assert "pass-0" in pass_ids
+    assert any(p != "pass-0" for p in pass_ids)
+
+    later_ids = {
+        r.node_id
+        for r in result.actor
+        if r.provenance and r.provenance.pass_id != "pass-0"
+    }
+    assert later_ids
+    # later-pass edges that finished are eligible for the actor lane
+    assert later_ids & {r.node_id for r in result.actor}
+
+
+@pytest.mark.asyncio
+async def test_exported_spans_keep_their_mask_aligned_to_their_tokens() -> None:
+    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+
+    records = result.actor
+    spans = [span for r in records for span in r.spans]
+    assert spans
+    for span in spans:
+        assert len(span.trainable) == len(span.tokens)
+        # every column a pack carries is aligned to the pack, whichever version it is
+        assert all(len(column) == len(span.tokens) for column in span.logprobs.values())
+
+
+@pytest.mark.asyncio
+async def test_a_fold_and_a_leaf_on_one_chain_score_comparably() -> None:
+    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+
+    weights = [abs(r.weight) for r in result.actor if r.estimator == "refined_td"]
+    assert len(weights) > 2
+    assert all(math.isfinite(w) for w in weights)
+
+
+@pytest.mark.asyncio
+async def test_one_expansion_grows_a_line_of_branch_points() -> None:
+    state = await run_search("solve it", _runtime())
+
+    interior = [n for n in state.nodes.values() if n.children and n.id != state.root_id]
+    assert interior
+    assert all(not n.payload.done for n in interior)
+    assert all(n.payload.done for n in state.nodes.values() if not n.children)
+    assert state.stats["nodes"] > state.stats["rollouts"]
+    assert state.stats["turns"] >= state.stats["nodes"]
+
+
+@pytest.mark.asyncio
+async def test_fifo_records_birth_evidence_for_the_next_pass() -> None:
+    class Capture(FifoAllocator):
+        def build(self, view, ledger):
+            self.observations = ledger.observations
+            return None
+
+    capture = Capture()
+    runtime = _runtime(
+        passes=(
+            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+            SearchPass(capture, budget=1, gating=ConcurrencyGating(4)),
+        )
+    )
+    state = await run_search("solve it", runtime)
+    created = [n for n in state.nodes.values() if n.parent_id is not None]
+    assert created
+    assert set(capture.observations) == set(state.nodes)
+    assert (
+        sum(c.m_done for c in capture.observations.values()) == state.stats["rollouts"]
+    )
+    for node in created:
+        counts = capture.observations[node.id]
+        assert counts.returns.n == 1 + counts.m_done
+        assert counts.m_pending == 0
+
+
+def _unfolding_runtime(**kwargs) -> Runtime:
+    """A runtime whose rollouts never fold, so the only branch points on a line are the
+    ones the strategy itself decided to keep."""
+    runner: Runner[CountState, str] = Runner(
+        policy=Policy(
+            format=PolicyFormat(
+                "custom", ChatCodec(FakeChatTokenizer()), TextActionParser()
+            ),
+            complete=(CyclingGenerator(["go"])).agenerate_tokens,
+            exact=(CyclingGenerator(["go"])).provides_exact_tokens,
+            native=(CyclingGenerator(["go"])).provides_native_tool_calls,
+            version="policy",
+        ),
+        env=CountEnv(),
+        system_prompt="sys",
+        max_steps=4,
+    )
+    defaults: dict[str, Any] = {
+        "passes": (SearchPass(FifoAllocator(), budget=4, gating=WidthGating(1)),),
+        "max_concurrency": 1,
+    }
+    defaults.update(kwargs)
+    return Runtime(runner=runner, config=RolloutConfig(**defaults))
+
+
+@pytest.mark.asyncio
+async def test_the_runtime_picks_which_checkpoints_become_branch_points() -> None:
+    """Without compaction the tree contains a root and completed trajectories."""
+    folded = await run_search("solve it", _unfolding_runtime())
+    assert len(folded.nodes) == 2  # root + the one terminal: no fold, no branch point
+
+
+@pytest.mark.asyncio
+async def test_a_node_ends_with_as_many_children_as_its_width() -> None:
+    state = await run_search(
+        "solve it",
+        _runtime(
+            passes=(SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),)
+        ),
+    )
+
+    branched = [n for n in state.nodes.values() if len(n.children) > 1]
+    assert branched
+    for node in branched:
+        assert len(node.children) <= 2
+
+
+@pytest.mark.asyncio
+async def test_the_weight_an_estimator_wrote_is_the_one_that_goes_on_the_wire() -> None:
+    """Export composes nothing: what `assign` wrote reaches the sample, times the ratio.
+
+    There used to be a multiplication here -- ``weight = confidence * advantage`` --
+    and it was the one step between what an estimator meant and what the actor trained
+    on that no estimator could see.
+    """
+    result = await prepared(
+        "solve it",
+        _runtime(
+            passes=(
+                SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+                SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+            )
+        ),
+        estimator=RefinedTdEstimator(),
+    )
+
+    assert result.actor
+    rewards = [
+        s["reward"] for s in to_samples(result, 0) if s["metadata"]["lane"] == "actor"
+    ]
+    assert rewards == [r.weight * r.importance for r in result.actor for _ in r.spans]
+
+
+@pytest.mark.asyncio
+async def test_a_constant_weight_reaches_every_slot_untouched() -> None:
+    result = await prepared(
+        "solve it",
+        _runtime(
+            passes=(SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),)
+        ),
+        estimator=FixedWeight(0.5),
+    )
+
+    assert result.actor
+    # the one weighter configured owns every slot, and every weight is the constant
+    assert {r.estimator for r in result.actor} == {"test_fixed"}
+    assert all(r.weight == 0.5 for r in result.actor)
+
+
+@pytest.mark.asyncio
+async def test_the_weight_multiplies_with_importance_on_the_wire() -> None:
+    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+
+    by_node = {(r.estimator, r.node_id): r for r in result.actor}
+    checked = 0
+    for sample in to_samples(result, 0):
+        if sample["metadata"]["lane"] != "actor":
+            continue
+        meta = sample["metadata"]
+        record = by_node[(meta["estimator"], meta["node_id"])]
+        assert sample["reward"] == pytest.approx(record.weight * sample["importance"])
+        # the recipe's own account of the number rides in the metadata, as a plain
+        # dict a JSON encoder can write, and never as a column beside `reward`
+        assert meta["diagnostics"] == dict(record.diagnostics)
+        assert isinstance(meta["diagnostics"], dict)
+        assert "confidence" not in sample
+        assert "advantage" not in sample
+        checked += 1
+    assert checked
+
+
+@pytest.mark.asyncio
+async def test_no_exported_span_is_empty() -> None:
+    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+
+    records = result.actor
+    assert records
+    for record in records:
+        assert record.spans
+        assert all(span.tokens for span in record.spans)
+
+
+@pytest.mark.asyncio
+async def test_the_advantage_estimator_reaches_the_exported_weight() -> None:
+    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+
+    advantages = [r for r in result.actor if r.estimator == "refined_td"]
+    assert advantages
+    assert any(r.weight != 0.0 for r in advantages)
+    assert all(r.group_id != r.node_id for r in advantages)
+
+
+@pytest.mark.asyncio
+async def test_every_expansion_records_which_pass_produced_it() -> None:
+    runtime = _runtime()
+    state = await run_search("solve it", runtime)
+
+    created = [n for n in state.nodes.values() if n.id != state.root_id]
+    assert created
+    assert all(provenance_of(n) is not None for n in created)
+    for node in created:
+        stamp = provenance_of(node)
+        assert stamp is not None
+        assert stamp.pass_id in {"pass-0", "pass-1", "pass-2"}
+
+
+@pytest.mark.asyncio
+async def test_one_scheduler_pass_per_weighter_that_asks_for_evidence() -> None:
+    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    passes = {r.provenance.pass_id for r in result.actor if r.provenance}
+    assert passes == {"pass-0", "pass-1", "pass-2"}
+
+    quiet = await prepared(
+        "solve it",
+        _runtime(
+            passes=(SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),)
+        ),
+        estimator=FixedWeight(),
+    )
+    assert {r.provenance.pass_id for r in quiet.actor if r.provenance} == {"pass-0"}
+    assert quiet.actor
+    assert all(r.weight == 1.0 for r in quiet.actor)
+
+
+@pytest.mark.asyncio
+async def test_each_pass_gets_its_own_budget_on_the_shared_tree() -> None:
+    runtime = _runtime(
+        passes=(
+            SearchPass(FifoAllocator(), budget=6, gating=WidthGating(2)),
+            SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+            SearchPass(FifoAllocator(), budget=2, gating=ConcurrencyGating(4)),
+        )
+    )
+
+    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+
+    slack = runtime.config.max_concurrency * runtime.runner.max_steps
+    turns = {"pass-0": 6, "pass-1": 4, "pass-2": 2}
+    spent: dict[str, int] = {}
+    for record in result.actor:
+        if record.provenance is None:
+            continue
+        spent[record.provenance.pass_id] = spent.get(record.provenance.pass_id, 0) + 1
+    for pass_id, cap in turns.items():
+        assert spent.get(pass_id, 0) <= cap + slack
+    assert spent.get("pass-0", 0) >= 1
+    assert spent.get("pass-1", 0) >= 1
+
+
+class _UnitWorth(NodeWorth):
+    """Any forkable node is worth buying -- a scored pass without a selection recipe."""
+
+    def worth(self, view: SchedulerView[Any], node: Any, counts: Observations) -> float:
+        del view, node, counts
+        return 1.0
+
+
+class _CollectSpy(Allocator):
+    """A scored allocator that keeps what it was built against, and what it bought.
+
+    The fold-back between passes is the loop's, so the only place its effect shows is
+    the next pass's ``build`` -- which is exactly what this records. ``bought`` keeps
+    the live counts by reference: they are what the pass fills as its rollouts return.
+    """
+
+    name = "spy"
+
+    def __init__(self) -> None:
+        self.seen: list[dict[int, Observations]] = []
+        self.bought: list[Mapping[int, Observations]] = []
+
+    def build(
+        self,
+        view: SchedulerView[Any],
+        ledger: RolloutLedger,
+    ) -> AllocationSession[Any]:
+        del view
+        self.seen.append(deepcopy(ledger.observations))
+        self.bought.append(ledger.observations)
+        return ScoredSession(_UnitWorth(ledger.reward_config), ledger)
+
+
+@pytest.mark.asyncio
+async def test_a_later_pass_starts_from_what_an_earlier_one_bought() -> None:
+    """The fold-back is the loop's, so it happens after *every* pass.
+
+    It used to be an estimator hook, which meant it happened only for the estimators
+    that implemented it: a GAE pass could buy a hundred completed trajectories and the
+    child-relative pass behind it would still read every fork as untouched and re-buy
+    them.
+    """
+    spy = _CollectSpy()
+
+    await prepared(
+        "solve it",
+        _runtime(
+            passes=(
+                SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+                SearchPass(_CollectSpy(), budget=8, gating=ConcurrencyGating(4)),
+                SearchPass(spy, budget=8, gating=ConcurrencyGating(4)),
+            )
+        ),
+        estimator=RefinedTdEstimator(),
+    )
+
+    assert spy.seen
+    assert sum(counts.m_done for counts in spy.seen[0].values()) > 0
+
+
+@pytest.mark.asyncio
+async def test_passes_share_one_ledger_without_copying_totals() -> None:
+    first, second, third = (_CollectSpy() for _ in range(3))
+    runtime = _runtime(
+        passes=(
+            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+            *(
+                SearchPass(a, budget=8, gating=ConcurrencyGating(4))
+                for a in (first, second, third)
+            ),
+        )
+    )
+    await run_search("solve it", runtime)
+    assert first.bought[0] is second.bought[0] is third.bought[0]
+    totals = [sum(c.m_done for c in a.seen[0].values()) for a in (first, second, third)]
+    assert 0 < totals[0] < totals[1] < totals[2]
+    assert sum(c.m_done for c in third.bought[0].values()) > totals[2]
+
+
+@pytest.mark.asyncio
+async def test_search_and_preparation_log_their_own_work(caplog) -> None:
+    caplog.set_level(logging.INFO)
+    await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    passes = [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("search finished")
+    ]
+    assert len(passes) == 3
+    assert all(
+        "allocator=" in m and "spent=" in m and "turn_budget=" in m for m in passes
+    )
+    assert any("allocator=fifo" in m for m in passes)
+    batches = [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("samples prepared")
+    ]
+    assert len(batches) == 1
+    assert "estimator=refined_td" in batches[0]
+
+
+@pytest.mark.asyncio
+async def test_the_result_reports_what_the_search_cost() -> None:
+    """Enough to log throughput or alert on a dead endpoint without the tree."""
+    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+
+    assert result.stats["rollouts"] > 0
+    assert result.stats["nodes"] > 0
+    assert result.stats["turns"] > 0
+    assert result.stats["failures"] == 0.0
+    assert result.failures == ()
+    assert not isinstance(result.stats, dict)  # a frozen copy, not the live counters
+
+
+# -- the tree as a deliverable of its own ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_rollout_is_run_search_and_then_an_export() -> None:
+    """The split has to be exactly that, or a caller doing it by hand gets other data.
+
+    Searching once and exporting twice is the reason ``run_search`` exists -- comparing
+    two estimators on one tree, or re-scoring a tree from disk -- and it is only worth
+    anything if the by-hand path lands on the same records the one-call path does.
+    """
+    whole = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+
+    # a fresh runtime, so the scripted generator starts where the other one did
+    piecewise = _runtime()
+    state = await run_search("solve it", piecewise)
+
+    assert (
+        prepare_samples(
+            state,
+            estimator=RefinedTdEstimator(),
+            reward_config=piecewise.config.reward_config,
+            behavior_version=piecewise.runner.policy.version,
+        ).actor
+        == whole.actor
+    )
+    assert (
+        prepare_samples(
+            state,
+            estimator=RefinedTdEstimator(),
+            reward_config=piecewise.config.reward_config,
+            behavior_version=piecewise.runner.policy.version,
+        ).critic
+        == whole.critic
+    )
+
+
+# -- what a search refuses to spend on ------------------------------------------------
+
+
+class _InexactGenerator(InexactBridge, CyclingGenerator):
+    """The hosted chat bridge's claim over a cycling script -- see `InexactBridge`."""
+
+
+def _untrainable_runtime(**kwargs: Any) -> Runtime:
+    generator = _InexactGenerator(["go", "stop"])
+    return _runtime(runner=_runner(generator=generator), **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_search_can_run_inexact_models_but_preparation_refuses_them() -> None:
+    generator = _InexactGenerator(["go", "stop-good"])
+    runtime = _runtime(runner=_runner(generator=generator))
+    state = await run_search("solve it", runtime)
+    assert generator.calls > 0
+    with pytest.raises(ValueError, match="not trainable"):
+        prepare_samples(
+            state,
+            estimator=RefinedTdEstimator(),
+            reward_config=runtime.config.reward_config,
+            behavior_version=runtime.runner.policy.version,
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_eval_only_tree_on_an_untrainable_policy_runs() -> None:
+    """``weighters=()`` is how a caller says the tree is for looking at.
+
+    Authored emptiness, not the default: ``weighters=None`` resolves to the shipped
+    pair, so an unconfigured search *is* a training search by that rule.
+    """
+    runtime = _untrainable_runtime()
+
+    state = await run_search("solve it", runtime)
+
+    assert state.stats["turns"] > 0
+
+
+@pytest.mark.asyncio
+async def test_a_single_trajectory_on_an_untrainable_policy_is_untouched() -> None:
+    """``run_from`` weights nothing, so it has nothing to refuse."""
+    runner = _runner(generator=_InexactGenerator(["go", "stop-good"]))
+
+    rs = await runner.run_from("solve it")
+
+    generated = [turn for turn in rs.turns if turn.tag == "task"]
+    assert generated
+    assert not any(turn.exact for turn in generated)
+
+
+@pytest.mark.asyncio
+async def test_scoring_a_searched_tree_keeps_the_runner_s_own_channel() -> None:
+    """``score_search`` reads the behavior version off the runtime, not off a default.
+
+    It is the one thing the export cannot see in the tree, and the one a by-hand
+    ``build_result`` forgets: a result stamped ``"policy"`` for a runner that filed
+    under ``pi-7`` hands the trainer an empty logprob column beside a claim that the
+    channel is filled.
+    """
+    runtime = _runtime(runner=_runner(version="pi-7"))
+    state = await run_search("solve it", runtime)
+
+    result = prepare_samples(
+        state,
+        estimator=RefinedTdEstimator(),
+        reward_config=runtime.config.reward_config,
+        behavior_version=runtime.runner.policy.version,
+    )
+
+    assert result.behavior_version == "pi-7"
+    assert result.actor
+    assert all(all(span.logprobs["pi-7"] for span in r.spans) for r in result.actor)
+    # and the column a trainer reads is that one, filled rather than empty
+    samples = to_samples(result, 0)
+    assert samples
+    assert all(
+        sample["logprobs"]
+        for sample in samples
+        if sample["metadata"]["lane"] == "actor"
+    )
+
+
+@pytest.mark.asyncio
+async def test_scoring_a_tree_under_the_wrong_channel_is_refused() -> None:
+    """The failure the split invites: a tree scored by a runtime of another version.
+
+    "Score it in another process, from disk" is the whole reason ``score_search``
+    exists, and the one thing that does not travel with the tree is which channel its
+    generations were filed under. Getting it wrong is silent -- every logprob column
+    downstream is a ``.get(version, ())`` -- so it is refused, by name, against what
+    the edges themselves recorded.
+    """
+    searched = _runtime(runner=_runner(version="pi-7"))
+    state = await run_search("solve it", searched)
+
+    with pytest.raises(ValueError, match="pi-7") as excinfo:
+        prepare_samples(
+            state,
+            estimator=RefinedTdEstimator(),
+            reward_config=_runtime().config.reward_config,
+            behavior_version=_runtime().runner.policy.version,
+        )  # a runner filing under the default "policy"
+
+    assert "policy" in str(excinfo.value)
+    # the way out that does not need a runner of that version at all
+    assert "behavior_version" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_a_from_disk_tree_can_name_its_own_channel() -> None:
+    """``behavior_version=`` scores a tree whose runner this process does not hold.
+
+    A scoring worker has no endpoint and so no runner speaking ``pi-7``; without the
+    override its only way to export the tree would be to build a fake runner just to
+    carry a string. The columns it fills are the real ones.
+    """
+    searched = _runtime(runner=_runner(version="pi-7"))
+    state = await run_search("solve it", searched)
+
+    result = prepare_samples(
+        state,
+        estimator=RefinedTdEstimator(),
+        reward_config=_runtime().config.reward_config,
+        behavior_version="pi-7",
+    )
+
+    assert result.behavior_version == "pi-7"
+    assert result.actor
+    assert all(all(span.logprobs["pi-7"] for span in r.spans) for r in result.actor)
+    assert all(
+        sample["logprobs"]
+        for sample in to_samples(result, 0)
+        if sample["metadata"]["lane"] == "actor"
+    )
+    # and an override that disagrees with the tree is refused like any other
+    with pytest.raises(ValueError, match="pi-7"):
+        prepare_samples(
+            state,
+            estimator=RefinedTdEstimator(),
+            reward_config=searched.config.reward_config,
+            behavior_version="pi-9",
+        )
+
+
+@pytest.mark.asyncio
+async def test_one_tree_scores_under_two_estimators_without_searching_twice() -> None:
+    """The documented use: search with no weighters, then export once per recipe."""
+    runtime = _runtime(
+        passes=(SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),)
+    )
+    state = await run_search("solve it", runtime)
+
+    gae = prepare_samples(
+        state,
+        estimator=RefinedTdEstimator(),
+        reward_config=runtime.config.reward_config,
+        behavior_version=runtime.runner.policy.version,
+    )
+    grpo = prepare_samples(
+        state,
+        estimator=FixedWeight(),
+        reward_config=runtime.config.reward_config,
+        behavior_version=runtime.runner.policy.version,
+    )
+
+    assert [r.node_id for r in gae.actor] == [r.node_id for r in grpo.actor]
+    assert {r.estimator for r in gae.actor} == {"refined_td"}
+    assert {r.estimator for r in grpo.actor} == {"test_fixed"}
+    assert [r.weight for r in gae.actor] != [r.weight for r in grpo.actor]
+
+
+@pytest.mark.asyncio
+async def test_a_settled_tree_ships_even_though_its_lock_does_not() -> None:
+    """Saving a searched tree is the point; the lock is what stopped it.
+
+    An ``asyncio.Lock`` that has ever been waited on holds a ``Future`` and a reference
+    to the running loop, neither of which pickles -- so whether a tree could be saved
+    depended on whether anything had ever contended it. The state drops the lock on the
+    way out and mints a fresh one on the way in, and what comes back exports the same
+    records.
+    """
+    import pickle
+
+    runtime = _runtime(max_concurrency=4)
+    state = await run_search("solve it", runtime)
+
+    async def waiter() -> None:
+        async with state.lock:
+            pass
+
+    async with state.lock:  # one holder and one waiter: a genuinely contended lock
+        pending = asyncio.create_task(waiter())
+        await asyncio.sleep(0)
+        with pytest.raises((TypeError, pickle.PicklingError)):
+            pickle.dumps(state.lock)
+    await pending
+
+    restored = pickle.loads(pickle.dumps(state))
+
+    assert isinstance(restored.lock, asyncio.Lock)
+    assert restored.lock is not state.lock
+    assert not restored.lock.locked()
+    assert restored.nodes.keys() == state.nodes.keys()
+    assert dict(restored.stats) == dict(state.stats)
+    assert (
+        prepare_samples(
+            restored,
+            estimator=RefinedTdEstimator(),
+            reward_config=runtime.config.reward_config,
+            behavior_version=runtime.runner.policy.version,
+        ).actor
+        == prepare_samples(
+            state,
+            estimator=RefinedTdEstimator(),
+            reward_config=runtime.config.reward_config,
+            behavior_version=runtime.runner.policy.version,
+        ).actor
+    )
+    assert (
+        prepare_samples(
+            restored,
+            estimator=RefinedTdEstimator(),
+            reward_config=runtime.config.reward_config,
+            behavior_version=runtime.runner.policy.version,
+        ).critic
+        == prepare_samples(
+            state,
+            estimator=RefinedTdEstimator(),
+            reward_config=runtime.config.reward_config,
+            behavior_version=runtime.runner.policy.version,
+        ).critic
+    )
+
+
+@pytest.mark.asyncio
+async def test_one_value_head_is_built_for_the_whole_call(monkeypatch) -> None:
+    """Every search pass and the root file through one object.
+
+    Two heads would be two objects writing the same channel -- harmless today, and
+    exactly the seam a per-pass ``version`` or a per-pass timeout would drift through
+    tomorrow.
+    """
+    import focus.loop as loop_module
+
+    built: list[Any] = []
+    real = loop_module._value_head
+
+    def counting(runtime: Runtime) -> Any:
+        head = real(runtime)
+        built.append(head)
+        return head
+
+    monkeypatch.setattr(loop_module, "_value_head", counting)
+
+    result = await prepared(
+        "solve it", _value_runtime(LengthReward()), estimator=RefinedTdEstimator()
+    )
+
+    assert result.actor
+    assert len(built) == 1
+
+
+# -- the value baseline ---------------------------------------------------------------
+
+
+class LengthReward(RewardModel):
+    """A value head with an opinion: a longer context scores higher.
+
+    Deterministic and *not* constant, so a run's baselines differ node by node -- a
+    constant one would shift every advantage alike and hide a baseline read off the
+    wrong node.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def score(self, context: str) -> RewardResult:
+        self.seen.append(context)
+        return RewardResult(score=len(context) / 100.0)
+
+
+class ConstantReward(RewardModel):
+    """The same estimate everywhere -- so a baseline's effect is one known number."""
+
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def score(self, context: str) -> RewardResult:
+        return RewardResult(score=self.value)
+
+
+def _value_runtime(model: RewardModel, **kwargs: Any) -> Runtime:
+    """A runtime with a value head: the model alone, no channel to repeat."""
+    return _runtime(value_model=model, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_every_node_the_search_makes_carries_a_baseline() -> None:
+    """Including the root, which no expansion produces and every first edge is read
+    against."""
+    state = await run_search("solve it", _value_runtime(LengthReward()))
+
+    assert len(state.nodes) > 1
+    assert all("v-base" in node.critic for node in state.nodes.values())
+    assert state.nodes[state.root_id].critic["v-base"] > 0.0
+
+
+@pytest.mark.asyncio
+async def test_later_passes_score_what_they_add_too() -> None:
+    """One scorer for the whole call: every search pass files into the same channel, so
+    the count of scored payloads is every node the search made, plus the root."""
+    model = LengthReward()
+
+    result = await prepared(
+        "solve it", _value_runtime(model), estimator=RefinedTdEstimator()
+    )
+
+    assert result.stats["nodes"] > 0
+    assert len(model.seen) == result.stats["nodes"] + 1  # + the root
+    assert "solve it" in model.seen[0]  # the root, scored before the first expansion
+    assert result.stats["score_failures"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_network_prior_changes_td_through_both_refined_endpoints() -> None:
+    base = await prepared(
+        "solve it",
+        _runtime(value_model=ConstantReward(0.0)),
+        estimator=RefinedTdEstimator(),
+    )
+    shifted = await prepared(
+        "solve it",
+        _runtime(value_model=ConstantReward(0.5)),
+        estimator=RefinedTdEstimator(),
+    )
+    for before, after in zip(base.actor, shifted.actor, strict=True):
+        d = after.diagnostics
+        parent_shift = 0.5 / (1 + d["parent_observations"])
+        successor_shift = (
+            0.5 / (1 + d["successor_observations"]) if d["successor_prior"] else 0
+        )
+        assert after.weight - before.weight == pytest.approx(
+            successor_shift - parent_shift
+        )
+
+
+def test_the_value_head_is_built_on_the_channel_the_baseline_reads() -> None:
+    """There is no second name to get wrong.
+
+    Estimates filed under a key the baseline never reads are indistinguishable from no
+    critic at all -- every advantage silently reads a 0.0 baseline -- so the channel is
+    not authored beside the model at all: the loop spells ``value_version`` once, here.
+    """
+    runtime = _value_runtime(
+        LengthReward(), reward_config=RewardConfig(value_version="v-other")
+    )
+
+    head = _value_head(runtime)
+
+    assert head is not None
+    assert head.version == "v-other"
+    assert _value_head(_runtime(value_model=None)) is None  # no model, no head
+
+
+@pytest.mark.asyncio
+async def test_the_value_head_carries_the_runtime_s_bound_on_its_reward_server() -> (
+    None
+):
+    """The bound belongs to the endpoint, so it is set beside the model that holds it.
+
+    A pass drains what is in flight rather than cancelling it, so an unbounded reward
+    call holds the expansion, the pass and the training step behind it. Read through
+    the head the loop actually builds: a stalled server costs the baseline (one counted
+    scoring failure) and nothing else.
+    """
+    model = StalledReward()
+    runtime = _value_runtime(model, score_timeout=0.01)
+
+    result = await asyncio.wait_for(
+        prepared("solve it", runtime, estimator=FixedWeight()), timeout=30
+    )
+
+    assert result.actor  # exported, on raw returns
+    assert result.stats["score_failures"] > 0.0
+    assert result.stats["failures"] == 0.0  # a scoring fault is not an expansion death
+    assert model.cancelled > 0  # each stalled request was cancelled, not left running
+
+
+@pytest.mark.asyncio
+async def test_the_run_stamps_and_reads_the_runner_s_own_behavior_channel() -> None:
+    """The export reads a turn's logprobs from the channel the *runner* wrote them to.
+
+    One name, and it is the runner's, so a runner filing under ``pi-7`` is exported
+    under ``pi-7``. Two authored strings -- a ``behavior_version`` on the runtime beside
+    ``Policy.version`` -- would raise nothing when they disagreed: every span
+    would come out with its tokens, its mask and an *empty* logprob list, stamped with a
+    provenance claiming the channel it was missing.
+    """
+    runtime = _runtime()
+    runtime.runner = _runner(version="pi-7")
+
+    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+
+    assert result.actor
+    assert all(r.provenance is not None for r in result.actor)
+    channels = {r.provenance.behavior_version for r in result.actor if r.provenance}
+    assert channels == {"pi-7"}
+    # and the logprobs are there, not an empty column beside a claim that they are
+    assert result.behavior_version == "pi-7"  # what `to_samples` reads the column by
+    assert all(all(span.logprobs["pi-7"] for span in r.spans) for r in result.actor)
+
+
+@pytest.mark.asyncio
+async def test_a_dead_value_head_costs_the_baseline_not_the_run(caplog) -> None:
+    """The rollouts are the expensive half; only the estimate is missing -- and a whole
+    run trained against a dead reward server has to be visible in the log."""
+    caplog.set_level(logging.WARNING)
+
+    result = await prepared(
+        "solve it", _value_runtime(DeadReward()), estimator=FixedWeight()
+    )
+
+    assert result.actor  # still exported, on raw returns
+    assert result.stats["score_failures"] > 0.0
+    # a scoring fault is not an expansion failure
+    assert result.stats["failures"] == 0.0
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(m.startswith("root scoring failed") for m in warnings)
+    assert any(m.startswith("expansion scoring failed") for m in warnings)
+
+
+@pytest.mark.asyncio
+async def test_a_value_head_that_miscounts_its_batch_costs_the_baseline_not_the_run(
+    caplog,
+) -> None:
+    """A short batch is a scoring fault like any other, not a dead run.
+
+    It cannot be paired with the nodes, so it has to be refused -- but refusing it
+    where the scores are *filed* would raise past both handlers and throw away rollouts
+    that already finished. So the batch is checked where it is fetched, inside the try
+    that keeps the chain and counts the fault.
+    """
+    caplog.set_level(logging.WARNING)
+
+    result = await prepared(
+        "solve it", _value_runtime(ShortBatchReward()), estimator=FixedWeight()
+    )
+
+    assert result.actor
+    assert result.stats["score_failures"] > 0.0
+    assert result.stats["failures"] == 0.0
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("root scoring failed" in m for m in warnings)
+    assert any("expansion scoring failed" in m for m in warnings)
+
+
+# -- off-anchor exploration ----------------------------------------------------------
+
+#: The constant the fake anchor scorer writes on every generated token.
+ANCHOR_LOGPROB = -0.4
+
+
+def _mixture(epsilon: float) -> MixtureProposal:
+    """A proposal whose explore component is the whole draw at ``epsilon = 1``."""
+    return MixtureProposal(SamplingParams(temperature=1.5), epsilon=epsilon)
+
+
+def _expected_importance(record: ActorSample, clip: float = 10.0) -> float:
+    """``exp(anchor - behavior)`` over the edge, from the record's own spans.
+
+    The anchor side is arithmetic (a constant per generated token); the behavior side is
+    what the generator actually recorded, read back off the exported spans -- so this is
+    the ratio computed from the trainer's view of the edge rather than a second copy of
+    the loop's. A span is a packed region, so the behavior column is picked out of it by
+    version, exactly as ``to_samples`` does.
+    """
+    behavior = sum(
+        logprob
+        for span in record.spans
+        for logprob, keep in zip(span.logprobs[VERSION], span.trainable, strict=True)
+        if keep
+    )
+    return min(math.exp(ANCHOR_LOGPROB * record.edge_tokens - behavior), clip)
+
+
+@pytest.mark.asyncio
+async def test_an_explore_draw_is_corrected_against_the_rescored_anchor(caplog) -> None:
+    """Off-anchor exploration end to end: the loop fills the anchor channel itself.
+
+    The anchor logprobs of tokens the anchor did not generate exist nowhere until some
+    policy is asked for them, so without this pass every explore edge reaches export
+    with an empty channel -- which the strict reader turns into a `KeyError`.
+    """
+    caplog.set_level(logging.INFO, logger="focus.loop")
+    scorer = ConstantScorer(ANCHOR_LOGPROB)
+
+    result = await prepared(
+        "solve it",
+        _runtime(proposal=_mixture(1.0), scorer=scorer),
+        estimator=RefinedTdEstimator(),
+    )
+
+    assert result.actor
+    assert scorer.calls
+    assert all(
+        r.provenance is not None and r.provenance.proposal_id == "explore"
+        for r in result.actor
+    )
+    assert any(r.importance != 1.0 for r in result.actor)
+    for record in result.actor:
+        assert record.importance == pytest.approx(_expected_importance(record))
+
+    scored = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "focus.loop" and r.getMessage().startswith("anchor")
+    ]
+    assert len(scored) == 1
+    assert "turns=" in scored[0]
+    assert "packs=" in scored[0]
+
+
+@pytest.mark.asyncio
+async def test_the_export_clips_importance_at_the_reward_config_s_bound() -> None:
+    """The clip is a fact about the anchor/behavior pair, so the reward config owns it.
+
+    It used to live on ``GaeConfig`` -- the estimator's own record -- where an
+    experiment that configured a clip on its estimator got the *default* one applied at
+    export, because the export read a ``GaeConfig`` nobody had authored. Both halves are
+    asserted here: the authored bound is what every off-anchor edge is capped at, and
+    there is no second clip left for the two to disagree about.
+    """
+    runtime = _runtime(
+        proposal=_mixture(1.0),
+        scorer=ConstantScorer(ANCHOR_LOGPROB),
+        reward_config=RewardConfig(clip=2.0),
+        passes=(
+            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+            SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+        ),
+    )
+
+    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+
+    assert result.actor
+    assert all(r.importance <= 2.0 for r in result.actor)
+    assert any(r.importance == pytest.approx(2.0) for r in result.actor)
+    for record in result.actor:
+        assert record.importance == pytest.approx(
+            _expected_importance(record, clip=2.0)
+        )
+    # one clip, in one place: the estimator's config no longer carries one to shadow it
+    assert not hasattr(RefinedTdEstimator(), "clip")
+
+
+@pytest.mark.asyncio
+async def test_an_anchor_only_mixture_needs_no_scorer() -> None:
+    """The correction is owed by the draw, not by the policy being a mixture."""
+    result = await prepared(
+        "solve it", _runtime(proposal=_mixture(0.0)), estimator=RefinedTdEstimator()
+    )
+
+    assert result.actor
+    assert all(r.importance == 1.0 for r in result.actor)
+
+
+@pytest.mark.asyncio
+async def test_an_off_anchor_draw_without_a_scorer_is_a_configuration_error() -> None:
+    """And it says so here, rather than as a `KeyError` inside the export."""
+    with pytest.raises(ValueError, match=r"Runtime\.scorer is None"):
+        await prepared(
+            "solve it", _runtime(proposal=_mixture(1.0)), estimator=RefinedTdEstimator()
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_renamed_anchor_channel_says_which_two_names_disagree() -> None:
+    """The likelier cause of "off-anchor edges" is a typo, not a forgotten scorer.
+
+    Whether an edge is off-anchor is one comparison -- the stamped ``proposal_id``
+    against ``reward_config.anchor_version`` -- so renaming one of those two and not the
+    other turns an anchor-only run into a fully off-anchor one. Nothing is wrong with
+    the proposal and nothing is wrong with the run; the two names simply stopped being
+    the same name, and the error has both of them in hand.
+    """
+    runtime = _runtime(
+        proposal=AnchorProposal(), reward_config=RewardConfig(anchor_version="pi-k")
+    )
+
+    with pytest.raises(ValueError, match="anchor_version") as caught:
+        await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+
+    message = str(caught.value)
+    assert "'pi-k'" in message  # the channel the config named
+    assert "'anchor'" in message  # the law the proposal actually draws under
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_rescored_when_the_anchor_is_the_behavior_policy() -> None:
+    """One channel, so the ratio is exactly 1 and there is nothing to score."""
+    scorer = ConstantScorer(ANCHOR_LOGPROB)
+    runtime = _runtime(
+        proposal=_mixture(1.0),
+        scorer=scorer,
+        reward_config=RewardConfig(anchor_version="policy"),
+    )
+
+    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+
+    assert result.actor
+    assert scorer.calls == 0
+    assert all(r.importance == 1.0 for r in result.actor)
+
+
+@pytest.mark.asyncio
+async def test_rescoring_covers_fold_turns_and_scores_each_pack_once() -> None:
+    """Folds are part of the edge the ratio is over, and a shared pack is scored once.
+
+    `importance` reads the whole edge (`tags=None`), so a fold's generations are inside
+    the ratio exactly like task work. The deepest node is walked first, which is what
+    keeps its ancestor -- whose turns are the same objects -- from paying for them
+    again.
+    """
+    first = turn([-1.0], tag="fold")
+    second = turn([-2.0], done=True, reward=1.0)
+    state = root_state(rollout())
+    parent = stamped_child(state, state.root_id, rollout(first), proposal_id="explore")
+    stamped_child(state, parent.id, rollout(first, second), proposal_id="explore")
+    scorer = ConstantScorer(ANCHOR_LOGPROB)
+
+    await rescore_anchor(_runtime(scorer=scorer), SchedulerView(state))
+
+    assert first.logprobs["anchor"] == (ANCHOR_LOGPROB,)
+    assert second.logprobs["anchor"] == (ANCHOR_LOGPROB,)
+    # one pass per pack (the fold's and the task turn's), not one per node
+    assert scorer.calls == 2
+
+
+# -- failure policy: degrade, raise, or propagate -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_backend_costs_expansions_not_the_whole_prompt(caplog) -> None:
+    """The first half of the failure policy, end to end: a per-expansion fault degrades.
+
+    Nothing else bounds a generate, so without ``generate_timeout`` this prompt waits on
+    the first stalled request forever -- a pass budget is spent in turns, and a turn
+    that never returns spends none. With one, each stall is a dead expansion: counted,
+    charged a turn so the budget still depletes, and left behind. The prompt then ends
+    with nothing at all, which is legal and is exactly why it is said at WARNING.
+    """
+    caplog.set_level(logging.WARNING)
+    gen = StalledGenerator()
+    runtime = _runtime(
+        runner=_runner(generator=gen, generate_timeout=0.01),
+        passes=(
+            SearchPass(FifoAllocator(), budget=4, gating=WidthGating(2)),
+            SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+        ),
+    )
+
+    result = await asyncio.wait_for(
+        prepared("solve it", runtime, estimator=FixedWeight()), timeout=30
+    )
+
+    assert not result.actor
+    assert not result.critic
+    assert result.stats["failures"] > 0.0
+    assert gen.cancelled == gen.calls  # every stalled request was cancelled, not left
+    assert all("generate_timeout" in reason for _, reason in result.failures)
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    exported = [m for m in warnings if m.startswith("samples prepared")]
+    assert len(exported) == 1  # a prompt that yielded nothing says so above INFO
+    assert "actor=0" in exported[0]
+    assert "failures=" in exported[0]
+
+
+class SlowGenerator(Policy[Any]):
+    """Answers, but not before the caller's deadline can arrive."""
+
+    def __init__(self) -> None:
+        self.inflight = 0
+        self.cancelled = 0
+
+    async def agenerate_tokens(
+        self,
+        prefix_tokens: Sequence[int],
+        sampling_params: SamplingParams | None = None,
+    ) -> GenerateResult:
+        self.inflight += 1
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+        finally:
+            self.inflight -= 1
+        return GenerateResult(text="go", tokens=(103, 111), logprobs=[-0.5, -0.5])
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_rollout_stops_it_rather_than_failing_its_expansions() -> (
+    None
+):
+    """The third: a caller's deadline is not a flaky backend.
+
+    A trainer that gives a prompt a wall clock cancels the task running this, and that
+    cancellation has to come out -- swallowed into the expansion-failure path it would
+    be logged as one more dead rollout and the frontier re-selected until the pass
+    budget ran out, which is the opposite of what a deadline asked for.
+    """
+    gen = SlowGenerator()
+    runtime = _runtime(runner=_runner(generator=gen), max_concurrency=2)
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(prepared("solve it", runtime), timeout=0.05)
+
+    assert gen.cancelled > 0
+    assert gen.inflight == 0  # nothing is left running behind the cancelled call
+
+
+class BrokenAllocator(Allocator):
+    """An allocator with a bug in the half that reads the tree."""
+
+    name = "broken"
+
+    def build(self, *args: Any, **kwargs: Any) -> AllocationSession[Any]:
+        raise ValueError("estimator bug")
+
+
+@pytest.mark.asyncio
+async def test_allocator_errors_propagate_after_the_first_pass() -> None:
+    """The second: a programmer error is wrong for every prompt, not for this rollout.
+
+    Exporting the first-pass tree with a WARNING would be the friendlier-looking answer
+    and
+    the worse one -- the same bug fires on every prompt of every step, so the run would
+    train on quietly unscored batches for as long as nobody read the log.
+    """
+    runtime = _runtime(
+        passes=(
+            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+            SearchPass(BrokenAllocator(), budget=1, gating=ConcurrencyGating(4)),
+        )
+    )
+
+    with pytest.raises(ValueError, match="estimator bug"):
+        await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+
+
+class StaggeredGenerator(CyclingGenerator):
+    """Like :class:`CyclingGenerator`, but each successive call answers later.
+
+    Enough to make the expansions of one pass finish at *different* times, which is
+    what puts work in flight at the moment the budget runs out -- the case the drain
+    exists for and an all-at-once fake never reaches.
+    """
+
+    async def agenerate_tokens(
+        self,
+        prefix_tokens: Sequence[int],
+        sampling_params: SamplingParams | None = None,
+    ) -> GenerateResult:
+        await asyncio.sleep(0.005 * self.calls)
+        return await super().agenerate_tokens(prefix_tokens, sampling_params)
+
+
+@pytest.mark.asyncio
+async def test_a_search_pass_keeps_the_rollouts_that_were_still_in_flight() -> None:
+    """End to end: a pass that runs out of budget mid-flight keeps what it paid for.
+
+    Three expansions launch, the first one alone spends the pass's turns, and the other
+    two are still running -- whole episodes of backend calls, already bought. They are
+    drained: their nodes land on the tree and their turns are counted, at the cost of an
+    overshoot bounded by one episode per slot. Nothing new is launched after the budget
+    is hit, and nothing is left reserved behind them.
+    """
+    gen = StaggeredGenerator(["go", "stop-good", "go", "stop-bad"])
+    runtime = _runtime(
+        runner=_runner(generator=gen),
+        max_concurrency=3,
+        passes=(SearchPass(FifoAllocator(), budget=1, gating=WidthGating(4)),),
+    )
+
+    state = await run_search("solve it", runtime)
+
+    assert state.stats["rollouts"] == 3.0  # all three landed; none was thrown away
+    assert state.stats["failures"] == 0.0
+    assert len(state.nodes[state.root_id].children) == 3
+    assert state.stats["turns"] > 1.0  # the drain overshoots the cap...
+    assert state.stats["turns"] <= 1 + 3 * runtime.runner.max_steps  # ...but not past
+    root = state.nodes[state.root_id]
+    assert root.gate.available(root)  # every reservation came back
+
+
+def test_a_pass_gets_its_own_share_beyond_whatever_the_last_one_overshot() -> None:
+    """The overshoot is carried, not compounded, and never charged to the next pass.
+
+    A drained pass can land a few turns past its own cap. Because the next cap is read
+    off the tree's *realized* spend rather than off a running plan, that overshoot is
+    already in the baseline -- so the next pass still gets its full ``pass_turns``, and
+    only the run's grand total is longer.
+    """
+    state: SchedulerState[Any] = SchedulerState.root(rollout(), gating=WidthGating(1))
+    state.stats[STAT_TURNS] = 13.0  # a 12-turn pass that drained one turn over
+    view: SchedulerView[Any] = SchedulerView(state)
+
+    budget = _budget(state, 4)
+
+    state.stats[STAT_TURNS] = 16.0
+    assert budget.remaining(view) != 0  # still inside its own four turns
+    state.stats[STAT_TURNS] = 17.0
+    assert budget.remaining(view) == 0  # ...which start where the overshoot ended
+
+
+def test_a_pass_budget_is_not_eaten_by_an_earlier_pass_s_failures() -> None:
+    """Each pass gets its own share of turns, whatever the passes before it lost.
+
+    ``Budget`` charges a turn per dead expansion so a broken backend depletes a budget
+    instead of being retried forever -- so a cap computed from realized turns alone came
+    out already exceeded on a flaky run, and every later pass bought nothing at exactly
+    the moment the tree most needed more evidence.
+    """
+    state: SchedulerState[Any] = SchedulerState.root(rollout(), gating=WidthGating(1))
+    state.stats[STAT_TURNS] = 10.0
+    state.stats[STAT_FAILURES] = 5.0
+    view: SchedulerView[Any] = SchedulerView(state)
+
+    budget = _budget(state, 4)
+
+    assert budget.remaining(view) != 0  # the pass may still launch
+    state.stats[STAT_TURNS] = 14.0
+    assert budget.remaining(view) == 0  # ...and stops after its own four turns
+
+
+# -- pure allocators ------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_pure_allocator_grows_the_tree_and_claims_no_export_slot() -> None:
+    """It spends real budget, and every exported record still carries a weighter's
+    name -- which is the whole point of the `Allocator`/`AdvantageEstimator` split."""
+    runtime = _value_runtime(
+        ConstantReward(0.0),
+        passes=(
+            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+            SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+            SearchPass(ValueRefinement(), budget=8, gating=ConcurrencyGating(4)),
+        ),
+    )
+    without = await prepared(
+        "solve it",
+        _value_runtime(
+            ConstantReward(0.0),
+            passes=(
+                SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+                SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+            ),
+        ),
+        estimator=RefinedTdEstimator(),
+    )
+
+    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+
+    assert {record.estimator for record in result.actor} == {"refined_td"}
+    assert result.stats["rollouts"] > without.stats["rollouts"]
+
+
+@pytest.mark.asyncio
+async def test_refinement_sits_out_a_run_with_no_value_head() -> None:
+    runtime = _runtime(
+        value_model=None,
+        passes=(
+            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+            SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+            SearchPass(ValueRefinement(), budget=8, gating=ConcurrencyGating(4)),
+        ),
+    )
+    without = await prepared(
+        "solve it",
+        _runtime(
+            passes=(
+                SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
+                SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+            )
+        ),
+        estimator=FixedWeight(),
+    )
+
+    result = await prepared("solve it", runtime, estimator=FixedWeight())
+
+    assert result.stats["rollouts"] == without.stats["rollouts"]
+
+
+def test_passes_are_authored_as_a_tuple() -> None:
+    assert RolloutConfig(passes=()).passes == ()

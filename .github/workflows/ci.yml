@@ -1,0 +1,69 @@
+name: CI
+
+# Every push and every pull request runs the same four gates the README documents for
+# a local checkout -- format, lint, types, tests -- so "green locally" and "green in CI"
+# mean the same thing.
+on:
+  push:
+  pull_request:
+
+# A push to a branch with an open PR fires both triggers; keep only the newest run per
+# ref alive, since an older commit's verdict is never the one anyone acts on.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: gates (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Report both interpreters even when one fails: which versions break is the
+      # information a matrix exists to give.
+      fail-fast: false
+      matrix:
+        # `requires-python = ">=3.12"` supports both. mypy still reads
+        # `python_version = "3.12"` from pyproject, i.e. the floor, on either runner.
+        python-version: ["3.12", "3.13"]
+    env:
+      # Pins the interpreter for `uv sync` *and* every later `uv run`, so the gate
+      # commands stay byte-identical to the ones in the README's Development section.
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          # Cache resolved packages and tools between runs.
+          enable-cache: true
+
+      - name: Install Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      # No extras. The library core is stdlib-only and every optional backend is
+      # lazily imported, so the suite runs on the dev group alone -- the same command
+      # a contributor runs locally.
+      - name: Sync the dev toolchain
+        run: uv sync --group dev
+
+      # Every gate is bare: what each one covers is declared once, in pyproject
+      # (`[tool.ruff]` for the two below, `files` in `[tool.mypy]` for the third), so a
+      # path list here would be a second definition of it that could silently diverge.
+      #
+      # Layout is the formatter's, not a reviewer's: the gate is that the tree already
+      # sits at `ruff format`'s fixed point, so `uv run ruff format` is the fix.
+      - name: Format
+        run: uv run ruff format --check
+
+      - name: Lint
+        run: uv run ruff check
+
+      - name: Type-check
+        run: uv run mypy
+
+      - name: Test
+        run: uv run pytest -q
+
+      - name: Build distributions
+        run: uv build

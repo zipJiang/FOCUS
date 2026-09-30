@@ -1,0 +1,11 @@
+edge   1  pass-0    tag=task  tokens= 253  refined_td=+0.4000 [edge_reward=+0.800 duration=+3.000 parent_prior=+0.000 successor_prior=+0.000 parent_value=+0.400 successor_value=+0.000 parent_observations=+5.000 successor_observations=+1.000]
+edge   2  pass-0    tag=task  tokens=  87  refined_td=-0.4000 [edge_reward=+0.000 duration=+1.000 parent_prior=+0.000 successor_prior=+0.000 parent_value=+0.400 successor_value=+0.000 parent_observations=+5.000 successor_observations=+1.000]
+edge   3  pass-1    tag=task  tokens= 253  refined_td=+0.4000 [edge_reward=+0.800 duration=+3.000 parent_prior=+0.000 successor_prior=+0.000 parent_value=+0.400 successor_value=+0.000 parent_observations=+5.000 successor_observations=+1.000]
+edge   4  pass-1    tag=task  tokens=  87  refined_td=-0.4000 [edge_reward=+0.000 duration=+1.000 parent_prior=+0.000 successor_prior=+0.000 parent_value=+0.400 successor_value=+0.000 parent_observations=+5.000 successor_observations=+1.000]
+edge   5  pass-1    tag=task  tokens= 253  refined_td=+0.4000 [edge_reward=+0.800 duration=+3.000 parent_prior=+0.000 successor_prior=+0.000 parent_value=+0.400 successor_value=+0.000 parent_observations=+5.000 successor_observations=+1.000]
+value   0  target= 0.400  version=v-base
+value   1  target= 0.000  version=v-base
+value   2  target= 0.000  version=v-base
+value   3  target= 0.000  version=v-base
+value   4  target= 0.000  version=v-base
+value   5  target= 0.000  version=v-base
