@@ -80,3 +80,11 @@ uv run pytest -q
 
 The initial clean snapshot was derived from `zipJiang/rollout-controller` commit
 `19494aead05c9446ce33b4d4e500d8fcfa3174e0`.
+
+## Context protocols and shared execution
+
+The runtime supports editable CLM context, indexed Memex memory and recursive/parallel
+RLM invocations with shared local or Ray inference admission. Start with the
+[migration and extension guide](docs/MIGRATION.md) and run
+`python -m examples.protocols --protocol rlm-memex` for a deterministic demonstration.
+Implementation decisions and milestone validation are in [implementation notes](docs/implementation/00-overview.md).

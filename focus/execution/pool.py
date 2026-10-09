@@ -63,7 +63,9 @@ class AdmissionPool:
         if any(value < 1 for value in self.limits.values()):
             raise ValueError("resource limits must be positive")
         self.stats = PoolStats()
-        self._queue: OrderedDict[str, OrderedDict[str, deque[_Ticket]]] = OrderedDict()
+        self._queue: OrderedDict[
+            str, OrderedDict[str, OrderedDict[str, deque[_Ticket]]]
+        ] = OrderedDict()
         self._running: dict[asyncio.Task[object], Owner] = {}
         self._closed = False
 
@@ -73,14 +75,22 @@ class AdmissionPool:
             for episode in tuple(self._queue):
                 branches = self._queue[episode]
                 for branch in tuple(branches):
-                    queue = branches[branch]
-                    for ticket in tuple(queue):
-                        used = self.stats.resources.get(ticket.resource, 0)
-                        if used < self.limits.get(ticket.resource, self.capacity):
-                            selected = ticket
-                            queue.remove(ticket)
+                    invocations = branches[branch]
+                    for invocation in tuple(invocations):
+                        queue = invocations[invocation]
+                        for ticket in tuple(queue):
+                            used = self.stats.resources.get(ticket.resource, 0)
+                            if used < self.limits.get(ticket.resource, self.capacity):
+                                selected = ticket
+                                queue.remove(ticket)
+                                break
+                        if not queue:
+                            del invocations[invocation]
+                        elif selected is not None:
+                            invocations.move_to_end(invocation)
+                        if selected is not None:
                             break
-                    if not queue:
+                    if not invocations:
                         del branches[branch]
                     elif selected is not None:
                         branches.move_to_end(branch)
@@ -108,10 +118,13 @@ class AdmissionPool:
             self.stats.resources[ticket.resource] -= 1
         else:
             branches = self._queue[ticket.owner.episode]
-            queue = branches[ticket.owner.branch]
+            invocations = branches[ticket.owner.branch]
+            queue = invocations[ticket.owner.invocation]
             queue.remove(ticket)
             self.stats.pending -= 1
             if not queue:
+                del invocations[ticket.owner.invocation]
+            if not invocations:
                 del branches[ticket.owner.branch]
             if not branches:
                 del self._queue[ticket.owner.episode]
@@ -137,7 +150,8 @@ class AdmissionPool:
         self._running[task] = owner
         ticket = _Ticket(owner, resource, asyncio.get_running_loop().create_future())
         branches = self._queue.setdefault(owner.episode, OrderedDict())
-        branches.setdefault(owner.branch, deque()).append(ticket)
+        invocations = branches.setdefault(owner.branch, OrderedDict())
+        invocations.setdefault(owner.invocation, deque()).append(ticket)
         self.stats.submitted += 1
         self.stats.pending += 1
         self._pump()

@@ -215,3 +215,26 @@ async def test_owned_clients_all_close_even_if_one_fails():
     assert closed == ["bad", "good"]
     await executor.aclose()
     assert len(closed) == 2
+
+
+async def test_invocations_rotate_within_a_branch():
+    pool = AdmissionPool(1)
+    release = asyncio.Event()
+    first = asyncio.create_task(pool.run(release.wait))
+    await asyncio.sleep(0)
+    order = []
+
+    async def record(value):
+        order.append(value)
+
+    tasks = [
+        asyncio.create_task(
+            pool.run(partial(record, n), owner=Owner("ep", "branch", inv))
+        )
+        for n, inv in [(1, "a"), (2, "a"), (3, "b"), (4, "b")]
+    ]
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(first, *tasks)
+    assert order == [1, 3, 2, 4]
+    await pool.aclose()

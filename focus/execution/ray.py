@@ -14,7 +14,7 @@ from focus.execution.inference import (
     LocalInferenceExecutor,
     policy_key,
 )
-from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, Owner
+from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, CapacityError, Owner
 from focus.generation import GenerateResult, Policy
 from focus.registry import construct_target
 from focus.reward import AsyncRewardModel, RewardResult
@@ -146,9 +146,13 @@ class RayInferenceExecutor:
     retried. A heartbeat lease bounds abandoned requests after a worker is lost.
     """
 
-    def __init__(self, name: str, namespace: str):
+    def __init__(self, name: str, namespace: str, max_outstanding: int = 256):
         import ray
 
+        if max_outstanding < 1:
+            raise ValueError("max_outstanding must be positive")
+        self.max_outstanding = max_outstanding
+        self._outstanding = 0
         self.actor = ray.get_actor(name, namespace=namespace)
         self.client = uuid4().hex
         self._pulse: asyncio.Task[None] | None = None
@@ -164,16 +168,31 @@ class RayInferenceExecutor:
             await asyncio.sleep(interval)
 
     async def submit(self, request: InferenceRequest) -> GenerateResult:
-        await self._start()
-        ref: Any = self.actor.submit.remote(self.client, request)
-        return cast(GenerateResult, await self._result(ref))
+        self._reserve()
+        try:
+            await self._start()
+            ref: Any = self.actor.submit.remote(self.client, request)
+            return cast(GenerateResult, await self._result(ref))
+        finally:
+            self._outstanding -= 1
 
     async def score(
         self, backend: str, contexts: Sequence[str], owner: Owner = DEFAULT_OWNER
     ) -> list[RewardResult]:
-        await self._start()
-        ref: Any = self.actor.score.remote(self.client, backend, tuple(contexts), owner)
-        return cast(list[RewardResult], await self._result(ref))
+        self._reserve()
+        try:
+            await self._start()
+            ref: Any = self.actor.score.remote(
+                self.client, backend, tuple(contexts), owner
+            )
+            return cast(list[RewardResult], await self._result(ref))
+        finally:
+            self._outstanding -= 1
+
+    def _reserve(self) -> None:
+        if self._outstanding >= self.max_outstanding:
+            raise CapacityError("Ray client outstanding request limit exceeded")
+        self._outstanding += 1
 
     async def _start(self) -> None:
         if self._closed:

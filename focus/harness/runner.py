@@ -258,7 +258,7 @@ class Runner[S, A]:
         backend's own structure) is a property of the :class:`Policy`, decided once at
         the top and inherited whole.
 
-        The derived runner never folds (``compactor=None``): the fold is the thing
+        The derived runner uses AppendOnly: the fold is the thing
         being run, and a fold that folds is a loop with no floor. ``tools``
         defaults to the new env's own schemas, and ``sampling_params`` to this runner's
         -- pass either to override, e.g. a colder temperature for a summarizer.

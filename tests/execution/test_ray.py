@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from focus.execution import InferenceRequest
+from focus.execution import CapacityError, InferenceRequest
 from focus.execution.ray import (
     RayInferenceExecutor,
     RayServiceConfig,
@@ -57,12 +57,14 @@ async def test_real_workers_share_one_limit_and_shutdown(service):
 
 async def test_cancel_loss_and_coordinator_failure(service):
     config, actor = service
-    client = RayInferenceExecutor(config.name, config.namespace)
+    client = RayInferenceExecutor(config.name, config.namespace, max_outstanding=1)
     request = InferenceRequest(
         "custom:policy:test", "test", (1,), params=SamplingParams(temperature=10)
     )
     pending = asyncio.create_task(client.submit(request))
     await asyncio.sleep(0.1)
+    with pytest.raises(CapacityError, match="outstanding"):
+        await client.submit(request)
     pending.cancel()
     with pytest.raises(asyncio.CancelledError):
         await pending

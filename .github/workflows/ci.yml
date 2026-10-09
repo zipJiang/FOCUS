@@ -41,7 +41,7 @@ jobs:
       - name: Install Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      # No extras. The library core is stdlib-only and every optional backend is
+      # No extras. Core dependencies include regex and cloudpickle; optional backends are
       # lazily imported, so the suite runs on the dev group alone -- the same command
       # a contributor runs locally.
       - name: Sync the dev toolchain
