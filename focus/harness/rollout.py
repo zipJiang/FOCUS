@@ -33,6 +33,7 @@ from typing import Any
 from uuid import uuid4
 
 from focus.codec import Message
+from focus.execution.budget import ResourceBudget
 from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
 from focus.harness.turn import (
@@ -117,6 +118,7 @@ class RolloutState[S]:
     advances: int = 0
     steps_remaining: int | None = None
     snapshot_available: bool = True
+    budget: ResourceBudget = field(default_factory=ResourceBudget)
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Give unversioned legacy pickles a durable analysis-only marker."""

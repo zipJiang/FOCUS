@@ -66,6 +66,8 @@ class Compaction[S]:
     #: fold's env speaks the parser's actions, which need not be the task env's.
     runner: Runner[S, Any]
 
+    checkpoint: Any = None
+
 
 @dataclass(frozen=True)
 class CompactionResult[S]:

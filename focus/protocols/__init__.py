@@ -3,6 +3,7 @@
 from focus.protocols.base import AppendOnly, Applied, ContextProtocol, ToolProtocol
 from focus.protocols.clm import CLM
 from focus.protocols.memex import Memex
+from focus.protocols.rlm import RLM
 from focus.protocols.summary import Summary
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "Summary",
     "CLM",
     "Memex",
+    "RLM",
 ]

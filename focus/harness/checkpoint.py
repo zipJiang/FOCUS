@@ -15,6 +15,7 @@ class Effect:
     context_before: int = 0
     context_after: int = 0
     detail: str = ""
+    invocation_id: str = "root"
 
 
 @runtime_checkable

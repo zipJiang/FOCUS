@@ -146,6 +146,7 @@ class ToolProtocol(ContextProtocol):
                             before,
                             rs.context_version,
                             call.name,
+                            rs.invocation_id,
                         ),
                     ),
                 )

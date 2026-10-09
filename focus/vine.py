@@ -120,22 +120,18 @@ async def run_vine_search(
             async with actor_slots:
                 _, params = config.proposal.draw()
                 chain: list[tuple[AnyRollout, int, Probes]] = []
-                previous, remaining = root, runtime.runner.max_steps
+                remaining = runtime.runner.max_steps
                 async for rs in runtime.runner.iter_run(
                     root.fork(), sampling_params=params
                 ):
-                    # iter_run yields each fold separately. Each task transition and
-                    # each fold-only advance consumes one unit of its local horizon. A
-                    # probe must not receive a fresh horizon merely because it starts
-                    # mid-path.
-                    consumed = sum(t.transition is not None for t in rs.edge(previous))
-                    if not rs.done:
-                        consumed += 1
-                    remaining = max(0, remaining - consumed) if remaining >= 0 else -1
+                    # Task time and resource usage differ from rollout decisions.
+                    # Restored probes inherit the checkpoint's remaining horizon.
+                    remaining = (
+                        rs.steps_remaining if rs.steps_remaining is not None else -1
+                    )
                     chain.append(
                         (rs, remaining, [] if rs.done else probes(rs, remaining))
                     )
-                    previous = rs
             if not chain or len(chain[-1][0].turns) <= len(root.turns):
                 raise ValueError("VinePPO actor rollout made no progress")
             outcome(chain[-1][0])

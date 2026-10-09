@@ -76,6 +76,7 @@ from typing import Any
 
 from focus.codec import Message
 from focus.execution import ExecutionServices, Owner
+from focus.execution.budget import ResourceBudget
 from focus.execution.pool import DEFAULT_OWNER
 from focus.generation import (
     GenerateResult,
@@ -228,8 +229,12 @@ class Runner[S, A]:
         generate_timeout: float | None = None,
         checkpoints: CheckpointPolicy | None = None,
         services: ExecutionServices | None = None,
+        resource_budget: ResourceBudget | None = None,
+        actor: bool = True,
     ) -> None:
         self.services = services or ExecutionServices()
+        self._resource_budget = resource_budget or ResourceBudget()
+        self.actor = actor
         self._checkpoints = checkpoints or SparseCheckpoints()
         self._policy: Policy[A] = policy
         self._env: Env[S, A] = env
@@ -255,6 +260,10 @@ class Runner[S, A]:
             if generate_timeout is not None and generate_timeout < 0
             else generate_timeout
         )
+
+    @property
+    def generate_timeout(self) -> float | None:
+        return self._generate_timeout
 
     @property
     def env(self) -> Env[S, A]:
@@ -324,6 +333,7 @@ class Runner[S, A]:
             # patience: a fold that hung forever would stall the turn that folded
             generate_timeout=self._generate_timeout,
             services=self.services,
+            actor=self.actor,
         )
 
     async def root(
@@ -353,6 +363,7 @@ class Runner[S, A]:
             seed=messages,
             state=state,
             workspace=ws,
+            budget=self._resource_budget,
             history=deepcopy(messages),
             context_refs=tuple(range(len(messages))),
             steps_remaining=None if self._max_steps < 0 else self._max_steps,
@@ -435,6 +446,8 @@ class Runner[S, A]:
         mutated here (the assistant turn, then the world's reply) and frozen on the way
         into the new checkpoint.
         """
+        owner = Owner(rs.episode_id, rs.branch_id, rs.invocation_id)
+        self.services.attach_budget(owner, rs.budget)
         result = await self._generate(
             cond,
             self._params(sampling_params),
@@ -464,6 +477,7 @@ class Runner[S, A]:
         effects = current.effects[len(rs.effects) :]
         return replace(
             current,
+            budget=self.services.remaining(owner),
             turns=tuple(turns),
             truncated=rs.truncated or ending,
             checkpoint_at=len(turns) if self._checkpoints.selects(effects) else -1,
@@ -553,6 +567,7 @@ class Runner[S, A]:
             policy_id=self._policy.version,
             format_id=self._policy.format.name,
             context_version=rs.context_version,
+            actor=self.actor,
         )
 
     def _params(self, sampling_params: SamplingParams | None) -> SamplingParams | None:
@@ -657,6 +672,8 @@ class Runner[S, A]:
 
         A post-fold checkpoint is eligible for branching while it remains live.
         """
+        owner = Owner(rs.episode_id, rs.branch_id, rs.invocation_id)
+        self.services.attach_budget(owner, rs.budget)
         folded = await compactor.compact(
             Compaction(
                 messages=rs.messages,
@@ -664,6 +681,7 @@ class Runner[S, A]:
                 state=rs.state,
                 workspace=rs.workspace,
                 runner=self,
+                checkpoint=rs,
             )
         )
         # Built per fold, not shared: a `Turn`'s `logprobs` is a mutable dict, and one
@@ -691,6 +709,7 @@ class Runner[S, A]:
         )
         return replace(
             rs,
+            budget=self.services.remaining(owner),
             messages=tuple(folded.messages),
             context_refs=(None,) * len(folded.messages),
             state=folded.state,
@@ -744,7 +763,7 @@ class Runner[S, A]:
         for step in _step_range(budget):
             before = len(rs.turns)
             rs = await self.advance(rs, sampling_params=sampling_params)
-            if rs.done:
+            if rs.done or rs.truncated:
                 break
             if len(rs.turns) == before:
                 break
@@ -754,7 +773,7 @@ class Runner[S, A]:
                 if step == budget - 1 and self._finish_prompt is None:
                     break
                 yield rs.snapshot()
-        if not rs.done:
+        if not rs.done and not rs.truncated:
             rs = await self.finish(rs, sampling_params=sampling_params)
         yield rs.snapshot()
 

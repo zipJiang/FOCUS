@@ -286,6 +286,17 @@ class AgenticCompactor(Compactor[S]):
             ),
             workspace=workspace,
         )
+        if compaction.checkpoint is not None:
+            parent = compaction.checkpoint
+            rs = replace(
+                rs,
+                episode_id=parent.episode_id,
+                branch_id=parent.branch_id,
+                invocation_id=parent.invocation_id
+                + "/summary/"
+                + str(len(parent.turns)),
+                budget=parent.budget,
+            )
         rs = await fold.run(rs)
         if self._structured_summary:
             turns = tuple(replace(t, tag="fold", transition=None) for t in rs.turns)

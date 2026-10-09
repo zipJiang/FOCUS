@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from focus.codec import Message
+from focus.execution.budget import ResourceBudget
 from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, Owner
 from focus.execution.process import (
     CallHandler,
@@ -111,6 +112,7 @@ class ExecutionServices:
     auxiliary: AdmissionPool | None = None
     processes: ProcessExecutor = field(default_factory=ProcessExecutor)
     usage: dict[str, Usage] = field(default_factory=dict)
+    budgets: dict[tuple[str, str], ResourceBudget] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.auxiliary is None:
@@ -119,6 +121,16 @@ class ExecutionServices:
                 if isinstance(self.inference, LocalInferenceExecutor)
                 else AdmissionPool()
             )
+
+    def attach_budget(self, owner: Owner, budget: ResourceBudget) -> None:
+        self.budgets.setdefault((owner.episode, owner.branch), budget)
+
+    def remaining(self, owner: Owner) -> ResourceBudget:
+        return self.budgets.get((owner.episode, owner.branch), ResourceBudget())
+
+    def charge(self, owner: Owner, **costs: int) -> None:
+        key = (owner.episode, owner.branch)
+        self.budgets[key] = self.remaining(owner).charge(**costs)
 
     async def astart(self) -> None:
         """Local resources start lazily; this hook gives factories one lifecycle API."""
@@ -137,6 +149,7 @@ class ExecutionServices:
     ) -> GenerateResult:
         key = self.inference.bind(policy)
         usage = self.usage.setdefault(owner.episode, Usage())
+        self.charge(owner, model_calls=1, prompt_tokens=len(prompt.tokens))
         usage.calls += 1
         usage.prompt_tokens += len(prompt.tokens)
         request = InferenceRequest(
@@ -157,6 +170,7 @@ class ExecutionServices:
             usage.failures += 1
             raise
         usage.output_tokens += len(result.tokens)
+        self.charge(owner, output_tokens=len(result.tokens))
         return result
 
     async def execute(
@@ -169,6 +183,7 @@ class ExecutionServices:
         timeout: float = 30,
     ) -> CellResult:
         usage = self.usage.setdefault(owner.episode, Usage())
+        self.charge(owner, process_cells=1)
         usage.process_cells += 1
         start = time.monotonic()
         try:

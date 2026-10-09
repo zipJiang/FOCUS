@@ -78,6 +78,7 @@ TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
     (ContextProtocol, {"name": "summary"}),
     (ContextProtocol, {"name": "clm"}),
     (ContextProtocol, {"name": "memex"}),
+    (ContextProtocol, {"name": "rlm"}),
     # -- generation and reward backends ----------------------------------------------
     (CheckpointPolicy, {"name": "sparse"}),
     (CheckpointPolicy, {"name": "every_decision"}),
