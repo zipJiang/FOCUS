@@ -104,7 +104,7 @@ class RolloutLedger(AllocationLedger[AnyRollout]):
                         self.reward_config.train_reward(transition)
                         + self.reward_config.gamma * total
                     )
-                total += self.reward_config.beta_step * turns[cursor].compaction_penalty
+                total += self.reward_config.shaping(turns[cursor])
             if not math.isfinite(total):
                 raise ValueError("non-finite rollout suffix return")
             values.append((node, total))

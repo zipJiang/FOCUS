@@ -100,6 +100,7 @@ class Turn[S_co]:
     format_id: str = ""
     context_version: int = 0
     actor: bool = True
+    reward_components: dict[str, float] = field(default_factory=dict)
 
 
 def trainable_logprobs(turns: Sequence[Turn[object]], version: str) -> list[float]:

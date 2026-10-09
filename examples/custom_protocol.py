@@ -34,7 +34,10 @@ class KeepRecent(ToolProtocol):
             raise ValueError("n must be a positive integer")
         return (
             replace(
-                rs, messages=rs.messages[-n:], context_version=rs.context_version + 1
+                rs,
+                messages=rs.messages[-n:],
+                context_refs=rs.context_refs[-n:],
+                context_version=rs.context_version + 1,
             ),
             "Retained.",
             "context",

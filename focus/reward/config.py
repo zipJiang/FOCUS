@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from focus.registry import registrable
@@ -58,6 +58,7 @@ class RewardConfig:
     clip: float = 10.0
     #: Identifies this configuration in every record derived under it.
     config_id: str = "rc-0"
+    component_weights: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if (
@@ -69,6 +70,13 @@ class RewardConfig:
     def train_reward(self, transition: StepResult[object]) -> float:
         """One transition's reward under this weighting."""
         return transition.reward_outcome + self.beta_step * transition.reward_step
+
+    def shaping(self, turn: Turn[object]) -> float:
+        """Protocol reward components do not advance task discount time."""
+        return self.beta_step * turn.compaction_penalty + sum(
+            self.component_weights.get(name, 1.0) * value
+            for name, value in turn.reward_components.items()
+        )
 
     def configured_return(self, turns: Sequence[Turn[object]], start: int = 0) -> float:
         """Discounted return over a turn chain, or a suffix of one from ``start``.
@@ -86,7 +94,7 @@ class RewardConfig:
         """
         total, discount = 0.0, 1.0
         for turn in turns[start:]:
-            total += discount * self.beta_step * turn.compaction_penalty
+            total += discount * self.shaping(turn)
             if turn.transition is None:
                 continue
             total += discount * self.train_reward(turn.transition)

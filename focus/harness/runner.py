@@ -354,6 +354,7 @@ class Runner[S, A]:
             state=state,
             workspace=ws,
             history=deepcopy(messages),
+            context_refs=tuple(range(len(messages))),
             steps_remaining=None if self._max_steps < 0 else self._max_steps,
         )
         return await self.protocol.initialize(rs, self)
@@ -448,6 +449,13 @@ class Runner[S, A]:
             messages=tuple(messages),
             turns=(*rs.turns, draft),
             history=(*rs.history, *deepcopy(messages[len(rs.messages) :])),
+        )
+        current = replace(
+            current,
+            context_refs=(
+                *rs.context_refs,
+                *range(len(rs.history), len(current.history)),
+            ),
         )
         applied = await self.protocol.apply(current, action, self, ending=ending)
         current = applied.rollout
@@ -684,6 +692,7 @@ class Runner[S, A]:
         return replace(
             rs,
             messages=tuple(folded.messages),
+            context_refs=(None,) * len(folded.messages),
             state=folded.state,
             turns=(*rs.turns, *(turns or (marker,))),
             context_version=rs.context_version + 1,

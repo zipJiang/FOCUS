@@ -113,6 +113,7 @@ class RolloutState[S]:
     branch_id: str = field(default_factory=lambda: uuid4().hex)
     execution: dict[str, Any] = field(default_factory=dict)
     history: tuple[Message, ...] = ()
+    context_refs: tuple[int | None, ...] = ()
     advances: int = 0
     steps_remaining: int | None = None
     snapshot_available: bool = True
@@ -207,7 +208,7 @@ class RolloutState[S]:
     def reward_step(self) -> float:
         """Shaping reward summed over every transition."""
         return sum(t.reward_step for t in self.transitions) + sum(
-            t.compaction_penalty for t in self.turns
+            t.compaction_penalty + sum(t.reward_components.values()) for t in self.turns
         )
 
     @property

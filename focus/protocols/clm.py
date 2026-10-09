@@ -87,6 +87,7 @@ class CLM(ToolProtocol):
             replace(
                 rs,
                 messages=document,
+                context_refs=(None,) * len(document),
                 context_version=rs.context_version + 1,
                 execution={**rs.execution, "clm_session": result.snapshot},
             ),

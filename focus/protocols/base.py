@@ -67,6 +67,10 @@ class ContextProtocol:
                 state=transition.next_state,
                 messages=(*rs.messages, *messages),
                 history=(*rs.history, *messages),
+                context_refs=(
+                    *rs.context_refs,
+                    *range(len(rs.history), len(rs.history) + len(messages)),
+                ),
             ),
             transition,
         )
@@ -126,7 +130,10 @@ class ToolProtocol(ContextProtocol):
             if call.call_id:
                 message["tool_call_id"] = call.call_id
             rs = replace(
-                rs, messages=(*rs.messages, message), history=(*rs.history, message)
+                rs,
+                messages=(*rs.messages, message),
+                history=(*rs.history, message),
+                context_refs=(*rs.context_refs, len(rs.history)),
             )
             if kind:
                 rs = replace(
