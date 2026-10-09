@@ -7,6 +7,7 @@ dependencies = ["regex>=2026.4.4", "cloudpickle>=3.1"]
 
 [project.optional-dependencies]
 config = ["omegaconf"]
+ray = ["ray>=2.49"]
 # `openai-chat` targets the hosted OpenAI Chat Completions API; tiktoken is the
 # recommended codec for exact completion-token/logprob recovery.
 openai-chat = ["openai", "tiktoken"]
@@ -37,7 +38,7 @@ testpaths = ["tests"]
 # (tests/test_perf.py). It runs with the rest -- a fraction of a second, under a bound
 # far above the real cost -- and is registered so it can be deselected (`-m "not perf"`)
 # on a machine where no wall-clock assertion is welcome at all.
-markers = ["perf: guards a complexity class by timing it; loose bound, deselectable"]
+markers = ["ray: real Ray process integration", "perf: guards a complexity class by timing it; loose bound, deselectable"]
 
 [build-system]
 requires = ["hatchling"]
@@ -153,5 +154,6 @@ module = [
     "omegaconf.*",
     "pyarrow.*",
     "cloudpickle.*",
+    "ray.*",
 ]
 ignore_missing_imports = true

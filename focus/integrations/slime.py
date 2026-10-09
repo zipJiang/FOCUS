@@ -26,6 +26,8 @@ from dataclasses import replace
 from typing import Any
 
 from focus.config import RolloutConfig, RolloutSpec
+from focus.execution import ExecutionServices
+from focus.execution.ray import RayInferenceExecutor
 from focus.export import CriticSampleFactory, SampleFactory, to_samples
 from focus.harness.workspace import Workspace
 from focus.loop import Runtime, run_search
@@ -40,6 +42,7 @@ def make_generate(
     runtime_factory: Callable[[Any], Runtime],
     *,
     estimator: AdvantageEstimator | None,
+    execution_service: tuple[str, str] | None = None,
     to_prompt: Callable[[Any], Any] = lambda sample: sample,
     workspace_factory: Callable[[Any], Workspace] | None = None,
     sample_factory: SampleFactory[Any] | None = None,
@@ -107,7 +110,14 @@ def make_generate(
     ) -> list[Any]:
         nonlocal cached
         if cached is None or cached[0] is not args:
-            cached = (args, replace(runtime_factory(args), config=spec.config))
+            runtime = runtime_factory(args)
+            if execution_service is not None:
+                name, namespace = execution_service
+                await runtime.runner.services.aclose()
+                runtime.runner.services = ExecutionServices(
+                    inference=RayInferenceExecutor(name, namespace)
+                )
+            cached = (args, replace(runtime, config=spec.config))
         # Another call may replace the cache while this call awaits search.
         runtime = cached[1]
         index = getattr(sample, "index", 0)
