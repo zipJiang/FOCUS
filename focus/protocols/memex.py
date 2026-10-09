@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from focus.harness.rollout import AnyRollout
-from focus.protocols.base import ContextProtocol, ToolProtocol, schema
+from focus.protocols.base import ContextProtocol, ProtocolError, ToolProtocol, schema
 from focus.registry import register
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ class Archive:
 class Memex(ToolProtocol):
     def __init__(self, operation_cost: float = 0, max_archives: int = 1024):
         if not math.isfinite(operation_cost) or operation_cost < 0 or max_archives < 1:
-            raise ValueError(
+            raise ProtocolError(
                 "nonnegative finite cost and positive archive limit required"
             )
         self.operation_cost = operation_cost
@@ -82,7 +82,7 @@ class Memex(ToolProtocol):
         if name == "memory_retrieve":
             index = arguments["index"]
             if type(index) is not int or not 0 <= index < len(archives):
-                raise ValueError("unknown archive index")
+                raise ProtocolError("unknown archive index")
             original = [rs.history[i] for i in archives[index].references]
             return self._charge(rs), json.dumps(original, ensure_ascii=False), "memory"
         indices, summary = arguments["indices"], arguments["summary"]
@@ -92,14 +92,16 @@ class Memex(ToolProtocol):
             or any(type(i) is not int or not 0 <= i < len(rs.history) for i in indices)
             or len(set(indices)) != len(indices)
         ):
-            raise ValueError("indices must be distinct existing history record numbers")
+            raise ProtocolError(
+                "indices must be distinct existing history record numbers"
+            )
         if not isinstance(summary, str) or not summary.strip():
-            raise ValueError("summary must be nonempty text")
+            raise ProtocolError("summary must be nonempty text")
         if len(archives) >= self.max_archives:
-            raise ValueError("archive capacity exhausted")
+            raise ProtocolError("archive capacity exhausted")
         refs = rs.context_refs or (None,) * len(rs.messages)
         if len(refs) != len(rs.messages):
-            raise ValueError("context reference alignment is invalid")
+            raise ProtocolError("context reference alignment is invalid")
         selected = set(indices)
         kept = [
             (m, ref)

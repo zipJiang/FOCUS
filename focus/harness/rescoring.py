@@ -23,7 +23,8 @@ import asyncio
 import math
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from focus.execution import ExecutionServices
+from focus.execution import ExecutionServices, Owner
+from focus.execution.pool import DEFAULT_OWNER
 from focus.generation import (
     GenerateResult,
     Policy,
@@ -100,9 +101,14 @@ class TokenScorer:
     async def score(
         self, tokens: tuple[TokenId, ...], trainable: tuple[bool, ...]
     ) -> tuple[float, ...]:
+        return await self.score_owned(tokens, trainable, DEFAULT_OWNER)
+
+    async def score_owned(
+        self, tokens: tuple[TokenId, ...], trainable: tuple[bool, ...], owner: Owner
+    ) -> tuple[float, ...]:
         if len(trainable) != len(tokens):
             raise ValueError("scoring mask must align with tokens")
-        result = await self._generate(tokens)
+        result = await self._generate(tokens, owner)
         lps = result.prompt_logprobs
         if len(lps) != len(tokens):
             raise ValueError(
@@ -118,7 +124,9 @@ class TokenScorer:
             )
         return tuple(values)
 
-    async def _generate(self, tokens: tuple[TokenId, ...]) -> GenerateResult:
+    async def _generate(
+        self, tokens: tuple[TokenId, ...], owner: Owner
+    ) -> GenerateResult:
         """The teacher-forced pass, bounded by ``timeout`` when one is configured.
 
         The unbounded path is the call itself rather than ``wait_for(..., None)``: one
@@ -131,6 +139,7 @@ class TokenScorer:
                 PreparedPrompt(tokens, self._policy.format, (), ()),
                 self._params,
                 token_input=True,
+                owner=owner,
             )
         try:
             return await asyncio.wait_for(
@@ -139,6 +148,7 @@ class TokenScorer:
                     PreparedPrompt(tokens, self._policy.format, (), ()),
                     self._params,
                     token_input=True,
+                    owner=owner,
                 ),
                 self._timeout,
             )
@@ -185,7 +195,15 @@ async def reevaluate(
             for index, _, _ in seq.spans:
                 turns[index].logprobs.setdefault(version, ())
             continue
-        column = await scorer.score(seq.tokens, seq.trainable)
+        column = (
+            await scorer.score_owned(
+                seq.tokens,
+                seq.trainable,
+                Owner(rollout.episode_id, "rescoring", seq.invocation_id),
+            )
+            if isinstance(scorer, TokenScorer)
+            else await scorer.score(seq.tokens, seq.trainable)
+        )
         if len(column) != len(seq.tokens) or any(
             keep and not math.isfinite(value)
             for value, keep in zip(column, seq.trainable, strict=True)

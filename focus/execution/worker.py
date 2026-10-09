@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import os
+import types
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,48 @@ class LimitedOutput(io.StringIO):
         return len(text)
 
 
+def restore_functions(namespace: dict[str, Any]) -> None:
+    """cloudpickle copies function globals; a REPL needs the live namespace instead."""
+    memo: dict[int, Any] = {}
+
+    def bind(value: Any) -> Any:
+        if id(value) in memo:
+            return memo[id(value)]
+        memo[id(value)] = value
+        if (
+            isinstance(value, types.FunctionType)
+            and value.__module__ == "__focus_cell__"
+        ):
+            restored = types.FunctionType(
+                value.__code__,
+                namespace,
+                value.__name__,
+                value.__defaults__,
+                value.__closure__,
+            )
+            restored.__kwdefaults__ = value.__kwdefaults__
+            restored.__annotations__ = value.__annotations__
+            restored.__dict__.update(value.__dict__)
+            restored.__module__ = value.__module__
+            restored.__qualname__ = value.__qualname__
+            memo[id(value)] = restored
+            return restored
+        if isinstance(value, dict):
+            for key in tuple(value):
+                value[key] = bind(value[key])
+        elif isinstance(value, list):
+            value[:] = [bind(item) for item in value]
+        elif isinstance(value, tuple):
+            memo[id(value)] = tuple(bind(item) for item in value)
+        elif isinstance(value, set):
+            items = [bind(item) for item in value]
+            value.clear()
+            value.update(items)
+        return memo[id(value)]
+
+    bind(namespace)
+
+
 def main() -> None:
     import sys
 
@@ -34,6 +77,7 @@ def main() -> None:
 
     data = json.loads(wire_in.readline())
     namespace: dict[str, Any] = cloudpickle.loads(base64.b64decode(data["state"]))
+    restore_functions(namespace)
     output = LimitedOutput(data["max_output"])
 
     def query(kind: str, prompts: Any, model: str | None = None) -> Any:
@@ -66,6 +110,24 @@ def main() -> None:
             if id(value) in seen:
                 return
             seen.add(id(value))
+            if (
+                isinstance(value, types.FunctionType)
+                and value.__module__ == "__focus_cell__"
+            ):
+                if value.__closure__:
+                    raise TypeError(
+                        "closures are not checkpointable; use explicit globals"
+                    )
+                validate(value.__defaults__, seen)
+                validate(value.__kwdefaults__, seen)
+            if isinstance(value, type) and value.__module__ == "__focus_cell__":
+                raise TypeError(
+                    "cell-defined classes are not checkpointable; use data records"
+                )
+            if type(value).__module__ == "__focus_cell__":
+                raise TypeError(
+                    "cell-defined instances are not checkpointable; use data records"
+                )
             if isinstance(value, io.IOBase):
                 raise TypeError("live file handles are not checkpointable; close them")
             if isinstance(value, dict):
@@ -76,9 +138,10 @@ def main() -> None:
                     validate(item, seen)
 
         validate(namespace, set())
-        state = base64.b64encode(cloudpickle.dumps(namespace)).decode()
+        payload = cloudpickle.dumps(namespace)
+        state = base64.b64encode(payload).decode()
         files = {}
-        size = 0
+        size = len(payload)
         for path in Path.cwd().rglob("*"):
             if path.is_symlink():
                 raise ValueError("workspace symlinks are not checkpointable")

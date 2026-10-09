@@ -1,67 +1,13 @@
-"""The harness main loop: drive one rollout checkpoint to completion.
+"""Drive exact model generations through context protocols and model-free tasks.
 
-The :class:`Runner` binds the stateless pieces the harness needs -- one
-:class:`~focus.generation.policy.Policy` (the model: its generator, its codec,
-its parser) and the env it acts on -- and drives a
-:class:`~focus.harness.rollout.RolloutState`: the complete, forkable
-checkpoint of a rollout (conversation, env state, workspace, turn log), which lives in
-:mod:`focus.harness.rollout` because a consumer of the log has no business
-importing the loop. Each ``advance`` renders the messages to token ids with our own
-tokenizer, generates from those ids, decodes into an assistant message, parses it into
-an action, applies it in the env, appends the env's reply turns -- and records the whole
-thing as one :class:`~...turn.Turn`. ``run`` loops ``advance`` until the env says done
-(or a step budget is hit).
+Runner owns trace ordering, continuation limits and checkpoint notifications. A context
+protocol owns prompt preparation and action effects. ExecutionServices owns shared
+inference/process resources; derived runners inherit it. Search sees settled snapshots
+without protocol-name branches.
 
-Rendering locally and sending the backend the *ids* -- never the strings -- is what
-keeps the generation-side prefix identical to what a later training pass would
-reconstruct from the same messages. It is also why a turn can store the exact prefix it
-was conditioned on: the runner *has* that list, so nothing downstream has to reconstruct
-one. It is the seam where the env's and the policy's shared action ``A`` must agree --
-the runner pairs a compatible ``(policy, env)``.
-
-**Start vs run.** :meth:`root` builds a checkpoint from an explicit seed; :meth:`start`
-is the prompt-shaped front door that composes ``workspace.guidance()`` into the seed
-system message first. Every continuation method -- ``advance``, ``iter_run``, ``run``,
-``finish`` -- takes a :class:`~focus.harness.rollout.RolloutState`. A fresh
-episode is ``await runner.run_from(prompt, workspace=...)``; a branch is ``await
-runner.run(rs.fork())``.
-
-**Running out of steps.** ``max_steps`` bounds a rollout, and hitting it would end one
-mid-conversation with no answer -- which is the ending every caller then patches with a
-"just answer now" turn of its own, outside the harness. :meth:`Runner.finish` is that
-turn, in-band: the finish prompt, one generation against the same prefix, and
-:meth:`Env.finish` ending the episode on it. The
-checkpoint comes back ``done`` *and* ``truncated``, so the two endings stay tellable
-apart. ``max_steps = -1`` is unlimited -- the loop then stops only when the env says
-done (or a stride makes no progress), which also means a turn or node budget above it
-bounds nothing; see :class:`~focus.scheduler.core.policies.Budget`.
-
-**A backend that never answers.** ``max_steps`` bounds how many turns a rollout takes;
-nothing bounds how long one of them waits. A request that hangs blocks its expansion --
-and with it the whole prompt -- forever, because a scheduler stops on a *budget* and a
-turn that never returns never spends any. ``generate_timeout`` is that bound, in
-seconds, around each :meth:`~...generation.Policy.agenerate`: when it fires the
-generation is cancelled and the turn raises :class:`TimeoutError`, which a scheduler
-records as one dead expansion and re-selects the parent from -- a degraded rollout
-rather than a stalled job. ``None`` (the default) or ``-1`` is the unbounded wait.
-
-**Folding.** A runner with a :class:`Compactor` asks that compactor's ``trigger`` at
-the *start* of each turn whether to fold; if it fires, that turn is the fold alone (no
-task generation). :meth:`Compactor.compact` gets a :class:`Compaction` -- the grown
-messages and seed, the state, the rollout's own workspace, and the runner itself -- and
-returns the messages to continue from (the seed, folded to carry whatever the compactor
-kept) plus whatever turns it generated getting there, which are appended to the log
-tagged ``"fold"``. A compactor that generated nothing still leaves one zero-token marker
-turn, so *every* fold is visible in the log as a run of fold-tagged turns and nothing
-else has to be recorded about it (see :meth:`_fold`). Because the check is front-loaded,
-a fold must *relieve its own trigger*, or the trigger fires again on the very next turn.
-``compactor=None`` -- the default -- is a single unbounded context, and costs no
-per-turn question at all.
-
-Handing the compactor the *runner* rather than a bag of its parts is what makes
-:meth:`Runner.derive` the whole of that seam: a model-driven fold is a rollout under the
-same policy on a different world, so it asks for the same runner over its own env
-instead of reassembling one from smuggled fields.
+start/root initialize an episode; advance makes one decision; iter_run exposes selected
+checkpoints and the endpoint. finish makes the optional final answer attempt. Use fork
+before pursuing another continuation from a saved state.
 """
 
 from __future__ import annotations
@@ -87,8 +33,7 @@ from focus.generation.interfaces import (
     merge_sampling_params,
 )
 from focus.generation.policy import Policy, PreparedPrompt
-from focus.harness.checkpoint import CheckpointPolicy, Effect, SparseCheckpoints
-from focus.harness.compaction.base import Compaction, Compactor
+from focus.harness.checkpoint import CheckpointPolicy, SparseCheckpoints
 from focus.harness.env import Env, StepResult
 from focus.harness.rollout import RolloutState
 from focus.harness.turn import Turn
@@ -205,7 +150,7 @@ DEFAULT_FINISH_PROMPT = (
 class Runner[S, A]:
     """Drive a :class:`RolloutState`: start, advance one turn, or run to the end.
 
-    Holds only stateless collaborators (the policy, env, compactor), so a single runner
+    Holds shared collaborators (policy, env, protocol and services), so one runner
     can drive many forked checkpoints concurrently. The workspace is not a runner field
     -- it lives in the :class:`RolloutState` and is supplied per run.
 
@@ -657,86 +602,9 @@ class Runner[S, A]:
         rs.check_continuation()
         if rs.done or rs.truncated:
             raise ValueError("Cannot compact a finished rollout for continuation")
-        return await self.protocol.compact(rs, self)
-
-    async def _fold(
-        self, rs: RolloutState[S], compactor: Compactor[S]
-    ) -> RolloutState[S]:
-        """Fold the context: append whatever the compaction generated, then reseed.
-
-        A model-driven compactor is itself a rollout (over its own env), so it returns
-        turns -- transition-free, and stamped ``"fold"`` here whatever tag they arrive
-        under -- and they join this log like any others.
-
-        A plain compactor generates nothing, and the log would then have no trace of a
-        rewrite that really happened: the next turn's prefix simply stops extending the
-        previous one, which is also what a chat template that rewrote history looks
-        like. So a silent fold appends a *marker*: one fold-tagged turn that was
-        conditioned on nothing and generated nothing. It costs a pointer, it exports
-        nothing (:func:`~focus.export.spans_of` keeps only packs holding
-        tokens) and it is answered for free by a re-scoring pass, and in exchange every
-        fold is one thing in one place: a run of fold-tagged turns.
-
-        A post-fold checkpoint is eligible for branching while it remains live.
-        """
-        owner = Owner(rs.episode_id, rs.branch_id, rs.invocation_id)
-        self.services.attach_budget(owner, rs.budget)
-        folded = await compactor.compact(
-            Compaction(
-                messages=rs.messages,
-                seed=rs.seed,
-                state=rs.state,
-                workspace=rs.workspace,
-                runner=self,
-                checkpoint=rs,
-            )
-        )
-        # Built per fold, not shared: a `Turn`'s `logprobs` is a mutable dict, and one
-        # marker object handed to every rollout would carry another rollout's re-scored
-        # version keys into logs that were never scored.
-        #
-        # It carries an *empty* behavior column, exactly as `_turn` records a generate
-        # that came back empty: a turn with no completion is scored, and its
-        # contribution is zero. Left unscored it would instead be an absence, and
-        # `edge_logprob` -- strict by design, and read over the whole edge including
-        # folds -- would raise over an edge whose every generation really was scored.
-        marker: Turn[S] = Turn(
-            prefix=(), tokens=(), logprobs={self._policy.version: ()}, tag="fold"
-        )
-        # Tagged here, not taken on trust. The tag *is* the fold -- `folds`,
-        # `boundaries`, the snapshots exposed by `iter_run`, and forkability
-        # are all read off it -- so a compactor that left `Turn`'s
-        # default would not merely mislabel a pack, it would erase the fold from a log
-        # that really did rewrite its context. `compact` already promises the runner
-        # does this; a plug-in's tagging discipline is not what the runner's own
-        # bookkeeping should rest on. Copied only where the tag is wrong, so the
-        # conforming compactor pays nothing.
-        turns = tuple(
-            t if t.tag == "fold" else replace(t, tag="fold") for t in folded.turns
-        )
-        return replace(
-            rs,
-            budget=self.services.remaining(owner),
-            messages=tuple(folded.messages),
-            context_refs=(None,) * len(folded.messages),
-            state=folded.state,
-            turns=(*rs.turns, *(turns or (marker,))),
-            context_version=rs.context_version + 1,
-            effects=(
-                *rs.effects,
-                Effect(
-                    "compaction",
-                    len(rs.turns),
-                    rs.context_version,
-                    rs.context_version + 1,
-                ),
-            ),
-            checkpoint_at=len(rs.turns) + len(turns or (marker,)),
-            advances=rs.advances + 1,
-            steps_remaining=None
-            if rs.steps_remaining is None
-            else max(0, rs.steps_remaining - 1),
-        )
+        result = await self.protocol.compact(rs, self)
+        selected = self._checkpoints.selects(result.effects[len(rs.effects) :])
+        return replace(result, checkpoint_at=len(result.turns) if selected else -1)
 
     @property
     def max_steps(self) -> int:

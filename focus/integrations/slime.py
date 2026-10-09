@@ -20,14 +20,15 @@ re-exported here for the imports that already name it through this module.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Any
+from typing import Any, Protocol, cast
 
 from focus.config import RolloutConfig, RolloutSpec
 from focus.execution import ExecutionServices
-from focus.execution.ray import RayInferenceExecutor
+from focus.execution.ray import RayInferenceExecutor, RayRewardModel
 from focus.export import CriticSampleFactory, SampleFactory, to_samples
 from focus.harness.workspace import Workspace
 from focus.loop import Runtime, run_search
@@ -37,18 +38,26 @@ from focus.preparation.records import ESTIMATOR_KEY, LANE_KEY
 logger = logging.getLogger(__name__)
 
 
+class GenerateHook(Protocol):
+    async def __call__(
+        self, args: Any, sample: Any, sampling_params: Any = None
+    ) -> list[Any]: ...
+    async def aclose(self) -> None: ...
+
+
 def make_generate(
     spec: RolloutSpec,
     runtime_factory: Callable[[Any], Runtime],
     *,
     estimator: AdvantageEstimator | None,
     execution_service: tuple[str, str] | None = None,
+    value_service: str | None = None,
     to_prompt: Callable[[Any], Any] = lambda sample: sample,
     workspace_factory: Callable[[Any], Workspace] | None = None,
     sample_factory: SampleFactory[Any] | None = None,
     critic_sample_factory: CriticSampleFactory[Any] | None = None,
     min_abs_advantage: float | None = None,
-) -> Callable[..., Any]:
+) -> GenerateHook:
     """Build the coroutine slime's ``--custom-generate-function-path`` expects.
 
     ``min_abs_advantage`` is forwarded to :func:`to_samples` after preparation;
@@ -104,22 +113,31 @@ def make_generate(
     kind holds the training step, not just its own rollout.
     """
     cached: tuple[Any, Runtime] | None = None
+    creation = asyncio.Lock()
+    owned: list[Runtime] = []
 
     async def generate(
         args: Any, sample: Any, sampling_params: Any = None
     ) -> list[Any]:
         nonlocal cached
-        if cached is None or cached[0] is not args:
-            runtime = runtime_factory(args)
-            if execution_service is not None:
-                name, namespace = execution_service
-                await runtime.runner.services.aclose()
-                runtime.runner.services = ExecutionServices(
-                    inference=RayInferenceExecutor(name, namespace)
-                )
-            cached = (args, replace(runtime, config=spec.config))
+        async with creation:
+            if cached is None or cached[0] is not args:
+                runtime = runtime_factory(args)
+                if execution_service is not None:
+                    name, namespace = execution_service
+                    if runtime.value_model is not None and value_service is None:
+                        raise ValueError(
+                            "shared execution requires a registered value_service"
+                        )
+                    await runtime.runner.services.aclose()
+                    executor = RayInferenceExecutor(name, namespace)
+                    runtime.runner.services = ExecutionServices(inference=executor)
+                    if value_service is not None:
+                        runtime.value_model = RayRewardModel(executor, value_service)
+                cached = (args, replace(runtime, config=spec.config))
+                owned.append(cached[1])
+            runtime = cached[1]
         # Another call may replace the cache while this call awaits search.
-        runtime = cached[1]
         index = getattr(sample, "index", 0)
         # Per sample, never per actor: the workspace is this prompt's scratch, and the
         # tree forks it per branch from whatever it starts as.
@@ -158,7 +176,16 @@ def make_generate(
         )
         return samples
 
-    return generate
+    async def aclose() -> None:
+        nonlocal cached
+        async with creation:
+            for runtime in owned:
+                await runtime.runner.services.aclose()
+            owned.clear()
+            cached = None
+
+    generate.__dict__["aclose"] = aclose
+    return cast(GenerateHook, generate)
 
 
 __all__ = [

@@ -96,3 +96,122 @@ async def test_unserializable_state_and_timeout_are_explicit():
     assert executor._resident == 0
     assert executor.pool.stats.active == 0
     await executor.aclose()
+
+
+async def test_restored_functions_see_live_globals_and_callbacks():
+    executor = ProcessExecutor(1)
+    first = await executor.execute(
+        "x=1\ndef f(): return x\ndef query(): return llm_query(str(x))"
+    )
+
+    async def handler(kind, prompts, model):
+        return prompts
+
+    second = await executor.execute(
+        "x=2\nprint(f(), query())", first.snapshot, handler=handler
+    )
+    assert second.output.strip() == "2 2"
+    third = await executor.execute("x=3\nprint(f())", second.snapshot)
+    assert third.output.strip() == "3"
+    await executor.aclose()
+
+
+async def test_process_death_preserves_error_and_releases_capacity():
+    executor = ProcessExecutor(1)
+    with pytest.raises(RuntimeError, match="exited without a result"):
+        await executor.execute("import os\nos._exit(3)")
+    assert executor._resident == 0
+    assert executor.pool.stats.active == 0
+    await executor.aclose()
+
+
+async def test_resident_exhaustion_rejects_descendant_without_deadlock():
+    executor = ProcessExecutor(1, max_resident=1)
+
+    async def child(kind, prompts, model):
+        await executor.execute("print('unreachable')")
+        return []
+
+    result = await asyncio.wait_for(
+        executor.execute("rlm_query('child')", handler=child), 3
+    )
+    assert "resident process limit" in result.error
+    assert executor._resident == 0
+    await executor.aclose()
+
+
+async def test_backend_limits_and_active_deadline_do_not_leak_permits():
+    pool = AdmissionPool(2, resource_limits={"slow": 1})
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def wait():
+        entered.set()
+        await release.wait()
+
+    first = asyncio.create_task(pool.run(wait, resource="slow"))
+    await entered.wait()
+    second = asyncio.create_task(pool.run(wait, resource="slow"))
+    await asyncio.sleep(0)
+    with pytest.raises(TimeoutError):
+        await pool.run(wait, resource="other", execution_timeout=0.01)
+    assert pool.stats.active == pool.stats.pending == 1
+    await pool.aclose()
+    await asyncio.gather(first, second, return_exceptions=True)
+    assert pool.stats.active == pool.stats.pending == 0
+
+
+async def test_managed_cell_terminates_descendant_in_separate_session():
+    import os
+    import sys
+
+    executor = ProcessExecutor()
+    result = await executor.execute(
+        "import subprocess\n"
+        f"p = subprocess.Popen([{sys.executable!r}, '-c', "
+        "'import time; time.sleep(60)'], "
+        "start_new_session=True)\nprint(p.pid)\ndel p"
+    )
+    pid = int(result.output.strip())
+    async with asyncio.timeout(3):
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            # A terminated orphan may briefly remain as a zombie until reaped.
+            process = await asyncio.create_subprocess_exec(
+                "ps",
+                "-p",
+                str(pid),
+                "-o",
+                "stat=",
+                stdout=asyncio.subprocess.PIPE,
+            )
+            status, _ = await process.communicate()
+            if not status.strip() or status.strip().startswith(b"Z"):
+                break
+            await asyncio.sleep(0.02)
+    await executor.aclose()
+
+
+async def test_owned_clients_all_close_even_if_one_fails():
+    from focus.execution import LocalInferenceExecutor
+    from focus.generation import Policy
+    from tests.helpers import test_format
+
+    closed = []
+
+    class Client(Policy[str]):
+        async def aclose(self):
+            closed.append(self.model)
+            if self.model == "bad":
+                raise RuntimeError("close failed")
+
+    executor = LocalInferenceExecutor(own_clients=True)
+    executor.bind(Client(format=test_format(), model="bad"))
+    executor.bind(Client(format=test_format(), model="good"))
+    with pytest.raises(ExceptionGroup, match="cleanup failed"):
+        await executor.aclose()
+    assert closed == ["bad", "good"]
+    await executor.aclose()
+    assert len(closed) == 2

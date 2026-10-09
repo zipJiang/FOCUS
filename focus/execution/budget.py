@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 
 from focus.execution.pool import CapacityError
 
@@ -13,6 +13,12 @@ class ResourceBudget:
     prompt_tokens: int | None = None
     output_tokens: int | None = None
     process_cells: int | None = None
+
+    def __post_init__(self) -> None:
+        for item in fields(self):
+            value = getattr(self, item.name)
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError("resource limits must be nonnegative integers or None")
 
     def charge(self, **costs: int) -> ResourceBudget:
         updated = {}

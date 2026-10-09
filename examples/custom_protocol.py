@@ -6,7 +6,7 @@ from typing import Any
 from focus.harness.rollout import AnyRollout
 from focus.harness.runner import Runner
 from focus.protocols import ContextProtocol, ToolProtocol
-from focus.protocols.base import schema
+from focus.protocols.base import ProtocolError, schema
 from focus.registry import register
 
 
@@ -31,7 +31,7 @@ class KeepRecent(ToolProtocol):
     ) -> tuple[AnyRollout, str, str]:
         n = arguments["n"]
         if not isinstance(n, int) or n < 1:
-            raise ValueError("n must be a positive integer")
+            raise ProtocolError("n must be a positive integer")
         return (
             replace(
                 rs,

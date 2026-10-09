@@ -30,7 +30,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
-from focus.execution import AdmissionPool
+from focus.execution import AdmissionPool, ExecutionServices, Owner
 from focus.harness.transcript import format_transcript
 from focus.registry import register, registrable
 from focus.reward import RewardModel, RewardResult
@@ -100,8 +100,10 @@ class NodeScorer[P: Payload]:
         version: str,
         timeout: float | None = None,
         pool: AdmissionPool | None = None,
+        services: ExecutionServices | None = None,
     ) -> None:
         self._pool = pool or AdmissionPool()
+        self._services = services
         self._model = model
         self._timeout = timeout
         # rollout payloads are the only ones in production, so their renderer is the
@@ -122,7 +124,9 @@ class NodeScorer[P: Payload]:
         if not payloads:
             return []
         contexts = [self._serialize(p) for p in payloads]
-        results = await self._score_batch(contexts)
+        payload = payloads[0]
+        owner = Owner(getattr(payload, "episode_id", "default"), "value")
+        results = await self._score_batch(contexts, owner)
         if len(results) != len(payloads):
             raise ValueError(
                 f"reward model returned {len(results)} results for "
@@ -134,7 +138,16 @@ class NodeScorer[P: Payload]:
             for r, context in zip(results, contexts, strict=True)
         ]
 
-    async def _score_batch(self, contexts: list[str]) -> list[RewardResult]:
+    async def _dispatch(self, contexts: list[str], owner: Owner) -> list[RewardResult]:
+        if self._services is not None:
+            return await self._services.score(self._model, contexts, owner=owner)
+        return await self._pool.run(
+            lambda: self._model.ascore_batch(contexts), owner=owner
+        )
+
+    async def _score_batch(
+        self, contexts: list[str], owner: Owner
+    ) -> list[RewardResult]:
         """The reward-model round trip, bounded by ``timeout`` when one is configured.
 
         The unbounded path is the call itself rather than ``wait_for(..., None)``: every
@@ -149,10 +162,10 @@ class NodeScorer[P: Payload]:
         batch was. ``wait_for`` has already cancelled the request by then.
         """
         if self._timeout is None:
-            return await self._pool.run(lambda: self._model.ascore_batch(contexts))
+            return await self._dispatch(contexts, owner)
         try:
             return await asyncio.wait_for(
-                self._pool.run(lambda: self._model.ascore_batch(contexts)),
+                self._dispatch(contexts, owner),
                 self._timeout,
             )
         except TimeoutError as exc:

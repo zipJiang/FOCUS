@@ -34,6 +34,7 @@ from focus.config import RolloutConfig
 
 # Importing a package is what fires its registrations, so every slot's home package is
 # imported below -- the interfaces this file names happen to cover all of them.
+from focus.execution import InferenceExecutor
 from focus.generation import Policy, SamplingParams
 from focus.generation.parsing.base import ActionParser
 from focus.harness.checkpoint import CheckpointPolicy
@@ -74,6 +75,7 @@ async def _post(url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
 #: ``(interface, config)`` for every registered name, with the minimal kwargs that name
 #: accepts -- so a row doubles as the documented shape of that slot's entry.
 TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
+    (InferenceExecutor, {"name": "local"}),
     (ContextProtocol, {"name": "append_only"}),
     (ContextProtocol, {"name": "summary"}),
     (ContextProtocol, {"name": "clm"}),

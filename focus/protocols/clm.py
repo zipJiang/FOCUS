@@ -10,7 +10,7 @@ from focus.codec import Message
 from focus.execution import Owner
 from focus.execution.process import ProcessSnapshot
 from focus.harness.rollout import AnyRollout
-from focus.protocols.base import ContextProtocol, ToolProtocol, schema
+from focus.protocols.base import ContextProtocol, ProtocolError, ToolProtocol, schema
 from focus.registry import register
 
 if TYPE_CHECKING:
@@ -19,10 +19,13 @@ if TYPE_CHECKING:
 
 def validate_document(data: bytes, max_bytes: int) -> tuple[Message, ...]:
     if len(data) > max_bytes:
-        raise ValueError("context.json exceeds document byte limit")
-    document = json.loads(data)
+        raise ProtocolError("context.json exceeds document byte limit")
+    try:
+        document = json.loads(data)
+    except ValueError as exc:
+        raise ProtocolError(str(exc)) from exc
     if not isinstance(document, list) or not document:
-        raise ValueError("context.json must be a nonempty JSON array of messages")
+        raise ProtocolError("context.json must be a nonempty JSON array of messages")
     for i, message in enumerate(document):
         if not isinstance(message, dict) or message.get("role") not in {
             "system",
@@ -30,11 +33,11 @@ def validate_document(data: bytes, max_bytes: int) -> tuple[Message, ...]:
             "assistant",
             "tool",
         }:
-            raise ValueError(f"message {i} must have a valid role")
+            raise ProtocolError(f"message {i} must have a valid role")
         if not isinstance(message.get("content"), str):
-            raise ValueError(f"message {i}.content must be a string")
+            raise ProtocolError(f"message {i}.content must be a string")
         if any(not isinstance(key, str) for key in message):
-            raise ValueError("message keys must be strings")
+            raise ProtocolError("message keys must be strings")
     return tuple(document)
 
 
@@ -44,7 +47,7 @@ class CLM(ToolProtocol):
 
     def __init__(self, timeout: float = 30, max_document_bytes: int = 4 * 1024 * 1024):
         if timeout <= 0 or max_document_bytes < 1:
-            raise ValueError("positive execution and document limits required")
+            raise ProtocolError("positive execution and document limits required")
         self.timeout = timeout
         self.max_document_bytes = max_document_bytes
 
@@ -68,7 +71,7 @@ class CLM(ToolProtocol):
     ) -> tuple[AnyRollout, str, str]:
         code = arguments["code"]
         if not isinstance(code, str):
-            raise ValueError("code must be a string")
+            raise ProtocolError("code must be a string")
         previous: ProcessSnapshot = rs.execution.get("clm_session", ProcessSnapshot())
         files = dict(previous.files)
         files["context.json"] = json.dumps(rs.messages, ensure_ascii=False).encode()
@@ -79,7 +82,7 @@ class CLM(ToolProtocol):
             owner=Owner(rs.episode_id, rs.branch_id, rs.invocation_id),
         )
         if result.snapshot is None or result.error:
-            raise ValueError(f"cell was not committed: {result.error}")
+            raise ProtocolError(f"cell was not committed: {result.error}")
         document = validate_document(
             result.snapshot.files.get("context.json", b""), self.max_document_bytes
         )

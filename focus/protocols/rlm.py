@@ -15,7 +15,14 @@ from focus.generation.parsing.base import ToolTurn
 from focus.harness.env import Env, StepResult
 from focus.harness.rollout import AnyRollout
 from focus.harness.workspace import Workspace
-from focus.protocols.base import AppendOnly, ContextProtocol, ToolProtocol, schema
+from focus.protocols.base import (
+    AppendOnly,
+    Applied,
+    ContextProtocol,
+    ProtocolError,
+    ToolProtocol,
+    schema,
+)
 from focus.registry import register
 
 if TYPE_CHECKING:
@@ -140,6 +147,16 @@ class RLM(ToolProtocol):
     async def compact(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
         return await self.context.compact(rs, runner)
 
+    async def task_apply(
+        self,
+        rs: AnyRollout,
+        action: Any,
+        runner: Runner[Any, Any],
+        *,
+        ending: bool,
+    ) -> Applied:
+        return await self.context.apply(rs, action, runner, ending=ending)
+
     async def operation(
         self,
         rs: AnyRollout,
@@ -153,7 +170,7 @@ class RLM(ToolProtocol):
             return await self.context.operation(rs, name, arguments, runner)
         code = arguments["code"]
         if not isinstance(code, str):
-            raise ValueError("code must be a string")
+            raise ProtocolError("code must be a string")
         completed: list[AnyRollout] = []
         depth = rs.execution["rlm_depth"]
         owner = Owner(rs.episode_id, rs.branch_id, rs.invocation_id)

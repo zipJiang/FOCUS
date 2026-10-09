@@ -33,3 +33,20 @@ def worker(name, namespace, count):
             await executor.aclose()
 
     return asyncio.run(run())
+
+
+class LostWorker:
+    async def run(self, name, namespace):
+        from focus.execution import InferenceRequest
+        from focus.execution.ray import RayInferenceExecutor
+        from focus.generation import SamplingParams
+
+        executor = RayInferenceExecutor(name, namespace)
+        return await executor.submit(
+            InferenceRequest(
+                "custom:policy:test",
+                "test",
+                (1,),
+                params=SamplingParams(temperature=10),
+            )
+        )

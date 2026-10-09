@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from focus.codec import Message
 from focus.execution.budget import ResourceBudget
@@ -18,6 +19,8 @@ from focus.execution.process import (
 )
 from focus.generation import GenerateResult, Policy, PreparedPrompt, SamplingParams
 from focus.generation.interfaces import aclose_client
+from focus.registry import register
+from focus.reward import RewardModel, RewardResult
 
 
 @dataclass(frozen=True)
@@ -34,6 +37,7 @@ class InferenceRequest:
     execution_timeout: float | None = None
 
 
+@runtime_checkable
 class InferenceExecutor(Protocol):
     def bind(self, policy: Policy[Any]) -> str: ...
 
@@ -46,11 +50,13 @@ def policy_key(policy: Policy[Any]) -> str:
     return f"{policy.model}:{policy.version}:{policy.format.name}"
 
 
+@register(InferenceExecutor, "local")
 class LocalInferenceExecutor:
     def __init__(self, pool: AdmissionPool | None = None, *, own_clients: bool = False):
         self.pool = pool or AdmissionPool()
         self.policies: dict[str, Policy[Any]] = {}
         self.own_clients = own_clients
+        self._closed = False
 
     def bind(self, policy: Policy[Any]) -> str:
         key = policy_key(policy)
@@ -84,14 +90,23 @@ class LocalInferenceExecutor:
         )
 
     async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         await self.pool.aclose()
+        errors: list[Exception] = []
         if self.own_clients:
-            for policy in self.policies.values():
-                close = getattr(policy, "aclose", None)
-                if close is not None:
-                    await close()
-                else:
-                    await aclose_client(policy)
+            for policy in {id(p): p for p in self.policies.values()}.values():
+                try:
+                    close = getattr(policy, "aclose", None)
+                    if close is not None:
+                        await close()
+                    else:
+                        await aclose_client(policy)
+                except Exception as exc:
+                    errors.append(exc)
+        if errors:
+            raise ExceptionGroup("backend cleanup failed", errors)
 
 
 @dataclass
@@ -100,6 +115,8 @@ class Usage:
     prompt_tokens: int = 0
     output_tokens: int = 0
     failures: int = 0
+    tool_calls: int = 0
+    value_batches: int = 0
     process_cells: int = 0
     process_seconds: float = 0.0
 
@@ -173,6 +190,27 @@ class ExecutionServices:
         self.charge(owner, output_tokens=len(result.tokens))
         return result
 
+    async def score(
+        self, model: RewardModel, contexts: list[str], *, owner: Owner = DEFAULT_OWNER
+    ) -> list[RewardResult]:
+        usage = self.usage.setdefault(owner.episode, Usage())
+        usage.calls += 1
+        usage.value_batches += 1
+        assert self.auxiliary is not None
+
+        async def invoke() -> list[RewardResult]:
+            owned = getattr(model, "ascore_owned", None)
+            if owned is not None:
+                result: list[RewardResult] = await owned(contexts, owner)
+                return result
+            return await model.ascore_batch(contexts)
+
+        try:
+            return await self.auxiliary.run(invoke, owner=owner, resource="value")
+        except BaseException:
+            usage.failures += 1
+            raise
+
     async def execute(
         self,
         code: str,
@@ -200,8 +238,21 @@ class ExecutionServices:
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
 
+    def release_episode(self, episode: str) -> Usage | None:
+        """After all work settles, retire accounting; checkpoints retain budgets."""
+        for key in tuple(self.budgets):
+            if key[0] == episode:
+                del self.budgets[key]
+        return self.usage.pop(episode, None)
+
     async def aclose(self) -> None:
-        await self.processes.aclose()
-        await self.inference.aclose()
         assert self.auxiliary is not None
-        await self.auxiliary.aclose()
+        results = await asyncio.gather(
+            self.processes.aclose(),
+            self.inference.aclose(),
+            self.auxiliary.aclose(),
+            return_exceptions=True,
+        )
+        errors = [r for r in results if isinstance(r, Exception)]
+        if errors:
+            raise ExceptionGroup("execution service cleanup failed", errors)

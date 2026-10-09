@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from focus.allocation import RolloutLedger
 from focus.config import RolloutConfig
+from focus.execution import Usage
 from focus.generation import TokenId
 from focus.harness import AnyRollout, RolloutState, Runner
 from focus.harness.rescoring import PolicyScorer, TokenScorer, reevaluate
@@ -125,7 +126,7 @@ def _value_head(runtime: Runtime) -> NodeScorer[AnyRollout] | None:
         serialize=runtime.value_serialize,
         version=runtime.config.reward_config.value_version,
         timeout=runtime.score_timeout,
-        pool=runtime.runner.services.auxiliary,
+        services=runtime.runner.services,
     )
 
 
@@ -303,10 +304,13 @@ async def run_search(
         if isinstance(prompt, RolloutState)
         else await runtime.runner.start(prompt, workspace=workspace)
     )
+    before_usage = asdict(runtime.runner.services.usage.get(root.episode_id, Usage()))
     if runtime.config.vine is not None:
         from focus.vine import run_vine_search
 
-        return await run_vine_search(root, runtime)
+        vine_state = await run_vine_search(root, runtime)
+        _resource_stats(vine_state, runtime, root.episode_id, before_usage)
+        return vine_state
     state: SchedulerState[AnyRollout] = SchedulerState.root(
         root, gating=ConcurrencyGating(1)
     )
@@ -345,7 +349,19 @@ async def run_search(
             _spent(before, state.stats),
         )
     await rescore_anchor(runtime, view)
+    _resource_stats(state, runtime, root.episode_id, before_usage)
     return state
+
+
+def _resource_stats(
+    state: SchedulerState[AnyRollout],
+    runtime: Runtime,
+    episode: str,
+    before: dict[str, Any],
+) -> None:
+    current = asdict(runtime.runner.services.usage.get(episode, Usage()))
+    for name, value in current.items():
+        state.stats["resource_" + name] = float(value - before[name])
 
 
 __all__ = ["Runtime", "rescore_anchor", "run_search"]

@@ -17,6 +17,8 @@ from focus.config import (
     VinePpoConfig,
     load_yaml,
 )
+from focus.execution import AdmissionPool, ExecutionServices, LocalInferenceExecutor
+from focus.execution.budget import ResourceBudget
 from focus.export import format_edges, format_tree, to_samples
 from focus.generation import (
     GenerateResult,
@@ -64,6 +66,7 @@ from focus.harness import (
     build_budget,
     regions,
 )
+from focus.harness.checkpoint import CheckpointPolicy, EveryDecision, SparseCheckpoints
 from focus.loop import Runtime, run_search
 from focus.preparation import (
     AdvantageEstimator,
@@ -75,6 +78,7 @@ from focus.preparation import (
     register_estimator,
 )
 from focus.preparation.records import ActorSample, CriticSample, PreparedBatch
+from focus.protocols import CLM, RLM, AppendOnly, ContextProtocol, Memex, Summary
 from focus.registry import (
     build,
     construct_target,
@@ -128,6 +132,19 @@ __all__ = [
     "FifoAllocator",
     "register_allocator",
     "prepare_samples",
+    "ExecutionServices",
+    "AdmissionPool",
+    "LocalInferenceExecutor",
+    "ResourceBudget",
+    "CheckpointPolicy",
+    "EveryDecision",
+    "SparseCheckpoints",
+    "ContextProtocol",
+    "AppendOnly",
+    "Summary",
+    "CLM",
+    "Memex",
+    "RLM",
     # The one call, what it is given, and what it hands back.
     "ActorSample",
     "CriticSample",

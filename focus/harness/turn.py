@@ -15,18 +15,9 @@ stripping ``<think>``) breaks the chain and the same run packs into two sequence
 instead of one; nothing about the log changes. Because packing is a function of the log,
 a region is never a thing that can go stale.
 
-*One marker, and it is the tag.* :attr:`Turn.tag` is ``"task"`` for the work and
-``"fold"`` for the turns a context fold generated. A fold is a nested rollout over its
-own env (see :mod:`focus.harness.compaction.fold_env`), so its turns are
-ordinary, trainable turns; the tag is what keeps them tellable apart from task work.
-Every fold leaves a run of fold-tagged turns -- a compactor that generated nothing
-still appends one zero-token marker turn -- so *everything else about folding is
-derived from the tag*: how many times the context was rewritten is the number of
-maximal fold runs, and where a branch may restore a context is the turn after one (see
-:attr:`~focus.harness.rollout.RolloutState.folds` and
-:meth:`~focus.harness.rollout.RolloutState.boundaries`). A second field
-saying either of those things could disagree with the log; a tag cannot disagree with
-itself.
+Tags label task versus summary work for diagnostics. They do not select checkpoints.
+Effects record context changes independently; invocation and actor identity determine
+training ownership. Exact generation prefixes survive all live-context edits.
 
 ``logprobs`` is version-keyed exactly like
 :attr:`~focus.scheduler.core.tree.Node.critic`: the behavior policy fills its
@@ -89,8 +80,7 @@ class Turn[S_co]:
     #: rewrites context, it does not act on the world, so it is not a time step.
     transition: StepResult[S_co] | None = None
     #: ``"task"`` for the work, ``"fold"`` for a context fold's own generations. The
-    #: only mark a fold leaves, and the one every question about folding is answered
-    #: from.
+    #: diagnostic label; effects and CheckpointPolicy govern continuation.
     tag: TurnTag = "task"
     #: Raw shaping on a compaction attempt; does not advance task time.
     compaction_penalty: float = 0.0

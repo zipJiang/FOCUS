@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from focus.codec import Message
+from focus.execution import Usage
 from focus.generation.parsing.base import ToolTurn
 from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
@@ -15,6 +16,10 @@ from focus.registry import register
 
 if TYPE_CHECKING:
     from focus.harness.runner import Runner
+
+
+class ProtocolError(ValueError):
+    """Invalid model action; safe to return as corrective feedback."""
 
 
 @dataclass(frozen=True)
@@ -55,6 +60,10 @@ class ContextProtocol:
         *,
         ending: bool,
     ) -> Applied:
+        if not ending and isinstance(action, ToolTurn):
+            runner.services.usage.setdefault(rs.episode_id, Usage()).tool_calls += len(
+                action.tool_calls
+            )
         transition = (
             await runner.env.finish(rs.state, action)
             if ending
@@ -95,6 +104,16 @@ class ToolProtocol(ContextProtocol):
     ) -> tuple[AnyRollout, str, str]:
         raise NotImplementedError
 
+    async def task_apply(
+        self,
+        rs: AnyRollout,
+        action: Any,
+        runner: Runner[Any, Any],
+        *,
+        ending: bool,
+    ) -> Applied:
+        return await super().apply(rs, action, runner, ending=ending)
+
     async def apply(
         self,
         rs: AnyRollout,
@@ -109,7 +128,7 @@ class ToolProtocol(ContextProtocol):
             or not isinstance(action, ToolTurn)
             or not any(c.name in names for c in action.tool_calls)
         ):
-            return await super().apply(rs, action, runner, ending=ending)
+            return await self.task_apply(rs, action, runner, ending=ending)
         origin = len(rs.turns) - 1
         mixed = any(c.name not in names for c in action.tool_calls)
         for call in action.tool_calls:
@@ -117,14 +136,25 @@ class ToolProtocol(ContextProtocol):
             before = rs.context_version
             try:
                 if mixed:
-                    raise ValueError(
+                    raise ProtocolError(
                         "issue context operations separately from task tools"
                     )
-                arguments = json.loads(call.arguments)
+                try:
+                    arguments = json.loads(call.arguments)
+                except ValueError as exc:
+                    raise ProtocolError(str(exc)) from exc
                 if not isinstance(arguments, dict):
-                    raise ValueError("tool arguments must be an object")
+                    raise ProtocolError("tool arguments must be an object")
+                contract = next(
+                    s["function"]["parameters"]
+                    for s in self.schemas()
+                    if s["function"]["name"] == call.name
+                )
+                missing = set(contract.get("required", ())) - arguments.keys()
+                if missing:
+                    raise ProtocolError(f"missing arguments: {sorted(missing)}")
                 rs, text, kind = await self.operation(rs, call.name, arguments, runner)
-            except (ValueError, KeyError, TypeError) as exc:
+            except ProtocolError as exc:
                 text = f"Invalid {call.name}: {exc}. Previous valid context preserved."
             message: Message = {"role": "tool", "name": call.name, "content": text}
             if call.call_id:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
 from uuid import uuid4
@@ -13,9 +14,10 @@ from focus.execution.inference import (
     LocalInferenceExecutor,
     policy_key,
 )
-from focus.execution.pool import AdmissionPool
+from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, Owner
 from focus.generation import GenerateResult, Policy
 from focus.registry import construct_target
+from focus.reward import AsyncRewardModel, RewardResult
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,7 @@ class RayServiceConfig:
     resource_limits: dict[str, int] = field(default_factory=dict)
     lease_seconds: float = 10
     request_seconds: float = 300
+    rewards: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class _Coordinator:
@@ -42,6 +45,9 @@ class _Coordinator:
         for backend in config.backends:
             self.executor.bind(construct_target(backend))
         self.clients: dict[str, float] = {}
+        self.rewards = {
+            name: construct_target(cfg) for name, cfg in config.rewards.items()
+        }
 
     async def describe(self) -> RayServiceConfig:
         return self.config
@@ -50,8 +56,8 @@ class _Coordinator:
         self.clients[client] = time.monotonic()
 
     async def submit(self, client: str, request: InferenceRequest) -> GenerateResult:
-        self.clients.setdefault(client, time.monotonic())
-        operation = asyncio.create_task(
+        return await self._leased(
+            client,
             self.executor.submit(
                 replace(
                     request,
@@ -60,8 +66,26 @@ class _Coordinator:
                         self.config.request_seconds,
                     ),
                 )
-            )
+            ),
         )
+
+    async def score(
+        self, client: str, backend: str, contexts: tuple[str, ...], owner: Owner
+    ) -> list[RewardResult]:
+        model = self.rewards[backend]
+        return await self._leased(
+            client,
+            self.executor.pool.run(
+                lambda: model.ascore_batch(contexts),
+                owner=owner,
+                resource="reward:" + backend,
+                execution_timeout=self.config.request_seconds,
+            ),
+        )
+
+    async def _leased[T](self, client: str, call: Coroutine[Any, Any, T]) -> T:
+        self.clients.setdefault(client, time.monotonic())
+        operation = asyncio.create_task(call)
         try:
             while not operation.done():
                 await asyncio.wait({operation}, timeout=self.config.lease_seconds / 3)
@@ -87,6 +111,11 @@ class _Coordinator:
 
     async def shutdown(self) -> None:
         await self.executor.aclose()
+        for model in self.rewards.values():
+            if hasattr(model, "aclose"):
+                await model.aclose()
+            else:
+                await asyncio.to_thread(model.close)
 
 
 def create_ray_service(config: RayServiceConfig) -> Any:
@@ -135,8 +164,18 @@ class RayInferenceExecutor:
             await asyncio.sleep(interval)
 
     async def submit(self, request: InferenceRequest) -> GenerateResult:
-        import ray
+        await self._start()
+        ref: Any = self.actor.submit.remote(self.client, request)
+        return cast(GenerateResult, await self._result(ref))
 
+    async def score(
+        self, backend: str, contexts: Sequence[str], owner: Owner = DEFAULT_OWNER
+    ) -> list[RewardResult]:
+        await self._start()
+        ref: Any = self.actor.score.remote(self.client, backend, tuple(contexts), owner)
+        return cast(list[RewardResult], await self._result(ref))
+
+    async def _start(self) -> None:
         if self._closed:
             raise RuntimeError("Ray executor client is closed")
         if self._pulse is None:
@@ -149,10 +188,13 @@ class RayInferenceExecutor:
                 )
         if self._pulse.done():
             await self._pulse  # propagate coordinator failure
-        ref: Any = self.actor.submit.remote(self.client, request)
+
+    async def _result(self, ref: Any) -> Any:
+        import ray
+
         self._refs.add(ref)
         try:
-            return cast(GenerateResult, await ref)
+            return await ref
         except asyncio.CancelledError:
             ray.cancel(ref, force=False)
             raise
@@ -168,3 +210,21 @@ class RayInferenceExecutor:
         if self._pulse is not None:
             self._pulse.cancel()
             await asyncio.gather(self._pulse, return_exceptions=True)
+
+
+class RayRewardModel(AsyncRewardModel):
+    """Value scoring through the same coordinator and aggregate inference pool."""
+
+    def __init__(self, executor: RayInferenceExecutor, backend: str):
+        self.executor, self.backend = executor, backend
+
+    async def ascore(self, context: str) -> RewardResult:
+        return (await self.ascore_batch([context]))[0]
+
+    async def ascore_batch(self, contexts: Sequence[str]) -> list[RewardResult]:
+        return await self.executor.score(self.backend, contexts)
+
+    async def ascore_owned(
+        self, contexts: Sequence[str], owner: Owner
+    ) -> list[RewardResult]:
+        return await self.executor.score(self.backend, contexts, owner)

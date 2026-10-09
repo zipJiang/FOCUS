@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from focus.harness.compaction.base import Compactor
+from focus.execution import Owner
+from focus.harness.checkpoint import Effect
+from focus.harness.compaction.base import Compaction, Compactor
 from focus.harness.compaction.triggers import Trigger
 from focus.harness.rollout import AnyRollout
+from focus.harness.turn import Turn
 from focus.protocols.base import ContextProtocol
 from focus.registry import register
 
@@ -43,4 +47,49 @@ class Summary(ContextProtocol):
     async def compact(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
         if self.compactor is None:
             return await super().compact(rs, runner)
-        return await runner._fold(rs, self.compactor)
+        owner = Owner(rs.episode_id, rs.branch_id, rs.invocation_id)
+        runner.services.attach_budget(owner, rs.budget)
+        folded = await self.compactor.compact(
+            Compaction(
+                messages=rs.messages,
+                seed=rs.seed,
+                state=rs.state,
+                workspace=rs.workspace,
+                runner=runner,
+                checkpoint=rs,
+            )
+        )
+        # Marker records a silent rewrite, with no generated tokens or task time.
+        marker: Turn[Any] = Turn(
+            prefix=(),
+            tokens=(),
+            logprobs={runner.policy.version: ()},
+            tag="fold",
+            actor=runner.actor,
+            invocation_id=rs.invocation_id,
+            context_version=rs.context_version,
+        )
+        turns = tuple(replace(t, tag="fold", transition=None) for t in folded.turns)
+        return replace(
+            rs,
+            budget=runner.services.remaining(owner),
+            messages=tuple(folded.messages),
+            context_refs=(None,) * len(folded.messages),
+            state=folded.state,
+            turns=(*rs.turns, *(turns or (marker,))),
+            context_version=rs.context_version + 1,
+            effects=(
+                *rs.effects,
+                Effect(
+                    "compaction",
+                    len(rs.turns),
+                    rs.context_version,
+                    rs.context_version + 1,
+                    invocation_id=rs.invocation_id,
+                ),
+            ),
+            advances=rs.advances + 1,
+            steps_remaining=None
+            if rs.steps_remaining is None
+            else max(0, rs.steps_remaining - 1),
+        )

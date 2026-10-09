@@ -80,17 +80,10 @@ class RolloutState[S]:
     (durable scratch); and ``turns`` -- the append-only log of
     :class:`~focus.harness.turn.Turn` s.
 
-    The log is *turns*, and everything else is derived from it: the regions a trainer
-    consumes (:func:`~focus.harness.packing.regions`), the env transitions,
-    and -- off the fold tag alone -- :attr:`folds` and :meth:`boundaries`. Nothing here
-    is ever rewritten: ``advance`` appends, a fold appends its own turns tagged
-    ``"fold"``. That is what makes ``child.turns[len(parent.turns):]`` exactly the edge
-    -- no identity tricks, no token offsets.
-
-    :meth:`fork` copies only the workspace (the sole mutable piece); ``messages`` and
-    ``seed`` are tuples of immutable dicts and ``state`` is expected to be immutable, so
-    branches share them safely. Note that ``Runner.advance`` mutates ``workspace`` **in
-    place** (linear rollouts pay no copy) -- ``fork`` before branching.
+    The append-only generation trace supplies exact training spans. Explicit effects
+    and checkpoint_at select restorable states independently of diagnostic fold tags.
+    Snapshot copies mutable messages, task state, execution state and workspace;
+    generation records and their branch-independent rescoring caches remain shared.
     """
 
     messages: tuple[Message, ...]
@@ -128,7 +121,7 @@ class RolloutState[S]:
 
     @property
     def forkable(self) -> bool:
-        """Search may branch only at a live root or post-fold checkpoint."""
+        """Search may branch at a live, settled state selected by CheckpointPolicy."""
         return (
             not self.done
             and not self.truncated
@@ -305,7 +298,7 @@ class RolloutState[S]:
             )
 
     def snapshot(self) -> RolloutState[S]:
-        """A copy that owns its workspace, the rest shared by reference.
+        """Copy branch-owned state while retaining immutable generation records.
 
         Unguarded (no :attr:`forkable` check, unlike :meth:`fork`): it freezes the
         mutable workspace so a later in-place :meth:`Runner.advance` cannot reach back
@@ -327,7 +320,7 @@ class RolloutState[S]:
         )
 
     def fork(self) -> RolloutState[S]:
-        """An independent branch: a copied workspace, the rest shared by reference.
+        """An independent branch with inherited remaining resources and a new scope.
 
         A :meth:`snapshot` guarded by :attr:`forkable` -- raises :class:`ValueError`
         when branching is disallowed, so a scheduler that forgot to test ``forkable``

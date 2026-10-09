@@ -41,6 +41,39 @@ class CellResult:
 type CallHandler = Callable[[str, list[str], str | None], Awaitable[list[str]]]
 
 
+async def terminate_tree(process: asyncio.subprocess.Process) -> None:
+    """Kill descendants too when ordinary subprocesses create their own sessions."""
+    listing = await asyncio.create_subprocess_exec(
+        "ps",
+        "-eo",
+        "pid=,ppid=",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    output, _ = await listing.communicate()
+    children: dict[int, list[int]] = {}
+    for line in output.decode().splitlines():
+        pid, parent = map(int, line.split())
+        children.setdefault(parent, []).append(pid)
+    descendants, pending = [], list(children.get(process.pid, ()))
+    while pending:
+        pid = pending.pop()
+        descendants.append(pid)
+        pending.extend(children.get(pid, ()))
+    # Group kill covers children created during enumeration that inherit the session.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        if process.returncode is None:
+            raise
+    for pid in reversed(descendants):
+        with suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+    await process.communicate()
+
+
 class ProcessExecutor:
     """Cells restore namespace bytes, never replay earlier source.
 
@@ -69,6 +102,8 @@ class ProcessExecutor:
         max_output: int = 16000,
         max_bytes: int = 16 * 1024 * 1024,
     ) -> CellResult:
+        if timeout <= 0 or max_output < 0 or max_bytes < 1:
+            raise ValueError("invalid execution deadline or output/snapshot limit")
         if self._closed:
             raise RuntimeError("process executor is closed")
         if self._resident >= self.max_resident:
@@ -118,7 +153,14 @@ class ProcessExecutor:
                         await process.stdin.drain()
                     line = await process.stdout.readline()
                     if not line:
-                        raise RuntimeError("managed process exited without a result")
+                        assert process.stderr is not None
+                        detail = (await process.stderr.read(4096)).decode(
+                            errors="replace"
+                        )
+                        await process.wait()
+                        raise RuntimeError(
+                            f"managed process exited without a result: {detail}"
+                        )
                     result: dict[str, Any] = json.loads(line)
                     return result
 
@@ -157,12 +199,12 @@ class ProcessExecutor:
                             result["error"],
                         )
             finally:
-                if process is not None:
-                    with suppress(ProcessLookupError):
-                        os.killpg(process.pid, signal.SIGKILL)
-                    await process.communicate()
-                self._resident -= 1
-                self._tasks.discard(task)
+                try:
+                    if process is not None:
+                        await terminate_tree(process)
+                finally:
+                    self._resident -= 1
+                    self._tasks.discard(task)
 
     async def aclose(self) -> None:
         self._closed = True
