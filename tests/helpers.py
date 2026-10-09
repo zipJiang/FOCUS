@@ -279,6 +279,7 @@ def rollout(
         state=None,
         workspace=InMemoryWorkspace(),
         turns=turns,
+        checkpoint_at=len(turns) if not turns or turns[-1].tag == "fold" else -1,
         truncated=truncated,
     )
 

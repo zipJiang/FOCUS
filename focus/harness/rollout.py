@@ -26,11 +26,14 @@ as a per-turn argument (never captured), the branches stay isolated.
 from __future__ import annotations
 
 from collections.abc import Collection
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Any
+from uuid import uuid4
 
 from focus.codec import Message
+from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
 from focus.harness.turn import (
     Turn,
@@ -101,7 +104,18 @@ class RolloutState[S]:
     #: for a metric ("what fraction were forced?") or a filter over training data.
     truncated: bool = False
     #: Persisted across pickle and dataclass copies. Version 0 is analysis-only.
-    checkpoint_version: int = field(default=1, kw_only=True)
+    checkpoint_version: int = field(default=2, kw_only=True)
+    checkpoint_at: int = 0
+    context_version: int = 0
+    effects: tuple[Effect, ...] = ()
+    invocation_id: str = "root"
+    episode_id: str = field(default_factory=lambda: uuid4().hex)
+    branch_id: str = field(default_factory=lambda: uuid4().hex)
+    execution: dict[str, Any] = field(default_factory=dict)
+    history: tuple[Message, ...] = ()
+    advances: int = 0
+    steps_remaining: int | None = None
+    snapshot_available: bool = True
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Give unversioned legacy pickles a durable analysis-only marker."""
@@ -115,7 +129,8 @@ class RolloutState[S]:
         return (
             not self.done
             and not self.truncated
-            and (not self.turns or self.turns[-1].tag == "fold")
+            and self.snapshot_available
+            and len(self.turns) == self.checkpoint_at
         )
 
     def tagged(self, tags: Collection[TurnTag] | None = TASK) -> tuple[Turn[S], ...]:
@@ -280,10 +295,10 @@ class RolloutState[S]:
 
     def check_continuation(self) -> None:
         """Reject legacy continuation while allowing historical analysis."""
-        if self.checkpoint_version != 1 or "forkable" in self.__dict__:
+        if self.checkpoint_version != 2 or "forkable" in self.__dict__:
             raise ValueError(
                 "Legacy rollout checkpoints are analysis-only; generate fresh "
-                "single-submit, fold-only rollouts before replay or continuation."
+                "schema-2 rollouts before replay or continuation."
             )
 
     def snapshot(self) -> RolloutState[S]:
@@ -298,7 +313,14 @@ class RolloutState[S]:
         # acquired versioning. replace() would otherwise discard their old flag.
         version = 0 if "forkable" in self.__dict__ else self.checkpoint_version
         return replace(
-            self, workspace=self.workspace.fork(), checkpoint_version=version
+            self,
+            workspace=self.workspace.fork(),
+            messages=deepcopy(self.messages),
+            seed=deepcopy(self.seed),
+            state=deepcopy(self.state),
+            execution=deepcopy(self.execution),
+            history=deepcopy(self.history),
+            checkpoint_version=version,
         )
 
     def fork(self) -> RolloutState[S]:
@@ -311,7 +333,7 @@ class RolloutState[S]:
         self.check_continuation()
         if not self.forkable:
             raise ValueError("checkpoint is not forkable; branching disallowed here")
-        return self.snapshot()
+        return replace(self.snapshot(), branch_id=uuid4().hex)
 
 
 __all__ = ["TASK", "AnyRollout", "RolloutState"]

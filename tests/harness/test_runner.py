@@ -868,7 +868,7 @@ async def test_finish_does_not_fold_when_the_context_is_within_budget() -> None:
     assert forced.truncated
 
 
-async def test_branching_is_derived_from_roots_and_folds():
+async def test_branching_is_explicit_at_selected_boundaries():
     runner = toy_runner(ScriptedGenerator(["go", "stop"]))
     root = await runner.start("hi")
     assert root.forkable
@@ -880,7 +880,9 @@ async def test_branching_is_derived_from_roots_and_folds():
     # Explicit snapshots still support offline inspection and prefix compaction.
     assert middle.snapshot().turns == middle.turns
     marker = turn([], tag="fold", transition=False)
-    folded = replace(middle, turns=(*middle.turns, marker))
+    folded = replace(
+        middle, turns=(*middle.turns, marker), checkpoint_at=len(middle.turns) + 1
+    )
     assert folded.forkable
     assert not replace(folded, truncated=True).forkable
     terminal = await runner.advance(folded)

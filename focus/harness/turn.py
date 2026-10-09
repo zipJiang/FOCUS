@@ -95,6 +95,11 @@ class Turn[S_co]:
     compaction_penalty: float = 0.0
     #: Nonempty for malformed attempts, including after the episode penalty cap.
     compaction_issue: str = ""
+    invocation_id: str = "root"
+    policy_id: str = ""
+    format_id: str = ""
+    context_version: int = 0
+    actor: bool = True
 
 
 def trainable_logprobs(turns: Sequence[Turn[object]], version: str) -> list[float]:

@@ -84,6 +84,7 @@ from focus.generation.interfaces import (
     merge_sampling_params,
 )
 from focus.generation.policy import Policy, PreparedPrompt
+from focus.harness.checkpoint import CheckpointPolicy, Effect, SparseCheckpoints
 from focus.harness.compaction.base import Compaction, Compactor
 from focus.harness.compaction.triggers import Trigger
 from focus.harness.env import Env, StepResult
@@ -223,7 +224,9 @@ class Runner[S, A]:
         finish_prompt: str | None = DEFAULT_FINISH_PROMPT,
         tools: Sequence[dict[str, Any]] | None = None,
         generate_timeout: float | None = None,
+        checkpoints: CheckpointPolicy | None = None,
     ) -> None:
+        self._checkpoints = checkpoints or SparseCheckpoints()
         self._policy: Policy[A] = policy
         self._env: Env[S, A] = env
         self._system_prompt: str = system_prompt
@@ -352,6 +355,8 @@ class Runner[S, A]:
             seed=messages,
             state=state,
             workspace=ws,
+            history=deepcopy(messages),
+            steps_remaining=None if self._max_steps < 0 else self._max_steps,
         )
 
     async def start(
@@ -456,6 +461,12 @@ class Runner[S, A]:
             state=transition.next_state,
             turns=(*rs.turns, self._turn(rs, cond.tokens, result, transition)),
             truncated=rs.truncated or ending,
+            checkpoint_at=len(rs.turns) + 1 if self._checkpoints.selects(()) else -1,
+            history=(*rs.history, *deepcopy(messages[len(rs.messages) :])),
+            advances=rs.advances + 1,
+            steps_remaining=None
+            if rs.steps_remaining is None
+            else max(0, rs.steps_remaining - 1),
         )
 
     async def _generate(
@@ -529,6 +540,10 @@ class Runner[S, A]:
             exact=self._policy.is_exact(result),
             transition=transition,
             tag="task",
+            invocation_id=rs.invocation_id,
+            policy_id=self._policy.version,
+            format_id=self._policy.format.name,
+            context_version=rs.context_version,
         )
 
     def _params(self, sampling_params: SamplingParams | None) -> SamplingParams | None:
@@ -676,6 +691,21 @@ class Runner[S, A]:
             messages=tuple(folded.messages),
             state=folded.state,
             turns=(*rs.turns, *(turns or (marker,))),
+            context_version=rs.context_version + 1,
+            effects=(
+                *rs.effects,
+                Effect(
+                    "compaction",
+                    len(rs.turns),
+                    rs.context_version,
+                    rs.context_version + 1,
+                ),
+            ),
+            checkpoint_at=len(rs.turns) + len(turns or (marker,)),
+            advances=rs.advances + 1,
+            steps_remaining=None
+            if rs.steps_remaining is None
+            else max(0, rs.steps_remaining - 1),
         )
 
     @property
@@ -701,6 +731,12 @@ class Runner[S, A]:
             yield rs.snapshot()
             return
         budget = self._max_steps if max_steps is None else max_steps
+        if not rs.turns and max_steps is not None:
+            rs = replace(rs, steps_remaining=None if max_steps < 0 else max_steps)
+        if rs.steps_remaining is not None:
+            budget = (
+                rs.steps_remaining if budget < 0 else min(budget, rs.steps_remaining)
+            )
         for step in _step_range(budget):
             before = len(rs.turns)
             rs = await self.advance(rs, sampling_params=sampling_params)
@@ -708,7 +744,7 @@ class Runner[S, A]:
                 break
             if len(rs.turns) == before:
                 break
-            if rs.turns[-1].tag == "fold":
+            if rs.forkable:
                 # Bare truncation at this boundary is one endpoint, not two nodes
                 # with identical logs and an empty edge between them.
                 if step == budget - 1 and self._finish_prompt is None:

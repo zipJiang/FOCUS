@@ -157,10 +157,22 @@ def regions(turns: Sequence[Turn[object]]) -> tuple[PackedSequence, ...]:
         exact = True
         tag = "task"
 
+    previous: Turn[object] | None = None
     for index, turn in enumerate(turns):
         n = len(tokens)
         chains = len(turn.prefix) >= n and turn.prefix[:n] == tokens
-        if spans and (not chains or turn.tag != tag):
+        identity_changed = previous is not None and (
+            turn.invocation_id,
+            turn.policy_id,
+            turn.format_id,
+            turn.actor,
+        ) != (
+            previous.invocation_id,
+            previous.policy_id,
+            previous.format_id,
+            previous.actor,
+        )
+        if spans and (not chains or turn.tag != tag or identity_changed):
             flush()
             n = 0  # the flush emptied the pack, so the whole prefix is the delta
         if not spans:
@@ -176,6 +188,7 @@ def regions(turns: Sequence[Turn[object]]) -> tuple[PackedSequence, ...]:
         trainable += [True] * len(turn.tokens)
         spans.append((index, start, start + len(turn.tokens)))
         exact = exact and turn.exact
+        previous = turn
     flush()
     return tuple(packs)
 

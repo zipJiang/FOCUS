@@ -199,7 +199,11 @@ class ScriptedRunner(Runner[None, Any]):
             if tag == "fold"
             else turn([-1.0], done=self._done_at_end and index == len(self._tags) - 1)
         )
-        return replace(rs, turns=(*rs.turns, added))
+        return replace(
+            rs,
+            turns=(*rs.turns, added),
+            checkpoint_at=index + 1 if tag == "fold" else -1,
+        )
 
     async def finish(self, rs, *, sampling_params=None):
         self.finished += 1
@@ -348,7 +352,7 @@ async def test_legacy_pickle_version_survives_snapshots_and_dataclass_copies(old
 async def test_current_pickle_and_copies_remain_resumable():
     restored = pickle.loads(pickle.dumps(rollout()))
     copied = replace(restored).snapshot().fork()
-    assert copied.checkpoint_version == 1
+    assert copied.checkpoint_version == 2
     assert (await ScriptedRunner("task").run(copied)).done
 
 

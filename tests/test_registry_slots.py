@@ -36,6 +36,7 @@ from focus.config import RolloutConfig
 # imported below -- the interfaces this file names happen to cover all of them.
 from focus.generation import Policy, SamplingParams
 from focus.generation.parsing.base import ActionParser
+from focus.harness.checkpoint import CheckpointPolicy
 from focus.harness.compaction import (
     AgenticCompactor,
     AnyOf,
@@ -73,6 +74,8 @@ async def _post(url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
 #: accepts -- so a row doubles as the documented shape of that slot's entry.
 TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
     # -- generation and reward backends ----------------------------------------------
+    (CheckpointPolicy, {"name": "sparse"}),
+    (CheckpointPolicy, {"name": "every_decision"}),
     (
         Policy,
         {
