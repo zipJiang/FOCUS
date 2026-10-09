@@ -76,6 +76,7 @@ async def _post(url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
 TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
     (ContextProtocol, {"name": "append_only"}),
     (ContextProtocol, {"name": "summary"}),
+    (ContextProtocol, {"name": "clm"}),
     # -- generation and reward backends ----------------------------------------------
     (CheckpointPolicy, {"name": "sparse"}),
     (CheckpointPolicy, {"name": "every_decision"}),

@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import time
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from focus.codec import Message
 from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, Owner
-from focus.execution.process import ProcessExecutor
+from focus.execution.process import (
+    CallHandler,
+    CellResult,
+    ProcessExecutor,
+    ProcessSnapshot,
+)
 from focus.generation import GenerateResult, Policy, PreparedPrompt, SamplingParams
 from focus.generation.interfaces import aclose_client
 
@@ -93,6 +99,8 @@ class Usage:
     prompt_tokens: int = 0
     output_tokens: int = 0
     failures: int = 0
+    process_cells: int = 0
+    process_seconds: float = 0.0
 
 
 @dataclass
@@ -150,6 +158,25 @@ class ExecutionServices:
             raise
         usage.output_tokens += len(result.tokens)
         return result
+
+    async def execute(
+        self,
+        code: str,
+        snapshot: ProcessSnapshot | None = None,
+        *,
+        handler: CallHandler | None = None,
+        owner: Owner = DEFAULT_OWNER,
+        timeout: float = 30,
+    ) -> CellResult:
+        usage = self.usage.setdefault(owner.episode, Usage())
+        usage.process_cells += 1
+        start = time.monotonic()
+        try:
+            return await self.processes.execute(
+                code, snapshot, handler=handler, owner=owner, timeout=timeout
+            )
+        finally:
+            usage.process_seconds += time.monotonic() - start
 
     async def __aenter__(self) -> ExecutionServices:
         await self.astart()
