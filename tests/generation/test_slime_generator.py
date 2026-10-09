@@ -15,8 +15,8 @@ def _canned_output() -> dict[str, Any]:
         "text": " hi",
         "meta_info": {
             "finish_reason": {"type": "stop"},
-            # [logprob, token_id, ...]; the last logprob is null on purpose.
-            "output_token_logprobs": [[-0.1, 11], [-0.4, 22], [None, 33]],
+            # [logprob, token_id, ...], aligned one-to-one with sampled tokens.
+            "output_token_logprobs": [[-0.1, 11], [-0.4, 22], [-0.5, 33]],
         },
     }
 
@@ -38,7 +38,7 @@ def test_agenerate_aligns_tokens_and_logprobs() -> None:
     result = asyncio.run(gen.agenerate_tokens((5, 6, 7), SamplingParams(max_tokens=4)))
 
     assert result.tokens == (11, 22, 33)
-    assert result.logprobs == [-0.1, -0.4, 0.0]  # null -> 0.0, aligned 1:1 with tokens
+    assert result.logprobs == [-0.1, -0.4, -0.5]
     assert len(result.logprobs) == len(result.tokens)
     assert result.prefix_tokens == (5, 6, 7)
     assert result.text == " hi"

@@ -149,19 +149,9 @@ def finite_logprobs(
     raw: Sequence[float | None] | None,
     length: int,
 ) -> list[float]:
-    """Align ``raw`` to ``length``, replacing missing/non-finite values with ``0.0``.
-
-    Returns ``[]`` when ``length == 0`` or ``raw`` is empty/absent (no logprobs
-    requested or returned).
-    """
-    if length == 0 or not raw:
+    """Validate completion likelihoods; absent optional likelihoods remain absent."""
+    if not raw:
         return []
-    values: list[float] = []
-    for index in range(length):
-        value = raw[index] if index < len(raw) else None
-        if value is None:
-            values.append(0.0)
-            continue
-        numeric = float(value)
-        values.append(numeric if math.isfinite(numeric) else 0.0)
-    return values
+    if len(raw) != length or any(v is None or not math.isfinite(v) for v in raw):
+        raise ValueError("completion logprobs must be aligned, present and finite")
+    return [float(v) for v in raw if v is not None]

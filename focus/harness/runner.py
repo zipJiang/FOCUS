@@ -456,7 +456,14 @@ class Runner[S, A]:
         self._policy.record_reply(result, messages)
         action = self._policy.parse(result)
         origin = len(rs.turns)
-        draft = self._turn(rs, cond.tokens, result, None)
+        draft = replace(
+            self._turn(rs, cond.tokens, result, None),
+            sampling_params=deepcopy(
+                merge_sampling_params(
+                    self.policy.default_params, self._params(sampling_params)
+                )
+            ),
+        )
         current = replace(
             rs,
             messages=tuple(messages),

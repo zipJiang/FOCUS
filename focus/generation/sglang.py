@@ -86,9 +86,11 @@ def _aligned_token_logprobs(
     tokens: list[TokenId] = []
     logprobs: list[float] = []
     for pair in pairs:
-        logprob = float(pair[0]) if pair[0] is not None else 0.0
+        if pair[0] is None or not math.isfinite(float(pair[0])):
+            raise ValueError("missing or non-finite completion logprob")
+        logprob = float(pair[0])
         tokens.append(int(pair[1]))
-        logprobs.append(logprob if math.isfinite(logprob) else 0.0)
+        logprobs.append(logprob)
     return tuple(tokens), logprobs
 
 
@@ -110,7 +112,7 @@ def _prompt_logprobs(
             result.append(None)
             continue
         value = float(pair[0])
-        result.append(value if math.isfinite(value) else 0.0)
+        result.append(value if math.isfinite(value) else None)
     return result
 
 

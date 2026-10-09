@@ -39,11 +39,12 @@ offset arithmetic is needed to say which tokens a fork added.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
-from focus.generation import TokenId
+from focus.generation import SamplingParams, TokenId
 from focus.harness.env import StepResult
 
 #: What kind of work a turn is: the task, or the agentic fold that rewrote its context.
@@ -100,6 +101,7 @@ class Turn[S_co]:
     format_id: str = ""
     context_version: int = 0
     actor: bool = True
+    sampling_params: SamplingParams | None = None
     reward_components: dict[str, float] = field(default_factory=dict)
 
 
@@ -115,7 +117,7 @@ def trainable_logprobs(turns: Sequence[Turn[object]], version: str) -> list[floa
     Where a missing channel is a *bug* rather than an absence (an anchor never
     re-scored), use :func:`logprob`, which says so.
     """
-    return [lp for turn in turns for lp in turn.logprobs.get(version, ())]
+    return [lp for turn in turns if turn.actor for lp in turn.logprobs.get(version, ())]
 
 
 def logprob(turns: Sequence[Turn[object]], version: str) -> float:
@@ -127,9 +129,14 @@ def logprob(turns: Sequence[Turn[object]], version: str) -> float:
     """
     total = 0.0
     for turn in turns:
+        if not turn.actor:
+            continue
         if version not in turn.logprobs:
             raise KeyError(f"turn has no logprobs for version {version!r}")
-        total += sum(turn.logprobs[version])
+        values = turn.logprobs[version]
+        if len(values) != len(turn.tokens) or any(not math.isfinite(v) for v in values):
+            raise ValueError("actor logprobs must be aligned and finite")
+        total += sum(values)
     return total
 
 

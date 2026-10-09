@@ -524,7 +524,17 @@ def _random_tree(rng: random.Random, config=None) -> SchedulerState[RolloutState
     What successive search passes leave behind: branches off the root and
     step lines under them, every edge stamped with the provenance export reads.
     """
-    root_log = tuple(replace(t, exact=True) for t in _random_log(rng, max_turns=2))
+    root_log = tuple(
+        replace(
+            t,
+            exact=True,
+            logprobs={
+                **t.logprobs,
+                VERSION: t.logprobs.get(VERSION, (-0.5,) * len(t.tokens)),
+            },
+        )
+        for t in _random_log(rng, max_turns=2)
+    )
     state: SchedulerState[RolloutState[None]] = root_state(
         rollout(*root_log), width=8, reward_config=config
     )
@@ -532,7 +542,14 @@ def _random_tree(rng: random.Random, config=None) -> SchedulerState[RolloutState
         parent_id, log = 0, root_log
         for _ in range(rng.randint(1, 2)):
             log = log + tuple(
-                replace(t, exact=True)
+                replace(
+                    t,
+                    exact=True,
+                    logprobs={
+                        **t.logprobs,
+                        VERSION: t.logprobs.get(VERSION, (-0.5,) * len(t.tokens)),
+                    },
+                )
                 for t in _random_log(rng, max_turns=3, terminal=rng.random() < 0.75)
             )
             parent_id = stamped_child(state, parent_id, rollout(*log)).id

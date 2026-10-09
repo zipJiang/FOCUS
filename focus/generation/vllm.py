@@ -306,16 +306,6 @@ def _logprobs_field(choice: Any, name: str) -> Any:
 
 def _extract_token_logprobs(choice: Any, token_count: int) -> list[float]:
     raw = _logprobs_field(choice, "token_logprobs")
-    if token_count and raw and len(raw) != token_count:
-        logger.warning(
-            (
-                "vLLM returned %d token_logprobs for %d output tokens; aligning to "
-                + "the token count. A persistent mismatch indicates a token/logprob "
-                + "off-by-one in the backend response."
-            ),
-            len(raw),
-            token_count,
-        )
     return finite_logprobs(raw, token_count)
 
 

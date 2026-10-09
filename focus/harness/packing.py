@@ -80,6 +80,10 @@ class PackedSequence:
     spans: tuple[tuple[int, int, int], ...] = ()
     #: Keep malformed compaction supervision even below an advantage cutoff.
     retain_for_training: bool = False
+    actor: bool = True
+    invocation_id: str = "root"
+    policy_id: str = ""
+    format_id: str = ""
 
 
 def _scored(turn: Turn[object]) -> set[str]:
@@ -145,6 +149,10 @@ def regions(turns: Sequence[Turn[object]]) -> tuple[PackedSequence, ...]:
         packs.append(
             PackedSequence(
                 tokens=tokens,
+                actor=turns[spans[0][0]].actor,
+                invocation_id=turns[spans[0][0]].invocation_id,
+                policy_id=turns[spans[0][0]].policy_id,
+                format_id=turns[spans[0][0]].format_id,
                 trainable=tuple(trainable),
                 logprobs=logprobs,
                 exact=exact,
@@ -166,11 +174,13 @@ def regions(turns: Sequence[Turn[object]]) -> tuple[PackedSequence, ...]:
             turn.policy_id,
             turn.format_id,
             turn.actor,
+            turn.context_version,
         ) != (
             previous.invocation_id,
             previous.policy_id,
             previous.format_id,
             previous.actor,
+            previous.context_version,
         )
         if spans and (not chains or turn.tag != tag or identity_changed):
             flush()
@@ -185,7 +195,7 @@ def regions(turns: Sequence[Turn[object]]) -> tuple[PackedSequence, ...]:
         start = len(turn.prefix)
         tokens = turn.prefix + turn.tokens
         trainable += [False] * (start - n)
-        trainable += [True] * len(turn.tokens)
+        trainable += [turn.actor] * len(turn.tokens)
         spans.append((index, start, start + len(turn.tokens)))
         exact = exact and turn.exact
         previous = turn

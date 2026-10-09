@@ -183,7 +183,7 @@ def spans_of(turns: Sequence[Turn[object]], /) -> tuple[PackedSequence, ...]:
     Token-less packs are dropped: a fold that generated nothing leaves a marker turn
     that packs to no tokens, and it is a fact about the log, not a training sample.
     """
-    return tuple(seq for seq in regions(turns) if seq.tokens)
+    return tuple(seq for seq in regions(turns) if seq.tokens and seq.actor)
 
 
 def edge_spans(

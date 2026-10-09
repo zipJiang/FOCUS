@@ -61,7 +61,9 @@ def _runtime(**fields: Any) -> Runtime:
 
 def _result() -> PreparedBatch:
     """One actor record and one critic record: these tests only count what came back."""
-    span = PackedSequence(tokens=(0, 1), trainable=(False, True))
+    span = PackedSequence(
+        tokens=(0, 1), trainable=(False, True), logprobs={"policy": (0.0, -0.1)}
+    )
     return PreparedBatch(
         actor=(
             ActorSample(
@@ -222,7 +224,8 @@ def _storage_generate(**kwargs: Any) -> Any:
         [
             "r</think>" + tool_call("storage", operate="put", key="k", value="v"),
             "r</think>" + tool_call("submit", answer="42"),
-        ]
+        ],
+        logprobs=-0.1,
     )
     return make_generate(
         RolloutSpec(
@@ -298,7 +301,9 @@ async def test_the_factory_sees_the_trainer_s_own_sample() -> None:
 async def test_an_env_with_no_workspace_tools_needs_no_factory() -> None:
     """The default stays the default: no factory is a `NullWorkspace`, which is exactly
     right for a world whose tools never touch a store."""
-    gen = ScriptedGenerator(["r</think>" + tool_call("submit", answer="42")])
+    gen = ScriptedGenerator(
+        ["r</think>" + tool_call("submit", answer="42")], logprobs=-0.1
+    )
     generate = make_generate(
         RolloutSpec(
             config=RolloutConfig(

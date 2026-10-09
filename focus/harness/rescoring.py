@@ -20,6 +20,7 @@ gone the next time anything asked for a region.
 from __future__ import annotations
 
 import asyncio
+import math
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from focus.execution import ExecutionServices
@@ -29,7 +30,6 @@ from focus.generation import (
     SamplingParams,
     TokenId,
 )
-from focus.generation.interfaces import finite_logprobs
 from focus.generation.policy import PreparedPrompt
 from focus.harness.packing import regions
 
@@ -100,7 +100,8 @@ class TokenScorer:
     async def score(
         self, tokens: tuple[TokenId, ...], trainable: tuple[bool, ...]
     ) -> tuple[float, ...]:
-        del trainable  # the backend scores every position in one pass
+        if len(trainable) != len(tokens):
+            raise ValueError("scoring mask must align with tokens")
         result = await self._generate(tokens)
         lps = result.prompt_logprobs
         if len(lps) != len(tokens):
@@ -108,9 +109,14 @@ class TokenScorer:
                 "scorer backend returned no aligned prompt_logprobs "
                 + f"({len(lps)} for {len(tokens)} tokens); it does not support scoring"
             )
-        # finite_logprobs maps None / non-finite to 0.0, aligned to the sequence (e.g.
-        # the first prompt token has no context -> None, never a trainable position).
-        return tuple(finite_logprobs(lps, len(tokens)))
+        values: list[float] = []
+        for value, keep in zip(lps, trainable, strict=True):
+            if keep and (value is None or not math.isfinite(value)):
+                raise ValueError("missing or non-finite actor prompt logprob")
+            values.append(
+                float(value) if value is not None and math.isfinite(value) else 0.0
+            )
+        return tuple(values)
 
     async def _generate(self, tokens: tuple[TokenId, ...]) -> GenerateResult:
         """The teacher-forced pass, bounded by ``timeout`` when one is configured.
@@ -163,9 +169,11 @@ async def reevaluate(
     *unscored* log instead of one per node.
     """
     turns = rollout.turns
-    if all(version in turn.logprobs for turn in turns):
+    if all(not turn.actor or version in turn.logprobs for turn in turns):
         return  # every region would be skipped below; do not pay to pack them first
     for seq in regions(turns):
+        if not seq.actor:
+            continue
         if all(version in turns[i].logprobs for i, _, _ in seq.spans):
             continue
         if not seq.tokens:
@@ -178,6 +186,11 @@ async def reevaluate(
                 turns[index].logprobs.setdefault(version, ())
             continue
         column = await scorer.score(seq.tokens, seq.trainable)
+        if len(column) != len(seq.tokens) or any(
+            keep and not math.isfinite(value)
+            for value, keep in zip(column, seq.trainable, strict=True)
+        ):
+            raise ValueError("scorer returned misaligned or non-finite actor logprobs")
         for index, start, end in seq.spans:
             turns[index].logprobs.setdefault(version, tuple(column[start:end]))
 

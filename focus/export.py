@@ -93,6 +93,16 @@ def _record_samples[T](
     edge_tokens = record.edge_tokens
     span_count = len(record.spans)
     for index, span in enumerate(record.spans):
+        values = span.logprobs.get(version, ())
+        if any(span.trainable) and (
+            len(values) != len(span.tokens)
+            or len(span.trainable) != len(span.tokens)
+            or any(
+                keep and not math.isfinite(value)
+                for value, keep in zip(values, span.trainable, strict=True)
+            )
+        ):
+            raise ValueError("actor export requires aligned finite behavior logprobs")
         yield make(
             span=span,
             # Selected here rather than at packing: a pack carries every version it was
@@ -244,7 +254,14 @@ def _dict_sample(
     # (`edge_tokens`, `span_index`, `span_count`) that arrive in `extra`: a trainer that
     # does not distinguish task work from fold work, or that already normalises per
     # token, simply never reads them.
-    metadata: dict[str, Any] = {LANE_KEY: lane, "tag": span.tag, **extra}
+    metadata: dict[str, Any] = {
+        LANE_KEY: lane,
+        "tag": span.tag,
+        "invocation_id": span.invocation_id,
+        "policy_id": span.policy_id,
+        "format_id": span.format_id,
+        **extra,
+    }
     if estimator is not None:
         metadata[ESTIMATOR_KEY] = estimator
     if diagnostics is not None:

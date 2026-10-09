@@ -44,7 +44,9 @@ class FakeCompletions:
             text=" done",
             token_ids=list(encode_text(" done")),
             finish_reason="length",
-            logprobs=types.SimpleNamespace(token_logprobs=[-0.2, None, -0.4]),
+            logprobs=types.SimpleNamespace(
+                token_logprobs=[-0.2, -0.3, -0.4, -0.5, -0.6]
+            ),
         )
         return types.SimpleNamespace(choices=[choice])
 
@@ -180,7 +182,7 @@ def test_openai_generator_uses_completions_endpoint(
     assert result.text == " done"
     assert result.prefix_tokens == prefix_tokens
     assert result.stop_reason == "length"
-    assert result.logprobs == [-0.2, 0.0, -0.4, 0.0, 0.0]
+    assert result.logprobs == [-0.2, -0.3, -0.4, -0.5, -0.6]
     client.close.assert_called_once()
 
 
@@ -330,7 +332,9 @@ def test_openai_generator_extracts_prompt_logprobs(
                 text=" done",
                 token_ids=list(encode_text(" done")),
                 finish_reason="length",
-                logprobs=types.SimpleNamespace(token_logprobs=[-0.2, -0.4]),
+                logprobs=types.SimpleNamespace(
+                    token_logprobs=[-0.2, -0.4, -0.4, -0.4, -0.4]
+                ),
                 prompt_logprobs=[
                     {80: {"logprob": -0.1, "rank": 1, "decoded_token": "P"}},
                     {114: {"logprob": -0.3, "rank": 2, "decoded_token": "r"}},
