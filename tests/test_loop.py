@@ -49,6 +49,7 @@ from focus.harness import (
 from focus.integrations.slime import to_samples
 from focus.loop import Runtime, _budget, _value_head, rescore_anchor
 from focus.preparation.records import ActorSample, PreparedBatch
+from focus.protocols import Summary
 from focus.reward import RewardModel, RewardResult
 from focus.reward.config import RewardConfig
 from focus.scheduler import (
@@ -157,7 +158,7 @@ def _runner(
         ),
         env=CountEnv(),
         system_prompt="sys",
-        compactor=EveryTurnCompactor(),
+        protocol=Summary(EveryTurnCompactor()),
         max_steps=4,
         **kwargs,
     )

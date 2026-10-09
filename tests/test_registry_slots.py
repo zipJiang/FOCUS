@@ -46,6 +46,7 @@ from focus.harness.compaction import (
 )
 from focus.harness.workspace import Workspace
 from focus.preparation import AdvantageEstimator
+from focus.protocols import ContextProtocol
 from focus.registry import (
     _REGISTRY,
     build,
@@ -73,6 +74,8 @@ async def _post(url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
 #: ``(interface, config)`` for every registered name, with the minimal kwargs that name
 #: accepts -- so a row doubles as the documented shape of that slot's entry.
 TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
+    (ContextProtocol, {"name": "append_only"}),
+    (ContextProtocol, {"name": "summary"}),
     # -- generation and reward backends ----------------------------------------------
     (CheckpointPolicy, {"name": "sparse"}),
     (CheckpointPolicy, {"name": "every_decision"}),

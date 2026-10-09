@@ -23,6 +23,7 @@ from focus.harness.compaction.base import IncompleteCompactionError
 from focus.harness.env import StepResult
 from focus.harness.tools.dispatch import tool_reply
 from focus.harness.turn import Turn
+from focus.protocols import Summary
 
 COMPACTION_SCHEMA = """
 
@@ -188,7 +189,7 @@ class BrowserRunner(Runner[State, ToolTurn]):
             and rs.turns_taken >= rs.state.task_limit - 1
         ):
             return await self.finish(rs, sampling_params=sampling_params)
-        if not rs.done and not rs.truncated and self._compactor is None:
+        if not rs.done and not rs.truncated and not self.protocol.manages_context:
             size = len(
                 self._policy.prepare(rs.messages, tools=self._tools or ()).tokens
             )
@@ -202,9 +203,7 @@ class BrowserRunner(Runner[State, ToolTurn]):
         rs.check_continuation()
         if self._finish_prompt is None:
             return replace(rs, truncated=True)
-        if self._compactor is not None and self._compactor.trigger.fires(
-            self._policy.prepare(rs.messages, tools=self._tools or ()).tokens, rs.state
-        ):
+        if self.protocol.needs_prepare(rs, self):
             rs = await self.compact(rs)
             if rs.done:
                 return rs
@@ -336,7 +335,7 @@ def make_runner(
         policy=policy,
         env=env,
         system_prompt=SYSTEM,
-        compactor=None if no_compact else compactor,
+        protocol=Summary(None if no_compact else compactor),
         max_steps=max_steps,
         finish_prompt=FINISH_PROMPT,
     )

@@ -351,6 +351,10 @@ def toy_runner(
     a text parser, a one-line system prompt -- so a test that cares about compaction or
     scheduling names only the piece it is actually varying.
     """
+    from focus.protocols import Summary
+
+    if "compactor" in kwargs:
+        kwargs["protocol"] = Summary(kwargs.pop("compactor"))
     return Runner(
         policy=toy_policy(gen, parser=parser, version=version),
         env=env if env is not None else ToyEnv(),
@@ -392,7 +396,7 @@ def trainable_text(
     )
 
 
-def tool_call(name: str, **arguments: str) -> str:
+def tool_call(name: str, **arguments: Any) -> str:
     """One Hermes ``<tool_call>`` block -- the dialect these tests generate in."""
     obj = json.dumps({"name": name, "arguments": arguments})
     return f"<tool_call>\n{obj}\n</tool_call>"

@@ -31,6 +31,7 @@ from focus.harness.tools.submission import (
     submitted_call,
 )
 from focus.harness.turn import Turn
+from focus.protocols import Summary
 
 from .calls import call_key
 from .dataset import Case
@@ -426,7 +427,7 @@ def build_world(case: Case, repo: Repository, config: RunConfig) -> World:
             "Rank distinct relevant files early; put the strongest candidates first."
         )
         + LOCALIZATION_GUIDANCE,
-        compactor=build_locbench_compactor(config) if config.compact else None,
+        protocol=Summary(build_locbench_compactor(config) if config.compact else None),
         max_steps=config.max_steps,
         finish_prompt=(
             "Investigation budget exhausted. Call submit with your ranked locations "

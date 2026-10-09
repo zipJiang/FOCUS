@@ -88,7 +88,6 @@ from focus.generation.interfaces import (
 from focus.generation.policy import Policy, PreparedPrompt
 from focus.harness.checkpoint import CheckpointPolicy, Effect, SparseCheckpoints
 from focus.harness.compaction.base import Compaction, Compactor
-from focus.harness.compaction.triggers import Trigger
 from focus.harness.env import Env, StepResult
 from focus.harness.rollout import RolloutState
 from focus.harness.turn import Turn
@@ -97,6 +96,7 @@ from focus.harness.workspace import (
     StorageTool,
     Workspace,
 )
+from focus.protocols import AppendOnly, ContextProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +220,7 @@ class Runner[S, A]:
         policy: Policy[A],
         env: Env[S, A],
         system_prompt: str,
-        compactor: Compactor[S] | None = None,
+        protocol: ContextProtocol | None = None,
         sampling_params: SamplingParams | None = None,
         max_steps: int = 32,
         finish_prompt: str | None = DEFAULT_FINISH_PROMPT,
@@ -234,26 +234,17 @@ class Runner[S, A]:
         self._policy: Policy[A] = policy
         self._env: Env[S, A] = env
         self._system_prompt: str = system_prompt
-        # A compactor is a trigger plus a fold, and only the fold half is abstract --
-        # `trigger` is an attribute, so a class that forgets it still constructs. Left
-        # to be found by `advance`, the omission surfaces as an `AttributeError` inside
-        # an expansion, which the scheduler records as a dead rollout: a whole run of
-        # failures whose reason is a typo in a compactor. Both halves are in hand here.
-        if compactor is not None and not isinstance(
-            getattr(compactor, "trigger", None), Trigger
-        ):
-            raise TypeError(
-                f"{type(compactor).__name__} has no `trigger`; a compactor is a "
-                + "trigger saying when to fold plus a `compact` doing it, and the "
-                + "runner checks the trigger before every turn"
-            )
-        self._compactor: Compactor[S] | None = compactor
+        self.protocol = protocol or AppendOnly()
         self._sampling_params: SamplingParams | None = sampling_params
         self._max_steps: int = max_steps
         self._finish_prompt: str | None = finish_prompt
         # Tool schemas rendered into every prompt. Explicit `tools` wins; otherwise a
         # ToolEnv (or any env exposing `.schemas`) supplies them automatically.
-        self._tools = tools if tools is not None else getattr(env, "schemas", None)
+        task_tools = tools if tools is not None else getattr(env, "schemas", ())
+        self._tools = (*tuple(task_tools or ()), *self.protocol.schemas())
+        names = [tool["function"]["name"] for tool in self._tools]
+        if len(names) != len(set(names)):
+            raise ValueError("protocol and task tool names collide")
         # Seconds one generate may take before the turn is abandoned. `None` -- the
         # default -- waits forever, which is what a backend that always answers wants.
         # `-1` normalises to `None` here rather than staying in-band as it does for the
@@ -264,6 +255,10 @@ class Runner[S, A]:
             if generate_timeout is not None and generate_timeout < 0
             else generate_timeout
         )
+
+    @property
+    def env(self) -> Env[S, A]:
+        return self._env
 
     @property
     def policy(self) -> Policy[A]:
@@ -318,7 +313,7 @@ class Runner[S, A]:
             policy=self._policy,
             env=env,
             system_prompt=system_prompt,
-            compactor=None,
+            protocol=AppendOnly(),
             sampling_params=(
                 self._sampling_params if sampling_params is None else sampling_params
             ),
@@ -353,9 +348,7 @@ class Runner[S, A]:
         _check_workspace(self._env, ws)
         messages = tuple(seed)
         state = await self._env.reset()
-        if self._compactor is not None:
-            self._compactor.trigger.check(state)
-        return RolloutState(
+        rs = RolloutState(
             messages=messages,
             seed=messages,
             state=state,
@@ -363,6 +356,7 @@ class Runner[S, A]:
             history=deepcopy(messages),
             steps_remaining=None if self._max_steps < 0 else self._max_steps,
         )
+        return await self.protocol.initialize(rs, self)
 
     async def start(
         self, user_prompt: str, *, workspace: Workspace | None = None
@@ -411,21 +405,11 @@ class Runner[S, A]:
         rs.check_continuation()
         if rs.done or rs.truncated:
             return rs
-        cond = self._policy.prepare(rs.messages, tools=self._tools or ())
-        # Read once to check the configured compactor's trigger before folding.
-        compactor = self._compactor
-        if compactor is not None and compactor.trigger.fires(cond.tokens, rs.state):
-            # Logged here rather than in `_fold`, which is the one place that has the
-            # rendered prompt: how long the context grew before the trigger fired is
-            # the number an operator tuning a fold threshold is after. The length
-            # only -- never the ids, which are the task's data.
-            logger.debug(
-                "fold fired turns_taken=%d folds=%d prompt_tokens=%d",
-                rs.turns_taken,
-                rs.folds,
-                len(cond.tokens),
-            )
-            return await self.compact(rs)
+        prepared = await self.protocol.before(rs, self)
+        if len(prepared.turns) != len(rs.turns):
+            return prepared
+        rs = prepared
+        cond = self._policy.prepare(rs.messages, tools=self._tools)
         return await self._generate_turn(
             rs, list(rs.messages), cond, sampling_params=sampling_params, ending=False
         )
@@ -457,21 +441,24 @@ class Runner[S, A]:
         )
         self._policy.record_reply(result, messages)
         action = self._policy.parse(result)
-        transition = (
-            await self._env.finish(rs.state, action)
-            if ending
-            else await self._env.step(rs.state, action, workspace=rs.workspace)
-        )
-        if not ending and not transition.done:
-            messages.extend(transition.messages)  # the world's reply turns
-        return replace(
+        origin = len(rs.turns)
+        draft = self._turn(rs, cond.tokens, result, None)
+        current = replace(
             rs,
             messages=tuple(messages),
-            state=transition.next_state,
-            turns=(*rs.turns, self._turn(rs, cond.tokens, result, transition)),
-            truncated=rs.truncated or ending,
-            checkpoint_at=len(rs.turns) + 1 if self._checkpoints.selects(()) else -1,
+            turns=(*rs.turns, draft),
             history=(*rs.history, *deepcopy(messages[len(rs.messages) :])),
+        )
+        applied = await self.protocol.apply(current, action, self, ending=ending)
+        current = applied.rollout
+        turns = list(current.turns)
+        turns[origin] = replace(turns[origin], transition=applied.transition)
+        effects = current.effects[len(rs.effects) :]
+        return replace(
+            current,
+            turns=tuple(turns),
+            truncated=rs.truncated or ending,
+            checkpoint_at=len(turns) if self._checkpoints.selects(effects) else -1,
             advances=rs.advances + 1,
             steps_remaining=None
             if rs.steps_remaining is None
@@ -516,7 +503,7 @@ class Runner[S, A]:
         rs: RolloutState[S],
         cond: tuple[int, ...],
         result: GenerateResult,
-        transition: StepResult[S],
+        transition: StepResult[S] | None,
     ) -> Turn[S]:
         """Record one generate as a task turn.
 
@@ -610,13 +597,9 @@ class Runner[S, A]:
         # ending it had already earned. Folding here costs one summarization and makes
         # the budget arithmetic the same everywhere: prompt <= max_prompt_tokens at
         # every generate, this one included.
-        compactor = self._compactor
-        if compactor is not None and compactor.trigger.fires(
-            self._policy.prepare(rs.messages, tools=self._tools or ()).tokens, rs.state
-        ):
-            rs = await self.compact(rs)
-            if rs.done:  # a compactor that ended the episode has nothing left to force
-                return rs
+        rs = await self.protocol.before(rs, self)
+        if rs.done:
+            return rs
         logger.debug(
             "forcing an ending truncated=True turns_taken=%d folds=%d",
             rs.turns_taken,
@@ -642,11 +625,9 @@ class Runner[S, A]:
         pass ``rs.snapshot()`` when retaining the original for comparison.
         """
         rs.check_continuation()
-        if self._compactor is None:
-            raise ValueError("Runner has no compactor configured")
         if rs.done or rs.truncated:
             raise ValueError("Cannot compact a finished rollout for continuation")
-        return await self._fold(rs, self._compactor)
+        return await self.protocol.compact(rs, self)
 
     async def _fold(
         self, rs: RolloutState[S], compactor: Compactor[S]

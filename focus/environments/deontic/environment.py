@@ -66,6 +66,7 @@ from focus.harness.compaction.base import IncompleteCompactionError
 from focus.harness.env import StepResult
 from focus.harness.tools.submission import submission_payload, submitted_call
 from focus.harness.turn import Turn
+from focus.protocols import Summary
 
 # -- the case ------------------------------------------------------------------------
 
@@ -568,7 +569,7 @@ def build_world(case: Case, cfg: RunConfig) -> World:
         # Fold on the token budget, or once the round's tool budget is spent: exactly
         # the composition `build_budget` names, over the `RoundBudget` counters
         # `DeonticState` mixes in and `ToolEnv` charges.
-        compactor=(None if cfg.no_compact else build_deontic_compactor(cfg)),
+        protocol=Summary(None if cfg.no_compact else build_deontic_compactor(cfg)),
         max_steps=cfg.max_steps,
         finish_prompt=finish_prompt(case),
         compaction_failure=cfg.compaction_failure,

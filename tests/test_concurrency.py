@@ -68,6 +68,7 @@ from focus.harness import (
 from focus.harness.turn import Turn
 from focus.loop import Runtime
 from focus.preparation.records import PreparedBatch
+from focus.protocols import Summary
 from focus.reward import RewardModel, RewardResult
 from focus.reward.config import RewardConfig
 from focus.scheduler import (
@@ -803,7 +804,7 @@ def _runtime(
         ),
         env=RoundEnv(),
         system_prompt="sys",
-        compactor=build_budget(max_prompt_tokens=64, max_interactions=2),
+        protocol=Summary(build_budget(max_prompt_tokens=64, max_interactions=2)),
         max_steps=6,
     )
     return Runtime(
