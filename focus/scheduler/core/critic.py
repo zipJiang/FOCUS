@@ -30,6 +30,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
+from focus.execution import AdmissionPool
 from focus.harness.transcript import format_transcript
 from focus.registry import register, registrable
 from focus.reward import RewardModel, RewardResult
@@ -98,7 +99,9 @@ class NodeScorer[P: Payload]:
         serialize: Callable[[P], str] | None = None,
         version: str,
         timeout: float | None = None,
+        pool: AdmissionPool | None = None,
     ) -> None:
+        self._pool = pool or AdmissionPool()
         self._model = model
         self._timeout = timeout
         # rollout payloads are the only ones in production, so their renderer is the
@@ -146,10 +149,11 @@ class NodeScorer[P: Payload]:
         batch was. ``wait_for`` has already cancelled the request by then.
         """
         if self._timeout is None:
-            return await self._model.ascore_batch(contexts)
+            return await self._pool.run(lambda: self._model.ascore_batch(contexts))
         try:
             return await asyncio.wait_for(
-                self._model.ascore_batch(contexts), self._timeout
+                self._pool.run(lambda: self._model.ascore_batch(contexts)),
+                self._timeout,
             )
         except TimeoutError as exc:
             raise TimeoutError(

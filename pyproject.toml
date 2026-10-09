@@ -3,7 +3,7 @@ name = "focus"
 version = "0.1.0"
 description = "Focused Optimization on Critical Underperforming Segments for multi-turn language-model agents"
 requires-python = ">=3.12"
-dependencies = ["regex>=2026.4.4"]
+dependencies = ["regex>=2026.4.4", "cloudpickle>=3.1"]
 
 [project.optional-dependencies]
 config = ["omegaconf"]
@@ -152,5 +152,6 @@ module = [
     "httpx.*",
     "omegaconf.*",
     "pyarrow.*",
+    "cloudpickle.*",
 ]
 ignore_missing_imports = true

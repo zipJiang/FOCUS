@@ -26,6 +26,7 @@ from tests.helpers import (
     StalledGenerator,
     complete,
     rollout,
+    test_format,
     toy_runner,
     trainable_text,
     turn,
@@ -41,6 +42,7 @@ class PromptLogprobGenerator(Policy[Any]):
     """
 
     def __init__(self, value: float = -0.3, *, empty: bool = False) -> None:
+        super().__init__(format=test_format())
         self._value = value
         self._empty = empty  # emulate a backend with no prompt-logprob support
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from focus.execution import ExecutionServices
 from focus.generation import (
     GenerateResult,
     Policy,
@@ -29,6 +30,7 @@ from focus.generation import (
     TokenId,
 )
 from focus.generation.interfaces import finite_logprobs
+from focus.generation.policy import PreparedPrompt
 from focus.harness.packing import regions
 
 if TYPE_CHECKING:
@@ -82,9 +84,11 @@ class TokenScorer:
         *,
         params: SamplingParams | None = None,
         timeout: float | None = None,
+        services: ExecutionServices | None = None,
     ) -> None:
         if not policy.provides_exact_tokens:
             raise ValueError("Token scoring requires an exact-token policy")
+        self.services = services or ExecutionServices()
         self._policy = policy
         self._timeout = timeout
         # prompt_logprobs=0 -> just the actual token's logprob; max_tokens=1 as vLLM
@@ -116,10 +120,21 @@ class TokenScorer:
         should not pay a task wrapper per pack to be told so.
         """
         if self._timeout is None:
-            return await self._policy.agenerate_tokens(tokens, self._params)
+            return await self.services.generate(
+                self._policy,
+                PreparedPrompt(tokens, self._policy.format, (), ()),
+                self._params,
+                token_input=True,
+            )
         try:
             return await asyncio.wait_for(
-                self._policy.agenerate_tokens(tokens, self._params), self._timeout
+                self.services.generate(
+                    self._policy,
+                    PreparedPrompt(tokens, self._policy.format, (), ()),
+                    self._params,
+                    token_input=True,
+                ),
+                self._timeout,
             )
         except TimeoutError as exc:
             raise TimeoutError(

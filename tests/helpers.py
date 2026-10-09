@@ -483,6 +483,7 @@ class StalledGenerator(Policy[Any]):
     """
 
     def __init__(self) -> None:
+        super().__init__(format=test_format())
         self.calls = 0
         self.cancelled = 0
 

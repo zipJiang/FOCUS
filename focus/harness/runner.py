@@ -75,6 +75,8 @@ from itertools import count
 from typing import Any
 
 from focus.codec import Message
+from focus.execution import ExecutionServices, Owner
+from focus.execution.pool import DEFAULT_OWNER
 from focus.generation import (
     GenerateResult,
     SamplingParams,
@@ -225,7 +227,9 @@ class Runner[S, A]:
         tools: Sequence[dict[str, Any]] | None = None,
         generate_timeout: float | None = None,
         checkpoints: CheckpointPolicy | None = None,
+        services: ExecutionServices | None = None,
     ) -> None:
+        self.services = services or ExecutionServices()
         self._checkpoints = checkpoints or SparseCheckpoints()
         self._policy: Policy[A] = policy
         self._env: Env[S, A] = env
@@ -324,6 +328,7 @@ class Runner[S, A]:
             # a nested rollout talks to the same backend, so it inherits the same
             # patience: a fold that hung forever would stall the turn that folded
             generate_timeout=self._generate_timeout,
+            services=self.services,
         )
 
     async def root(
@@ -445,7 +450,11 @@ class Runner[S, A]:
         mutated here (the assistant turn, then the world's reply) and frozen on the way
         into the new checkpoint.
         """
-        result = await self._generate(cond, self._params(sampling_params))
+        result = await self._generate(
+            cond,
+            self._params(sampling_params),
+            owner=Owner(rs.episode_id, rs.branch_id, rs.invocation_id),
+        )
         self._policy.record_reply(result, messages)
         action = self._policy.parse(result)
         transition = (
@@ -470,7 +479,11 @@ class Runner[S, A]:
         )
 
     async def _generate(
-        self, cond: PreparedPrompt, params: SamplingParams | None
+        self,
+        cond: PreparedPrompt,
+        params: SamplingParams | None,
+        *,
+        owner: Owner = DEFAULT_OWNER,
     ) -> GenerateResult:
         """One generation, bounded by ``generate_timeout`` when one is configured.
 
@@ -484,10 +497,11 @@ class Runner[S, A]:
         the backend request is not left running behind the turn that gave up on it.
         """
         if self._generate_timeout is None:
-            return await self._policy.agenerate(cond, params)
+            return await self.services.generate(self._policy, cond, params, owner=owner)
         try:
             return await asyncio.wait_for(
-                self._policy.agenerate(cond, params), self._generate_timeout
+                self.services.generate(self._policy, cond, params, owner=owner),
+                self._generate_timeout,
             )
         except TimeoutError as exc:
             raise TimeoutError(

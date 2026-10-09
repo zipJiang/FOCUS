@@ -11,7 +11,7 @@ from focus.allocation import RolloutLedger
 from focus.config import RolloutConfig
 from focus.generation import TokenId
 from focus.harness import AnyRollout, RolloutState, Runner
-from focus.harness.rescoring import PolicyScorer, reevaluate
+from focus.harness.rescoring import PolicyScorer, TokenScorer, reevaluate
 from focus.harness.workspace import Workspace
 from focus.reward import RewardModel
 from focus.reward.config import RewardConfig
@@ -79,6 +79,10 @@ class Runtime:
     score_timeout: float | None = None
     config: RolloutConfig = field(default_factory=RolloutConfig)
 
+    def __post_init__(self) -> None:
+        if isinstance(self.scorer, TokenScorer):
+            self.scorer.services = self.runner.services
+
 
 def _expander(runtime: Runtime, pass_id: str) -> RolloutExpander[Any]:
     """The pass's expander: one runner, one law -- its own pass stamp.
@@ -121,6 +125,7 @@ def _value_head(runtime: Runtime) -> NodeScorer[AnyRollout] | None:
         serialize=runtime.value_serialize,
         version=runtime.config.reward_config.value_version,
         timeout=runtime.score_timeout,
+        pool=runtime.runner.services.auxiliary,
     )
 
 
