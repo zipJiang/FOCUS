@@ -116,6 +116,33 @@ async def test_restored_functions_see_live_globals_and_callbacks():
     await executor.aclose()
 
 
+async def test_restored_function_defaults_keep_live_globals_and_identity():
+    executor = ProcessExecutor()
+    try:
+        first = await executor.execute(
+            "x=1\ndef f(): return x\n"
+            "def g(fn=f): return fn()\n"
+            "def h(*, fn=f): return fn()\n"
+            "def recursive(fn=None): return x\n"
+            "recursive.__defaults__ = (recursive,)"
+        )
+        assert first.snapshot is not None
+        for x in (2, 3):
+            restored = await executor.execute(
+                f"x={x}\nprint(f(), g(), h())\n"
+                "assert g.__defaults__[0] is f\n"
+                "assert h.__kwdefaults__['fn'] is f\n"
+                "assert recursive.__defaults__[0] is recursive",
+                first.snapshot,
+            )
+            assert restored.error == ""
+            assert restored.output.strip() == f"{x} {x} {x}"
+            assert restored.snapshot is not None
+            first = restored
+    finally:
+        await executor.aclose()
+
+
 async def test_process_death_preserves_error_and_releases_capacity():
     executor = ProcessExecutor(1)
     with pytest.raises(RuntimeError, match="exited without a result"):

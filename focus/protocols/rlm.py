@@ -14,6 +14,7 @@ from focus.generation import Policy
 from focus.generation.parsing.base import ToolTurn
 from focus.harness.env import Env, StepResult
 from focus.harness.rollout import AnyRollout
+from focus.harness.tools.dispatch import tool_reply
 from focus.harness.workspace import Workspace
 from focus.protocols.base import (
     AppendOnly,
@@ -59,13 +60,25 @@ class InvocationEnv(Env[str, Any]):
                         raise ValueError("answer must be text")
                 except (ValueError, KeyError, TypeError) as exc:
                     return StepResult(
-                        state, messages=({"role": "tool", "content": str(exc)},)
+                        state,
+                        messages=tuple(
+                            tool_reply(
+                                sibling,
+                                str(exc)
+                                if sibling is call
+                                else "Not executed: rlm_return took precedence.",
+                            )
+                            for sibling in action.tool_calls
+                        ),
                     )
                 return StepResult(answer, done=True)
         if not action.tool_calls:
             return StepResult(action.text, done=True)
         return StepResult(
-            state, messages=({"role": "tool", "content": "Unknown child tool."},)
+            state,
+            messages=tuple(
+                tool_reply(call, "Unknown child tool.") for call in action.tool_calls
+            ),
         )
 
     async def finish(self, state: str, action: Any) -> StepResult[str]:

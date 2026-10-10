@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from focus.codec import Message
@@ -139,6 +140,9 @@ class NativePolicy(Policy[Any]):
         self._system_prompt = system_prompt
         self._locked_sampling = locked_sampling
         self._aclient: Any = None
+
+    def validate_context(self, messages: Sequence[Message]) -> None:
+        self._to_messages(list(messages))
 
     def _to_messages(self, history: list[Message]) -> list[Message]:
         messages: list[Message] = []

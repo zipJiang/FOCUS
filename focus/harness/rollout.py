@@ -114,8 +114,14 @@ class RolloutState[S]:
     budget: ResourceBudget = field(default_factory=ResourceBudget)
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        """Give unversioned legacy pickles a durable analysis-only marker."""
+        """Restore analysis defaults without upgrading legacy continuation rights."""
         self.__dict__.update(state)
+        if "episode_id" not in state:
+            self.__dict__["episode_id"] = uuid4().hex
+        if "branch_id" not in state:
+            self.__dict__["branch_id"] = uuid4().hex
+        self.__dict__.setdefault("execution", {})
+        self.__dict__.setdefault("budget", ResourceBudget())
         if "forkable" in state or "checkpoint_version" not in state:
             object.__setattr__(self, "checkpoint_version", 0)
 

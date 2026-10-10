@@ -356,6 +356,50 @@ async def test_current_pickle_and_copies_remain_resumable():
     assert (await ScriptedRunner("task").run(copied)).done
 
 
+@pytest.mark.parametrize("version", [0, 1])
+def test_old_pickle_fields_support_reward_analysis_and_snapshots(version):
+    original = rollout(turn([-0.5], done=True))
+    # Match the serialized field sets before context-runtime schema 2 existed.
+    old_turn_fields = {
+        "prefix",
+        "tokens",
+        "logprobs",
+        "exact",
+        "transition",
+        "tag",
+        "compaction_penalty",
+        "compaction_issue",
+    }
+    old_rollout_fields = {
+        "messages",
+        "seed",
+        "state",
+        "workspace",
+        "turns",
+        "truncated",
+        "checkpoint_version",
+    }
+    expected = original.reward
+    for key in tuple(original.turns[0].__dict__):
+        if key not in old_turn_fields:
+            del original.turns[0].__dict__[key]
+    for key in tuple(original.__dict__):
+        if key not in old_rollout_fields:
+            del original.__dict__[key]
+    if version:
+        original.__dict__["checkpoint_version"] = version
+    else:
+        del original.__dict__["checkpoint_version"]
+    restored = pickle.loads(pickle.dumps(original))
+    assert restored.reward == expected
+    assert restored.turns[0].reward_components == {}
+    copied = replace(restored).snapshot()
+    assert copied.reward == expected
+    assert copied.checkpoint_version == version
+    with pytest.raises(ValueError, match="analysis-only"):
+        copied.fork()
+
+
 async def test_zero_budget_without_finalization_is_no_progress_for_search():
     runner = toy_runner(ScriptedGenerator(["unused"]), max_steps=0, finish_prompt=None)
     root = await runner.start("q")

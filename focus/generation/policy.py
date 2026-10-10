@@ -166,6 +166,14 @@ class Policy[A]:
         if prompt.format is not self.format:
             raise ValueError("Prepared prompt belongs to a different policy format")
 
+    def validate_context(self, messages: Sequence[Message]) -> None:
+        """Reject unusable edited history before commit, without making a request.
+
+        Token policies accept arbitrary rendered context. Native policies override
+        this hook to enforce their tool-call/response contract.
+        """
+        return None
+
     async def agenerate(
         self,
         prompt: PreparedPrompt,

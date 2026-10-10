@@ -40,15 +40,17 @@ def restore_functions(namespace: dict[str, Any]) -> None:
                 value.__code__,
                 namespace,
                 value.__name__,
-                value.__defaults__,
-                value.__closure__,
+                closure=value.__closure__,
             )
-            restored.__kwdefaults__ = value.__kwdefaults__
+            # Publish before traversing defaults: they may refer to this function,
+            # or to another function already reachable through the live namespace.
+            memo[id(value)] = restored
+            restored.__defaults__ = bind(value.__defaults__)
+            restored.__kwdefaults__ = bind(value.__kwdefaults__)
             restored.__annotations__ = value.__annotations__
             restored.__dict__.update(value.__dict__)
             restored.__module__ = value.__module__
             restored.__qualname__ = value.__qualname__
-            memo[id(value)] = restored
             return restored
         if isinstance(value, dict):
             for key in tuple(value):

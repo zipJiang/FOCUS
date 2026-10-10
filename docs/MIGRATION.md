@@ -69,6 +69,12 @@ remain model-free. `ToolProtocol.operation` implements model-visible operations;
 propagate. Mixed task/protocol tool batches are rejected; context operations execute
 serially. See `examples/custom_protocol.py` for registration without scheduler edits.
 
+For native tool policies, context operations edit the settled history. The current
+assistant tool call and its batch of replies are kept together after the edited
+context, outside the editable document. Edits that break older call/response pairs
+are rejected before context or Python session state commits. Policy adapters can
+implement `validate_context(messages)` to enforce additional history constraints.
+
 A checkpoint stores live messages, immutable-history references, branch memory,
 execution snapshots, remaining decision/resource budgets and a trace cursor. Forking
 copies mutable state and creates a new accounting branch. SparseCheckpoints selects

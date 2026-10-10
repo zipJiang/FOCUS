@@ -120,3 +120,23 @@ async def test_rlm_composes_memory_and_preserves_task_completion():
     assert len(result.turns) == 4
     assert result.transitions[-1].done
     await runner.services.aclose()
+
+
+async def test_unsupported_snapshot_stops_the_branch_and_remaining_calls():
+    runner, _ = recursive_runner(
+        [
+            tool_call("rlm_python", code="x = 1; handle = open('file', 'w')")
+            + tool_call("rlm_python", code="print('must not run')"),
+            "must not generate",
+        ]
+    )
+    try:
+        result = await runner.run_from("external")
+        assert result.truncated
+        assert not result.snapshot_available
+        assert not result.forkable
+        assert len(result.turns) == 1
+        assert runner.services.usage[result.episode_id].process_cells == 1
+        assert await runner.advance(result) is result
+    finally:
+        await runner.services.aclose()

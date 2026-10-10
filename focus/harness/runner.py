@@ -431,7 +431,7 @@ class Runner[S, A]:
             current,
             budget=self.services.remaining(owner),
             turns=tuple(turns),
-            truncated=rs.truncated or ending,
+            truncated=current.truncated or ending,
             checkpoint_at=len(turns) if self._checkpoints.selects(effects) else -1,
             advances=rs.advances + 1,
             steps_remaining=None

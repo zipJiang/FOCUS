@@ -12,6 +12,7 @@ from focus.generation.parsing.base import ToolTurn
 from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
 from focus.harness.rollout import AnyRollout
+from focus.harness.tools.dispatch import tool_reply
 from focus.registry import register
 
 if TYPE_CHECKING:
@@ -131,10 +132,27 @@ class ToolProtocol(ContextProtocol):
             return await self.task_apply(rs, action, runner, ending=ending)
         origin = len(rs.turns) - 1
         mixed = any(c.name not in names for c in action.tool_calls)
-        for call in action.tool_calls:
+        # Native adapters require the active call and all of its replies to remain
+        # contiguous. Edit only settled context, then restore this exchange intact.
+        # History still records every original message at its stable index.
+        exchange: tuple[Message, ...] = ()
+        exchange_refs: tuple[int | None, ...] = ()
+        if runner.policy.provides_native_tool_calls and rs.messages[-1].get(
+            "tool_calls"
+        ):
+            exchange = rs.messages[-1:]
+            exchange_refs = rs.context_refs[-1:]
+            rs = replace(
+                rs, messages=rs.messages[:-1], context_refs=rs.context_refs[:-1]
+            )
+        for index, call in enumerate(action.tool_calls):
             kind = ""
             before = rs.context_version
             try:
+                if rs.truncated:
+                    raise ProtocolError(
+                        "invocation is truncated; no further operations can run"
+                    )
                 if mixed:
                     raise ProtocolError(
                         "issue context operations separately from task tools"
@@ -153,18 +171,39 @@ class ToolProtocol(ContextProtocol):
                 missing = set(contract.get("required", ())) - arguments.keys()
                 if missing:
                     raise ProtocolError(f"missing arguments: {sorted(missing)}")
-                rs, text, kind = await self.operation(rs, call.name, arguments, runner)
+                candidate, text, effect_kind = await self.operation(
+                    rs, call.name, arguments, runner
+                )
+                # Complete pending responses provisionally for validation only.
+                # Commit neither context nor execution state if the edit is invalid.
+                context = candidate.messages
+                if exchange:
+                    context = (
+                        *context,
+                        *exchange,
+                        *(tool_reply(c, "") for c in action.tool_calls[index:]),
+                    )
+                try:
+                    runner.policy.validate_context(context)
+                except ValueError as exc:
+                    raise ProtocolError(str(exc)) from exc
+                rs, kind = candidate, effect_kind
             except ProtocolError as exc:
                 text = f"Invalid {call.name}: {exc}. Previous valid context preserved."
             message: Message = {"role": "tool", "name": call.name, "content": text}
             if call.call_id:
                 message["tool_call_id"] = call.call_id
-            rs = replace(
-                rs,
-                messages=(*rs.messages, message),
-                history=(*rs.history, message),
-                context_refs=(*rs.context_refs, len(rs.history)),
-            )
+            if exchange:
+                exchange = (*exchange, message)
+                exchange_refs = (*exchange_refs, len(rs.history))
+                rs = replace(rs, history=(*rs.history, message))
+            else:
+                rs = replace(
+                    rs,
+                    messages=(*rs.messages, message),
+                    history=(*rs.history, message),
+                    context_refs=(*rs.context_refs, len(rs.history)),
+                )
             if kind:
                 rs = replace(
                     rs,
@@ -180,7 +219,13 @@ class ToolProtocol(ContextProtocol):
                         ),
                     ),
                 )
-        return Applied(rs)
+        return Applied(
+            replace(
+                rs,
+                messages=(*rs.messages, *exchange),
+                context_refs=(*rs.context_refs, *exchange_refs),
+            )
+        )
 
 
 def schema(

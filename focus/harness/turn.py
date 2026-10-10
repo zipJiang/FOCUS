@@ -33,7 +33,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from focus.generation import SamplingParams, TokenId
 from focus.harness.env import StepResult
@@ -93,6 +93,11 @@ class Turn[S_co]:
     actor: bool = True
     sampling_params: SamplingParams | None = None
     reward_components: dict[str, float] = field(default_factory=dict)
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Unpickling old turns bypasses default factories; keep analysis usable."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("reward_components", {})
 
 
 def trainable_logprobs(turns: Sequence[Turn[object]], version: str) -> list[float]:
