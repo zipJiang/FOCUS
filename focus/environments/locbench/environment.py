@@ -308,11 +308,11 @@ class LocBenchRunner(Runner[LocBenchState, ToolTurn]):
         self.compaction_failure = compaction_failure
         self.count_folds_in_horizon = count_folds_in_horizon
 
-    async def compact(
+    async def _compact(
         self, rs: RolloutState[LocBenchState]
     ) -> RolloutState[LocBenchState]:
         try:
-            return await super().compact(rs)
+            return await super()._compact(rs)
         except IncompleteCompactionError as exc:
             if self.compaction_failure != "terminal_zero" or not exc.turns:
                 raise
@@ -333,7 +333,7 @@ class LocBenchRunner(Runner[LocBenchState, ToolTurn]):
             )
             return replace(rs, state=state, turns=rs.turns + exc.turns + (terminal,))
 
-    async def advance(
+    async def _advance(
         self,
         rs: RolloutState[LocBenchState],
         *,
@@ -342,10 +342,10 @@ class LocBenchRunner(Runner[LocBenchState, ToolTurn]):
         if rs.done or rs.truncated:
             return rs
         if self.count_folds_in_horizon and rs.turns_taken + rs.folds >= self._max_steps:
-            return await self.finish(rs, sampling_params=sampling_params)
+            return await self._finish(rs, sampling_params=sampling_params)
         if self.repeat_limit and rs.state.consecutive_requests >= self.repeat_limit:
-            return await self.finish(rs, sampling_params=sampling_params)
-        return await super().advance(rs, sampling_params=sampling_params)
+            return await self._finish(rs, sampling_params=sampling_params)
+        return await super()._advance(rs, sampling_params=sampling_params)
 
 
 def render_environment_state(state: LocBenchState) -> str:

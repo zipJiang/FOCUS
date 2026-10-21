@@ -19,3 +19,8 @@ message/global isolation and identical prefixes belonging to distinct invocation
 
 Exercise: construct two contexts with identical visible text but different external
 memory. Explain why they must remain distinct checkpoints for value estimation.
+
+Complete snapshot storage is now a separate opt-in runner service. See
+[13 — Complete snapshot persistence and recovery](13-checkpointer.md) for the
+checkpointer API, atomic commits and retry semantics. Search selection does not
+control which recoverable states are persisted.

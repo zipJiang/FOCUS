@@ -6,7 +6,7 @@ import pytest
 
 from focus import OpenAIChatPolicy, OpenAIResponsesPolicy, Runner
 from focus.generation import NativeToolCall
-from focus.protocols import CLM, Memex
+from focus.protocols import CLM, RLM, Memex
 from focus.protocols.rlm import InvocationEnv
 from tests.generation.test_openai_chat import (
     _Completions,
@@ -168,5 +168,62 @@ async def test_child_tool_feedback_allows_native_retry(native_backend, invalid_r
         result = await runner.advance(rejected)
         assert result.done
         assert result.state == "corrected"
+    finally:
+        await runner.services.aclose()
+
+
+async def test_rlm_fork_preserves_pending_native_batch_and_call_ids(native_backend):
+    import pickle
+
+    policy, respond = native_backend
+    runner = Runner(
+        policy=policy, env=InvocationEnv(), system_prompt="sys", protocol=RLM()
+    )
+    try:
+        respond(
+            NativeToolCall(
+                "rlm_python",
+                json.dumps(
+                    {
+                        "code": "x=1; print(llm_query('one'))",
+                    }
+                ),
+                "parent1",
+            ),
+            NativeToolCall(
+                "rlm_python",
+                json.dumps(
+                    {
+                        "code": "x+=1; print(llm_query('two'), x)",
+                    }
+                ),
+                "parent2",
+            ),
+        )
+        pending = await runner.advance(await runner.start("input"))
+        respond(NativeToolCall("rlm_return", '{"answer":"first"}', "child1"))
+        pending = await runner.advance(pending)
+        checkpoint = pickle.loads(pickle.dumps(pending))
+        for answer in ("A", "B"):
+            respond(
+                NativeToolCall("rlm_return", json.dumps({"answer": answer}), "child2")
+            )
+            settled = await runner.advance(checkpoint.fork())
+            assert not runner.protocol.has_pending(settled)
+            assert [m.get("tool_call_id") for m in settled.messages[-2:]] == [
+                "parent1",
+                "parent2",
+            ]
+            assert settled.messages[-2]["content"] == "first\n"
+            assert settled.messages[-1]["content"] == f"{answer} 2\n"
+            assert all(
+                ref is None or message == settled.history[ref]
+                for message, ref in zip(
+                    settled.messages, settled.context_refs, strict=True
+                )
+            )
+            policy.validate_context(settled.messages)
+            respond()
+            assert (await runner.advance(settled)).done
     finally:
         await runner.services.aclose()

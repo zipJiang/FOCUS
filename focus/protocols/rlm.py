@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, NoReturn
 from uuid import uuid4
 
-from focus.execution import Owner
-from focus.execution.process import ProcessSnapshot
-from focus.generation import Policy
+from pydantic_monty import ExternalSettledResult
+
+from focus.execution.monty import MontySnapshot, Query
+from focus.generation import Policy, SamplingParams
 from focus.generation.parsing.base import ToolTurn
 from focus.harness.env import Env, StepResult
 from focus.harness.rollout import AnyRollout
@@ -20,6 +21,7 @@ from focus.protocols.base import (
     AppendOnly,
     Applied,
     ContextProtocol,
+    OperationSuspended,
     ProtocolError,
     ToolProtocol,
     schema,
@@ -86,6 +88,15 @@ class InvocationEnv(Env[str, Any]):
         return replace(result, done=True)
 
 
+@dataclass(frozen=True)
+class PendingCell:
+    """Children of a cell suspended in `rlm_session`, and its stdout so far."""
+
+    query: Query
+    children: tuple[AnyRollout, ...]
+    output: str
+
+
 @register(ContextProtocol, "rlm")
 class RLM(ToolProtocol):
     def __init__(
@@ -113,6 +124,8 @@ class RLM(ToolProtocol):
             schema(
                 "rlm_python",
                 "Execute Python with external input in `context`. Variables persist. "
+                "Uses Monty's Python subset; host filesystem and third-party "
+                "packages are unavailable. "
                 "Call llm_query(prompt), llm_query_batched(prompts), "
                 "rlm_query(prompt), "
                 "or rlm_query_batched(prompts). Optional model selects a fixed helper. "
@@ -146,7 +159,7 @@ class RLM(ToolProtocol):
             else rs.context_refs,
             execution={
                 **rs.execution,
-                "rlm_session": ProcessSnapshot.variables(context=content),
+                "rlm_session": MontySnapshot(context=content),
                 "rlm_depth": 0,
             },
         )
@@ -155,6 +168,7 @@ class RLM(ToolProtocol):
         return self.context.needs_prepare(rs, runner)
 
     async def before(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
+        _session(rs)
         return await self.context.before(rs, runner)
 
     async def compact(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
@@ -170,12 +184,60 @@ class RLM(ToolProtocol):
     ) -> Applied:
         return await self.context.apply(rs, action, runner, ending=ending)
 
-    async def operation(
+    def _child_runner(
+        self, kind: str, model: str | None, runner: Runner[Any, Any]
+    ) -> Runner[Any, Any]:
+        from focus.harness.runner import Runner
+
+        protocol = (
+            RLM(
+                self.context,
+                helpers=self.helpers,
+                max_depth=self.max_depth,
+                max_fanout=self.max_fanout,
+                child_steps=self.child_steps,
+                timeout=self.timeout,
+            )
+            if kind == "rlm"
+            else AppendOnly()
+        )
+        return Runner(
+            policy=runner.policy if model is None else self.helpers[model],
+            env=InvocationEnv(),
+            system_prompt="Solve the input task. Return an answer.",
+            protocol=protocol,
+            services=runner.services,
+            actor=runner.actor and model is None,
+            max_steps=self.child_steps,
+            generate_timeout=runner.generate_timeout,
+        )
+
+    def _validate_query(
+        self, query: Query, depth: int, runner: Runner[Any, Any]
+    ) -> None:
+        if query.kind not in ("rlm", "llm"):
+            raise ValueError("unknown invocation kind")
+        if not isinstance(query.prompts, list) or any(
+            not isinstance(p, str) for p in query.prompts
+        ):
+            raise ValueError("child prompts must be a list of strings")
+        if len(query.prompts) > self.max_fanout:
+            raise ValueError("child fanout limit exceeded")
+        if depth >= self.max_depth:
+            raise ValueError("recursion depth limit exceeded")
+        if query.model is not None:
+            if not isinstance(query.model, str) or query.model not in self.helpers:
+                raise ValueError(f"unknown fixed helper {query.model!r}")
+            if self.helpers[query.model].version == runner.policy.version:
+                raise ValueError("fixed helpers require distinct policy versions")
+
+    async def resume_operation(
         self,
         rs: AnyRollout,
         name: str,
         arguments: dict[str, Any],
         runner: Runner[Any, Any],
+        sampling_params: SamplingParams | None,
     ) -> tuple[AnyRollout, str, str]:
         if name != "rlm_python":
             if not isinstance(self.context, ToolProtocol):
@@ -184,105 +246,144 @@ class RLM(ToolProtocol):
         code = arguments["code"]
         if not isinstance(code, str):
             raise ProtocolError("code must be a string")
-        completed: list[AnyRollout] = []
-        depth = rs.execution["rlm_depth"]
-        owner = Owner(rs.episode_id, rs.branch_id, rs.invocation_id)
+        snapshot = _session(rs)
+        pending: PendingCell | None = rs.execution.get("rlm_pending")
+        owner = rs.owner
+        output = "" if pending is None else pending.output
+        reply: ExternalSettledResult | None = None
+        if pending is not None:
+            child_runner = self._child_runner(
+                pending.query.kind, pending.query.model, runner
+            )
 
-        async def invoke(kind: str, prompts: list[str], model: str | None) -> list[str]:
-            if not isinstance(prompts, list) or any(
-                not isinstance(p, str) for p in prompts
-            ):
-                raise ValueError("child prompts must be a list of strings")
-            if len(prompts) > self.max_fanout:
-                raise ValueError("child fanout limit exceeded")
-            if depth >= self.max_depth:
-                raise ValueError("recursion depth limit exceeded")
-            if model is not None and model not in self.helpers:
-                raise ValueError(f"unknown fixed helper {model!r}")
-            policy = runner.policy if model is None else self.helpers[model]
-            if model is not None and policy.version == runner.policy.version:
-                raise ValueError("fixed helpers require distinct policy versions")
-
-            async def child(prompt: str) -> AnyRollout:
-                from focus.harness.runner import Runner
-
-                protocol = (
-                    RLM(
-                        self.context,
-                        helpers=self.helpers,
-                        max_depth=self.max_depth,
-                        max_fanout=self.max_fanout,
-                        child_steps=self.child_steps,
-                        timeout=self.timeout,
-                    )
-                    if kind == "rlm"
-                    else AppendOnly()
-                )
-                child_runner = Runner(
-                    policy=policy,
-                    env=InvocationEnv(),
-                    system_prompt="Solve the input task. Return an answer.",
-                    protocol=protocol,
-                    services=runner.services,
-                    actor=runner.actor and model is None,
-                    max_steps=self.child_steps,
-                    generate_timeout=runner.generate_timeout,
-                )
-                child_rs = await child_runner.start(prompt)
-                child_rs = replace(
-                    child_rs,
+            async def advance(child: AnyRollout) -> AnyRollout:
+                # Rebind every descendant lazily as it becomes active. The root's
+                # remaining budget has already attached the new fork scope.
+                child = replace(
+                    child,
                     episode_id=rs.episode_id,
                     branch_id=rs.branch_id,
-                    invocation_id=rs.invocation_id + "/" + uuid4().hex,
                     budget=runner.services.remaining(owner),
-                    execution={**child_rs.execution, "rlm_depth": depth + 1},
                 )
-                return await child_runner.run(child_rs)
+                if child.done or child.truncated:
+                    return child
+                params = sampling_params if pending.query.model is None else None
+                if child.steps_remaining == 0 and not child_runner.protocol.has_pending(
+                    child
+                ):
+                    return await child_runner.finish(child, sampling_params=params)
+                return await child_runner.advance(child, sampling_params=params)
 
-            tasks: list[asyncio.Task[AnyRollout]] = []
             async with asyncio.TaskGroup() as group:
-                tasks = [group.create_task(child(prompt)) for prompt in prompts]
-            results = [task.result() for task in tasks]
-            completed.extend(results)
-            return [str(result.state) for result in results]
-
-        result = await runner.services.execute(
-            code,
-            rs.execution.get("rlm_session"),
-            handler=invoke,
-            owner=owner,
-            timeout=self.timeout,
-        )
-        # Record batches in prompt order, independent of completion order.
-        turns = tuple(
-            replace(turn, transition=None)
-            for child in completed
-            for turn in child.turns
-        )
-        effects = list(rs.effects)
-        offset = len(rs.turns)
-        for child in completed:
-            effects.extend(
-                replace(effect, turn_index=effect.turn_index + offset)
-                for effect in child.effects
+                tasks = [group.create_task(advance(c)) for c in pending.children]
+            children = tuple(task.result() for task in tasks)
+            # Attach only new generations, in batch order, at every decision.
+            turns = list(rs.turns)
+            effects = list(rs.effects)
+            for old, child in zip(pending.children, children, strict=True):
+                turns.extend(replace(turn, transition=None) for turn in child.edge(old))
+                new_effects = child.effects[len(old.effects) :]
+                if not new_effects:
+                    continue
+                # Siblings interleave across advances; a constant offset is wrong
+                # when an effect completes a call recorded in an earlier advance.
+                indices = [
+                    i
+                    for i, turn in enumerate(turns)
+                    if turn.invocation_id == child.invocation_id
+                    or turn.invocation_id.startswith(child.invocation_id + "/")
+                ]
+                effects.extend(
+                    replace(effect, turn_index=indices[effect.turn_index])
+                    for effect in new_effects
+                )
+            rs = replace(rs, turns=tuple(turns), effects=tuple(effects))
+            if any(c.truncated and not c.done for c in children):
+                # A failed child has no answer with which to resume its ancestors.
+                return (
+                    replace(rs, truncated=True, snapshot_available=False),
+                    (output + "\nChild invocation stopped without an answer."),
+                    "invoke",
+                )
+            if not all(c.done for c in children):
+                _suspend(rs, snapshot, replace(pending, children=children))
+            rs = replace(
+                rs,
+                execution={
+                    **rs.execution,
+                    "invocations": (*rs.execution.get("invocations", ()), *children),
+                },
             )
-            offset += len(child.turns)
-        execution = {
-            **rs.execution,
-            "invocations": (*rs.execution.get("invocations", ()), *completed),
-        }
-        if result.snapshot is not None:
-            execution["rlm_session"] = result.snapshot
-        updated = replace(
+            reply = {"return_value": [str(c.state) for c in children]}
+
+        while True:
+            result = await runner.services.execute_monty(
+                code, snapshot, reply=reply, owner=owner, timeout=self.timeout
+            )
+            output += result.output
+            if result.query is None:
+                execution = dict(rs.execution)
+                execution.pop("rlm_pending", None)
+                if result.snapshot is not None:
+                    execution["rlm_session"] = result.snapshot
+                return (
+                    replace(
+                        rs,
+                        execution=execution,
+                        snapshot_available=result.snapshot is not None,
+                        truncated=rs.truncated or result.snapshot is None,
+                    ),
+                    output + ("\n" + result.error if result.error else ""),
+                    "invoke",
+                )
+            assert result.snapshot is not None
+            snapshot = result.snapshot
+            query = result.query
+            try:
+                self._validate_query(query, rs.execution["rlm_depth"], runner)
+            except ValueError as exc:
+                reply = {"exc_type": "ValueError", "message": str(exc)}
+                continue
+            if not query.prompts:
+                reply = {"return_value": []}
+                continue
+            child_runner = self._child_runner(query.kind, query.model, runner)
+            children = tuple(
+                [
+                    replace(
+                        child,
+                        episode_id=rs.episode_id,
+                        branch_id=rs.branch_id,
+                        invocation_id=rs.invocation_id + "/" + uuid4().hex,
+                        budget=runner.services.remaining(owner),
+                        execution={
+                            **child.execution,
+                            "rlm_depth": rs.execution["rlm_depth"] + 1,
+                        },
+                    )
+                    for child in [await child_runner.start(p) for p in query.prompts]
+                ]
+            )
+            _suspend(rs, snapshot, PendingCell(query, children, output))
+
+
+def _session(rs: AnyRollout) -> MontySnapshot:
+    snapshot = rs.execution.get("rlm_session")
+    if not isinstance(snapshot, MontySnapshot):
+        raise ValueError(
+            "CPython RLM checkpoints are analysis-only; start a fresh Monty rollout"
+        )
+    return snapshot
+
+
+def _suspend(rs: AnyRollout, snapshot: MontySnapshot, pending: PendingCell) -> NoReturn:
+    raise OperationSuspended(
+        replace(
             rs,
-            turns=(*rs.turns, *turns),
-            effects=tuple(effects),
-            execution=execution,
-            snapshot_available=result.snapshot is not None,
-            truncated=rs.truncated or result.snapshot is None,
+            execution={
+                **rs.execution,
+                "rlm_session": snapshot,
+                "rlm_pending": pending,
+            },
         )
-        return (
-            updated,
-            result.output + ("\n" + result.error if result.error else ""),
-            "invoke",
-        )
+    )

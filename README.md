@@ -88,3 +88,14 @@ RLM invocations with shared local or Ray inference admission. Start with the
 [migration and extension guide](docs/MIGRATION.md) and run
 `python -m examples.protocols --protocol rlm-memex` for a deterministic demonstration.
 Implementation decisions and milestone validation are in [implementation notes](docs/implementation/00-overview.md).
+
+RLM executes Python with Monty and can fork inside recursive children. Checkpoints
+include waiting ancestor continuations, so each alternative resumes through its
+parents to the task outcome. See the [Monty implementation](docs/implementation/12-monty.md)
+for execution boundaries and Python compatibility.
+
+Complete rollout persistence is available through `Runner(checkpointer=...)` with
+`MemoryCheckpointer` or `SQLiteCheckpointer` from `focus.harness`. Every protocol uses
+the same complete-snapshot recovery path, independently of search checkpoint selection.
+Transient failures retry from the last intact snapshot; parallel work in a failed round
+is rerun together. See [checkpointer usage and recovery semantics](docs/implementation/13-checkpointer.md).

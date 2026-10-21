@@ -365,9 +365,9 @@ class DeonticRunner(Runner[DeonticState, ToolTurn]):
         super().__init__(**kwargs)
         self.compaction_failure = compaction_failure
 
-    async def compact(self, rs):
+    async def _compact(self, rs):
         try:
-            return await super().compact(rs)
+            return await super()._compact(rs)
         except IncompleteCompactionError as exc:
             if self.compaction_failure != "terminal_zero" or not exc.turns:
                 raise

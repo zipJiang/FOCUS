@@ -3,8 +3,9 @@
 FOCUS now separates search allocation, context protocols, execution services and
 checkpoint selection. This is a breaking API and checkpoint change. Regenerate legacy
 schema-0/1 rollouts for continuation; existing artifacts can be read for analysis but
-cannot safely restore the new runtime state. Python snapshots are trusted, version-
-specific cloudpickle data; restore with the same Python/dependency environment.
+cannot safely restore the new runtime state. CLM snapshots use trusted, version-
+specific cloudpickle data. RLM now uses Monty interpreter snapshots. Restore with
+the same dependency environment; earlier CPython RLM sessions are analysis-only.
 
 ## Construct a runtime
 
@@ -79,7 +80,8 @@ A checkpoint stores live messages, immutable-history references, branch memory,
 execution snapshots, remaining decision/resource budgets and a trace cursor. Forking
 copies mutable state and creates a new accounting branch. SparseCheckpoints selects
 roots and completed context/invocation operations; EveryDecision also exposes ordinary
-decision boundaries. A context change, a checkpoint and a training boundary are three
+decision boundaries. Pending RLM child decisions also expose complete continuations
+with either policy. A context change, a checkpoint and a training boundary are three
 separate concepts. Diagnostic task/fold tags do not grant branching permission.
 
 CLM edits `context.json` using managed Python. It accepts nonempty JSON arrays of
@@ -98,18 +100,36 @@ share inference admission. Batches preserve input order. Only the root ends the 
 children have local contexts and their generations receive enclosing task/edge credit.
 One trainable actor plus separately versioned fixed helpers is supported.
 
+`Runner.advance` may now return while a child invocation is unfinished. Continue
+calling it, or use `run`/`iter_run`, to resume the pending work. `fork()` at such a
+checkpoint copies every waiting ancestor and active child; child alternatives return
+through their own parent continuations to the root task outcome. Batched children
+advance concurrently in rounds and keep input order. Checkpoints contain bytes and
+rollout data, never live workers. See the [Monty refactor](implementation/12-monty.md).
+
 ## Execution and budgets
 
-Logical Python sessions persist through direct namespace/workspace snapshots, not code
-replay. Supported state includes serializable data containers, imported modules and
+RLM sessions use Monty 1.1.0, installed with the core package. They save both idle
+namespaces and suspended Python call stacks, including local variables and closures.
+Monty implements a Python subset: ordinary third-party imports and host filesystem
+access are unavailable. Use the four query helpers for sequential or batched child
+calls. Unsupported code produces tool feedback; a failed snapshot makes the branch
+truncated and non-forkable. Old ProcessSnapshot RLM sessions cannot be converted by
+replaying code. Generate fresh rollouts for continuation.
+
+CLM sessions persist through direct namespace/workspace snapshots, not code replay.
+Supported state includes serializable data containers, imported modules and
 simple top-level functions. Closures, cell-defined classes/instances, file handles,
 symlinks and other live resources are explicitly unavailable. Use Path.read_text and
-Path.write_text, or remove handle variables after closing them. Unsupported RLM state
-ends that branch as truncated/non-forkable; CLM rejects the whole edit transaction.
+Path.write_text, or remove handle variables after closing them. Unsupported CLM state
+rejects the whole edit transaction.
 These managed processes execute trusted research code; they are not container isolation.
 
 Inference permits cover backend requests only. Process permits cover active cells only;
 a waiting parent releases both. Resident limits fail immediately on exhaustion.
+Monty additionally releases its worker at every suspension, so a deep waiting stack
+uses checkpoint storage rather than resident processes. A Python cell is charged
+once, even if it suspends and resumes many times.
 Queue/execution deadlines are distinct on InferenceRequest. Runner.generate_timeout
 retains the existing whole-request bound. ResourceBudget limits calls, prompt/output
 tokens and cells; descendants consume the parent's scope. Output-token overruns are
@@ -138,3 +158,21 @@ python -m examples.protocols --protocol rlm-memex
 
 Paper-scale reproduction, multiple concurrently trained policy families, container
 isolation and CLM Suffix Cache Reuse remain outside this release.
+
+## Complete snapshot checkpointers
+
+Pass `checkpointer=MemoryCheckpointer()` or `SQLiteCheckpointer(path)` to `Runner`
+(imported from `focus.harness`) to save complete states independently of sparse search
+selection. Recover the same branch with `runner.restore(id)` or
+`runner.restore_latest(episode_id, branch_id)`; use `fork()` to create a new search
+branch. Two retries for `ConnectionError`/`TimeoutError` are enabled when a checkpointer
+is configured; `checkpoint_retries=0` disables automatic retries. There are no pending
+writes: work since the last complete snapshot is rerun after failure.
+
+Runner subclasses should override `_advance`, `_compact` and `_finish` instead of
+public methods, keeping their result changes inside the shared persistence boundary.
+Existing schema-2 rollouts without `checkpoint_id` load with `None`; saving one creates
+its first storage record. Legacy execution snapshots retain their existing restrictions.
+Checkpointer storage has its own format version and uses trusted cloudpickle payloads.
+See [the implementation note](implementation/13-checkpointer.md) for a runnable API
+example, resource-accounting semantics and recovery limits.

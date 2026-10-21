@@ -11,7 +11,7 @@ from focus.protocols.rlm import InvocationEnv
 from tests.helpers import FakeChatTokenizer, tool_call
 
 
-def recursive_runner(outputs, *, capacity=1, protocol=None, budget=None):
+def recursive_runner(outputs, *, capacity=1, protocol=None, budget=None, delay=None):
     counter, active, peak = 0, 0, 0
 
     async def complete(tokens, params):
@@ -21,7 +21,9 @@ def recursive_runner(outputs, *, capacity=1, protocol=None, budget=None):
         active += 1
         peak = max(peak, active)
         try:
-            await asyncio.sleep(0.02 if i == 1 else 0.001)
+            await asyncio.sleep(
+                delay(i) if delay is not None else 0.02 if i == 1 else 0.001
+            )
             text = outputs[i]
             return GenerateResult(
                 text=text, tokens=tuple(map(ord, text)), logprobs=[-0.1] * len(text)
@@ -122,7 +124,9 @@ async def test_rlm_composes_memory_and_preserves_task_completion():
     await runner.services.aclose()
 
 
-async def test_unsupported_snapshot_stops_the_branch_and_remaining_calls():
+async def test_unsupported_snapshot_stops_the_branch_and_remaining_calls(monkeypatch):
+    from focus.execution.monty import MontyResult
+
     runner, _ = recursive_runner(
         [
             tool_call("rlm_python", code="x = 1; handle = open('file', 'w')")
@@ -130,6 +134,11 @@ async def test_unsupported_snapshot_stops_the_branch_and_remaining_calls():
             "must not generate",
         ]
     )
+
+    async def failed_snapshot(*args, **kwargs):
+        return MontyResult(None, error="snapshot unavailable")
+
+    monkeypatch.setattr(runner.services.monty, "execute", failed_snapshot)
     try:
         result = await runner.run_from("external")
         assert result.truncated

@@ -18,6 +18,7 @@ from focus.harness import (
     Turn,
     TurnTag,
 )
+from focus.protocols import AppendOnly
 from focus.registry import build
 from focus.scheduler import (
     PROVENANCE_KEY,
@@ -178,6 +179,8 @@ class ScriptedRunner(Runner[None, Any]):
     """Exercise the real drive loop with deterministic advances and workspace writes."""
 
     def __init__(self, *tags: TurnTag, max_steps: int = 8, done_at_end: bool = True):
+        self.checkpointer = None
+        self.protocol = AppendOnly()
         self._tags = tags
         self._max_steps = max_steps
         self._finish_prompt = "answer"

@@ -14,10 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from dataclasses import replace
-from itertools import count
 from typing import Any
 
 from focus.codec import Message
@@ -34,7 +33,8 @@ from focus.generation.interfaces import (
 )
 from focus.generation.policy import Policy, PreparedPrompt
 from focus.harness.checkpoint import CheckpointPolicy, SparseCheckpoints
-from focus.harness.env import Env, StepResult
+from focus.harness.env import Env
+from focus.harness.persistence import Checkpointer
 from focus.harness.rollout import RolloutState
 from focus.harness.turn import Turn
 from focus.harness.workspace import (
@@ -80,15 +80,6 @@ def _chained_prefix[S](
     if len(prefix) < n or prefix[:n] != packed:
         return prefix
     return packed + prefix[n:]
-
-
-def _step_range(budget: int) -> range | Iterator[int]:
-    """``budget`` iterations, or forever when ``budget < 0`` (``-1`` means unlimited).
-
-    ``range(-1)`` is empty -- the opposite of unlimited -- which is why the sentinel
-    cannot be handed to ``range`` as-is. ``0`` still means no steps.
-    """
-    return count() if budget < 0 else range(budget)
 
 
 def _check_workspace(env: object, workspace: Workspace) -> None:
@@ -158,6 +149,13 @@ class Runner[S, A]:
     plus a parser: those three are facets of one model and the runner has never had a
     use for them apart. It is the seam where the policy's and env's shared action ``A``
     must agree -- the runner pairs a compatible ``(policy, env)``.
+
+    With ``checkpointer``, complete states commit after initialization and every
+    advance, compaction and finish. ``checkpoint_retries`` bounds retries of
+    ``retry_on`` exceptions from the last committed state (two retries by default).
+    Subclasses customize ``_advance``, ``_compact`` and ``_finish`` so their changes
+    stay inside the shared commit/retry boundary. Derived helper runners do not save
+    independently: their work belongs to the enclosing rollout's complete snapshot.
     """
 
     def __init__(
@@ -173,10 +171,18 @@ class Runner[S, A]:
         tools: Sequence[dict[str, Any]] | None = None,
         generate_timeout: float | None = None,
         checkpoints: CheckpointPolicy | None = None,
+        checkpointer: Checkpointer | None = None,
+        checkpoint_retries: int = 2,
+        retry_on: tuple[type[Exception], ...] = (ConnectionError, TimeoutError),
         services: ExecutionServices | None = None,
         resource_budget: ResourceBudget | None = None,
         actor: bool = True,
     ) -> None:
+        if checkpoint_retries < 0:
+            raise ValueError("checkpoint_retries must be nonnegative")
+        self.checkpointer = checkpointer
+        self.checkpoint_retries = checkpoint_retries
+        self.retry_on = retry_on
         self.services = services or ExecutionServices()
         self._resource_budget = resource_budget or ResourceBudget()
         self.actor = actor
@@ -209,6 +215,89 @@ class Runner[S, A]:
     @property
     def generate_timeout(self) -> float | None:
         return self._generate_timeout
+
+    def save_checkpoint(self, rs: RolloutState[S]) -> RolloutState[S]:
+        """Commit a complete state, independently of search checkpoint selection.
+
+        Explicitly call this after manually editing a saved state. Unsupported
+        executor snapshots cannot become recovery points; their last intact parent
+        remains in the store. Persistence is opt-in to avoid storing every rollout
+        twice in large searches that need only in-memory branching.
+        """
+        if self.checkpointer is None or not rs.snapshot_available:
+            return rs
+        return self.checkpointer.put(rs)
+
+    def restore(self, checkpoint_id: str) -> RolloutState[S]:
+        """Recover the same branch using compatible runner collaborators.
+
+        Do not restore a branch while it is still running. Logical resource budgets
+        roll back with execution state; physical Usage counters retain failed work.
+        Call fork() on the restored state to create an independent search branch.
+        """
+        if self.checkpointer is None:
+            raise ValueError("Recovery requires a checkpointer")
+        rs = self.checkpointer.get(checkpoint_id)
+        self.services.budgets[rs.episode_id, rs.branch_id] = rs.budget
+        return rs
+
+    def restore_latest(
+        self, episode_id: str, branch_id: str, invocation_id: str = "root"
+    ) -> RolloutState[S]:
+        """Recover the last intact commit for one branch and invocation."""
+        if self.checkpointer is None:
+            raise ValueError("Recovery requires a checkpointer")
+        rs = self.checkpointer.latest(episode_id, branch_id, invocation_id)
+        self.services.budgets[rs.episode_id, rs.branch_id] = rs.budget
+        return rs
+
+    async def _checkpointed(
+        self,
+        rs: RolloutState[S],
+        operation: Callable[[RolloutState[S]], Awaitable[RolloutState[S]]],
+    ) -> RolloutState[S]:
+        if self.checkpointer is None:
+            return await operation(rs)
+        rs.check_continuation()
+        if not rs.snapshot_available:
+            # A protocol may return an analysis-only truncated endpoint.
+            return await operation(rs)
+        if rs.checkpoint_id is None:
+            rs = self.save_checkpoint(rs)
+        else:
+            saved = self.checkpointer.info(rs.checkpoint_id)
+            if (saved.episode_id, saved.branch_id, saved.invocation_id) != (
+                rs.episode_id,
+                rs.branch_id,
+                rs.invocation_id,
+            ):
+                # A fork starts a new storage lineage from its source checkpoint.
+                rs = self.save_checkpoint(rs)
+        assert rs.checkpoint_id is not None
+        for attempt in range(self.checkpoint_retries + 1):
+            try:
+                # Protect the saved/input state from in-place workspace/tool updates.
+                result = await operation(rs.snapshot())
+            except Exception as exc:
+                if attempt == self.checkpoint_retries or not self._retryable(exc):
+                    raise
+                logger.warning(
+                    "retrying from checkpoint=%s attempt=%d error=%r",
+                    rs.checkpoint_id,
+                    attempt + 1,
+                    exc,
+                )
+                rs = self.restore(rs.checkpoint_id)
+            else:
+                # Storage failures propagate: never rerun an operation just because
+                # its commit failed. The previous committed snapshot stays available.
+                return self.save_checkpoint(result)
+        raise AssertionError("unreachable")
+
+    def _retryable(self, exc: Exception) -> bool:
+        if isinstance(exc, ExceptionGroup):
+            return all(self._retryable(child) for child in exc.exceptions)
+        return isinstance(exc, self.retry_on)
 
     @property
     def env(self) -> Env[S, A]:
@@ -313,7 +402,7 @@ class Runner[S, A]:
             context_refs=tuple(range(len(messages))),
             steps_remaining=None if self._max_steps < 0 else self._max_steps,
         )
-        return await self.protocol.initialize(rs, self)
+        return self.save_checkpoint(await self.protocol.initialize(rs, self))
 
     async def start(
         self, user_prompt: str, *, workspace: Workspace | None = None
@@ -342,7 +431,11 @@ class Runner[S, A]:
     async def advance(
         self, rs: RolloutState[S], *, sampling_params: SamplingParams | None = None
     ) -> RolloutState[S]:
-        """One turn -- generate, apply it, append it to the log.
+        """Generate one turn, or advance an already-pending protocol operation.
+
+        A pending recursive operation advances its children and restores the waiting
+        parent as needed, without sampling another parent decision. Its checkpoint
+        contains every continuation required to resume or fork the enclosing task.
 
         The fold check runs first, on the current context. If it fires, this turn is the
         fold alone (no task generation): see :meth:`_fold`. Otherwise: render ->
@@ -359,12 +452,43 @@ class Runner[S, A]:
         proposal -- the runner is shared across concurrent branches and must stay
         stateless for that to be safe.
         """
+        return await self._checkpointed(
+            rs, lambda current: self._step(current, sampling_params=sampling_params)
+        )
+
+    async def _step(
+        self, rs: RolloutState[S], *, sampling_params: SamplingParams | None
+    ) -> RolloutState[S]:
+        # Pending protocol work resumes before any subclass's local decision rules,
+        # so an override of `_advance` can never end a rollout mid-operation.
+        if self.protocol.has_pending(rs):
+            return await self._resume(rs, sampling_params=sampling_params)
+        return await self._advance(rs, sampling_params=sampling_params)
+
+    async def _resume(
+        self, rs: RolloutState[S], *, sampling_params: SamplingParams | None
+    ) -> RolloutState[S]:
+        rs.check_continuation()
+        if rs.done or rs.truncated:
+            return rs
+        self.services.attach_budget(rs.owner, rs.budget)
+        applied = await self.protocol.resume(
+            rs, self, sampling_params=self._params(sampling_params)
+        )
+        return self._mark(
+            rs,
+            replace(applied.rollout, budget=self.services.remaining(rs.owner)),
+        )
+
+    async def _advance(
+        self, rs: RolloutState[S], *, sampling_params: SamplingParams | None = None
+    ) -> RolloutState[S]:
         rs.check_continuation()
         if rs.done or rs.truncated:
             return rs
         prepared = await self.protocol.before(rs, self)
         if len(prepared.turns) != len(rs.turns):
-            return prepared
+            return self._mark(rs, prepared)
         rs = prepared
         cond = self._policy.prepare(rs.messages, tools=self._tools)
         return await self._generate_turn(
@@ -391,23 +515,17 @@ class Runner[S, A]:
         mutated here (the assistant turn, then the world's reply) and frozen on the way
         into the new checkpoint.
         """
-        owner = Owner(rs.episode_id, rs.branch_id, rs.invocation_id)
-        self.services.attach_budget(owner, rs.budget)
-        result = await self._generate(
-            cond,
-            self._params(sampling_params),
-            owner=Owner(rs.episode_id, rs.branch_id, rs.invocation_id),
-        )
+        params = self._params(sampling_params)
+        self.services.attach_budget(rs.owner, rs.budget)
+        result = await self._generate(cond, params, owner=rs.owner)
         self._policy.record_reply(result, messages)
         action = self._policy.parse(result)
         origin = len(rs.turns)
-        draft = replace(
-            self._turn(rs, cond.tokens, result, None),
-            sampling_params=deepcopy(
-                merge_sampling_params(
-                    self.policy.default_params, self._params(sampling_params)
-                )
-            ),
+        draft = self._turn(
+            rs,
+            cond.tokens,
+            result,
+            deepcopy(merge_sampling_params(self.policy.default_params, params)),
         )
         current = replace(
             rs,
@@ -426,18 +544,26 @@ class Runner[S, A]:
         current = applied.rollout
         turns = list(current.turns)
         turns[origin] = replace(turns[origin], transition=applied.transition)
-        effects = current.effects[len(rs.effects) :]
-        return replace(
-            current,
-            budget=self.services.remaining(owner),
-            turns=tuple(turns),
-            truncated=current.truncated or ending,
-            checkpoint_at=len(turns) if self._checkpoints.selects(effects) else -1,
-            advances=rs.advances + 1,
-            steps_remaining=None
-            if rs.steps_remaining is None
-            else max(0, rs.steps_remaining - 1),
+        return self._mark(
+            rs,
+            replace(
+                current,
+                budget=self.services.remaining(rs.owner),
+                turns=tuple(turns),
+                truncated=current.truncated or ending,
+                advances=rs.advances + 1,
+                steps_remaining=None
+                if rs.steps_remaining is None
+                else max(0, rs.steps_remaining - 1),
+            ),
         )
+
+    def _mark(self, rs: RolloutState[S], current: RolloutState[S]) -> RolloutState[S]:
+        """Select ``current`` as a checkpoint for its new effects or pending work."""
+        selected = self.protocol.has_pending(current) or self._checkpoints.selects(
+            current.effects[len(rs.effects) :]
+        )
+        return replace(current, checkpoint_at=len(current.turns) if selected else -1)
 
     async def _generate(
         self,
@@ -477,7 +603,7 @@ class Runner[S, A]:
         rs: RolloutState[S],
         cond: tuple[int, ...],
         result: GenerateResult,
-        transition: StepResult[S] | None,
+        sampling_params: SamplingParams | None,
     ) -> Turn[S]:
         """Record one generate as a task turn.
 
@@ -513,7 +639,7 @@ class Runner[S, A]:
             tokens=tokens,
             logprobs={self._policy.version: lps} if len(lps) == len(tokens) else {},
             exact=self._policy.is_exact(result),
-            transition=transition,
+            sampling_params=sampling_params,
             tag="task",
             invocation_id=rs.invocation_id,
             policy_id=self._policy.version,
@@ -562,6 +688,17 @@ class Runner[S, A]:
         if rs.done:
             return rs
         rs.check_continuation()
+        while self.protocol.has_pending(rs) and not rs.truncated:
+            rs = await self.advance(rs, sampling_params=sampling_params)
+        if rs.done or rs.truncated:
+            return rs
+        return await self._checkpointed(
+            rs, lambda current: self._finish(current, sampling_params=sampling_params)
+        )
+
+    async def _finish(
+        self, rs: RolloutState[S], *, sampling_params: SamplingParams | None = None
+    ) -> RolloutState[S]:
         if self._finish_prompt is None:
             return replace(rs, truncated=True)
         # Fold first if the context has outgrown its budget. :meth:`advance` asks the
@@ -599,12 +736,15 @@ class Runner[S, A]:
         generated. Like ``advance``, this may mutate the checkpoint's workspace;
         pass ``rs.snapshot()`` when retaining the original for comparison.
         """
+        return await self._checkpointed(rs, self._compact)
+
+    async def _compact(self, rs: RolloutState[S]) -> RolloutState[S]:
         rs.check_continuation()
         if rs.done or rs.truncated:
             raise ValueError("Cannot compact a finished rollout for continuation")
-        result = await self.protocol.compact(rs, self)
-        selected = self._checkpoints.selects(result.effects[len(rs.effects) :])
-        return replace(result, checkpoint_at=len(result.turns) if selected else -1)
+        if self.protocol.has_pending(rs):
+            raise ValueError("Cannot compact while a protocol operation is pending")
+        return self._mark(rs, await self.protocol.compact(rs, self))
 
     @property
     def max_steps(self) -> int:
@@ -618,11 +758,12 @@ class Runner[S, A]:
         max_steps: int | None = None,
         sampling_params: SamplingParams | None = None,
     ) -> AsyncIterator[RolloutState[S]]:
-        """Run to completion, exposing isolated folds and the endpoint.
+        """Run to completion, exposing selected continuations and the endpoint.
 
-        One advance consumes one step, including a fold-only advance. Finalization
-        is outside that budget and happens once. The live workspace stays owned by
-        this loop; every yielded checkpoint has an independent snapshot.
+        A new local decision consumes one step, including a fold-only advance.
+        Resuming pending work spends its children's horizons and shared resources,
+        without consuming another parent step. Finalization is outside that budget
+        and happens once. Every yielded checkpoint has an independent snapshot.
         """
         rs.check_continuation()
         if rs.done or rs.truncated:
@@ -635,17 +776,30 @@ class Runner[S, A]:
             budget = (
                 rs.steps_remaining if budget < 0 else min(budget, rs.steps_remaining)
             )
-        for step in _step_range(budget):
+        # A crash must not replenish a shorter per-run horizon. Persist the effective
+        # limit even when it was supplied on a continuation rather than a fresh root.
+        remaining = None if budget < 0 else budget
+        if max_steps is not None or remaining != rs.steps_remaining:
+            rs = self.save_checkpoint(replace(rs, steps_remaining=remaining))
+        step = 0
+        while budget < 0 or step < budget or self.protocol.has_pending(rs):
+            was_pending = self.protocol.has_pending(rs)
             before = len(rs.turns)
             rs = await self.advance(rs, sampling_params=sampling_params)
+            if not was_pending:
+                step += 1
             if rs.done or rs.truncated:
                 break
-            if len(rs.turns) == before:
+            if len(rs.turns) == before and not was_pending:
                 break
             if rs.forkable:
                 # Bare truncation at this boundary is one endpoint, not two nodes
                 # with identical logs and an empty edge between them.
-                if step == budget - 1 and self._finish_prompt is None:
+                if (
+                    step == budget
+                    and self._finish_prompt is None
+                    and not self.protocol.has_pending(rs)
+                ):
                     break
                 yield rs.snapshot()
         if not rs.done and not rs.truncated:

@@ -15,6 +15,13 @@ from focus.harness.compaction import (
 )
 from focus.harness.env import Env, StepResult
 from focus.harness.packing import PackedSequence, regions
+from focus.harness.persistence import (
+    Checkpointer,
+    CheckpointInfo,
+    CorruptCheckpoint,
+    MemoryCheckpointer,
+    SQLiteCheckpointer,
+)
 from focus.harness.rescoring import PolicyScorer, TokenScorer, reevaluate
 from focus.harness.rollout import TASK, AnyRollout, RolloutState
 from focus.harness.runner import DEFAULT_FINISH_PROMPT, Runner
@@ -49,6 +56,11 @@ __all__ = [
     "Compaction",
     "CompactionResult",
     "Compactor",
+    "Checkpointer",
+    "CheckpointInfo",
+    "CorruptCheckpoint",
+    "MemoryCheckpointer",
+    "SQLiteCheckpointer",
     "DEFAULT_FINISH_PROMPT",
     "Env",
     "FoldEnv",

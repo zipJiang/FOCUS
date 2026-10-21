@@ -34,6 +34,7 @@ from uuid import uuid4
 
 from focus.codec import Message
 from focus.execution.budget import ResourceBudget
+from focus.execution.pool import Owner
 from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
 from focus.harness.turn import (
@@ -105,6 +106,9 @@ class RolloutState[S]:
     invocation_id: str = "root"
     episode_id: str = field(default_factory=lambda: uuid4().hex)
     branch_id: str = field(default_factory=lambda: uuid4().hex)
+    #: Last persisted complete snapshot; inherited by forks as their storage parent.
+    #: Search eligibility still belongs to checkpoint_at/forkable.
+    checkpoint_id: str | None = None
     execution: dict[str, Any] = field(default_factory=dict)
     history: tuple[Message, ...] = ()
     context_refs: tuple[int | None, ...] = ()
@@ -122,12 +126,13 @@ class RolloutState[S]:
             self.__dict__["branch_id"] = uuid4().hex
         self.__dict__.setdefault("execution", {})
         self.__dict__.setdefault("budget", ResourceBudget())
+        self.__dict__.setdefault("checkpoint_id", None)
         if "forkable" in state or "checkpoint_version" not in state:
             object.__setattr__(self, "checkpoint_version", 0)
 
     @property
     def forkable(self) -> bool:
-        """Search may branch at a live, settled state selected by CheckpointPolicy."""
+        """Search may branch at a live, restorable decision or continuation."""
         return (
             not self.done
             and not self.truncated
@@ -294,6 +299,11 @@ class RolloutState[S]:
         correction is over the whole edge the policy produced, folds included.
         """
         return logprob(_tagged(self.edge(parent), tags), version)
+
+    @property
+    def owner(self) -> Owner:
+        """The admission and resource-budget scope this rollout's work is charged to."""
+        return Owner(self.episode_id, self.branch_id, self.invocation_id)
 
     def check_continuation(self) -> None:
         """Reject legacy continuation while allowing historical analysis."""

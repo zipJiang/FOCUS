@@ -1,5 +1,8 @@
 # 08 — Recursive and parallel invocations
 
+This milestone introduced recursion. [Milestone 12](12-monty.md) replaces RLM's
+CPython sessions with Monty and exposes checkpoints inside active child invocations.
+
 RLM stores large input in the Python variable context instead of inserting it into
 the initial prompt. The rlm_python tool runs a persistent logical session through
 saved Python/workspace snapshots. llm_query and rlm_query run one child; their batched

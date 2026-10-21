@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from focus.execution import Owner
 from focus.harness.checkpoint import Effect
 from focus.harness.compaction.base import Compaction, Compactor
 from focus.harness.compaction.triggers import Trigger
@@ -20,8 +19,6 @@ if TYPE_CHECKING:
 
 @register(ContextProtocol, "summary")
 class Summary(ContextProtocol):
-    manages_context = True
-
     def __init__(self, compactor: Compactor[Any] | None = None):
         if compactor is not None and not isinstance(
             getattr(compactor, "trigger", None), Trigger
@@ -42,13 +39,14 @@ class Summary(ContextProtocol):
         )
 
     async def before(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
-        return await runner.compact(rs) if self.needs_prepare(rs, runner) else rs
+        # The enclosing runner operation commits this fold with its complete state.
+        # Calling runner.compact here would nest a persistence/retry transaction.
+        return await runner._compact(rs) if self.needs_prepare(rs, runner) else rs
 
     async def compact(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
         if self.compactor is None:
             return await super().compact(rs, runner)
-        owner = Owner(rs.episode_id, rs.branch_id, rs.invocation_id)
-        runner.services.attach_budget(owner, rs.budget)
+        runner.services.attach_budget(rs.owner, rs.budget)
         folded = await self.compactor.compact(
             Compaction(
                 messages=rs.messages,
@@ -72,7 +70,7 @@ class Summary(ContextProtocol):
         turns = tuple(replace(t, tag="fold", transition=None) for t in folded.turns)
         return replace(
             rs,
-            budget=runner.services.remaining(owner),
+            budget=runner.services.remaining(rs.owner),
             messages=tuple(folded.messages),
             context_refs=(None,) * len(folded.messages),
             state=folded.state,

@@ -7,7 +7,6 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from focus.codec import Message
-from focus.execution import Owner
 from focus.execution.process import ProcessSnapshot
 from focus.harness.rollout import AnyRollout
 from focus.protocols.base import ContextProtocol, ProtocolError, ToolProtocol, schema
@@ -79,7 +78,7 @@ class CLM(ToolProtocol):
             code,
             ProcessSnapshot(previous.namespace, files),
             timeout=self.timeout,
-            owner=Owner(rs.episode_id, rs.branch_id, rs.invocation_id),
+            owner=rs.owner,
         )
         if result.snapshot is None or result.error:
             raise ProtocolError(f"cell was not committed: {result.error}")

@@ -17,6 +17,8 @@ flowchart TD
     Context --> Services
     Services --> Inference[Local admission or named Ray coordinator]
     Services --> Python[Managed Python sessions]
+    Runner --> Persistence[Optional complete-snapshot Checkpointer]
+    Persistence --> Store[Memory / SQLite]
     Runner --> Select[CheckpointPolicy]
     Runner --> Training[Exact actor-only packing and RL export]
 ```
@@ -46,6 +48,8 @@ decisions; optional fixed helpers remain observations and costs, excluded from a
 | [[09 — Actor training across context and recursive decisions]] | `db6b3bc` | packing, preparation, rescoring and Slime export tests |
 | [[10 — Review findings and corrections]] | `2ea6c7d` | restoration/lifecycle regressions and Ray value scoring |
 | [[11 — Delivery validation and extension exercises]] | See note commit | final matrix, runnable examples and packaging |
+| [12 — Monty continuations](12-monty.md) | Working tree | resumable Python, nested forks, ancestor restoration |
+| [13 — Complete snapshot checkpointer](13-checkpointer.md) | Working tree | atomic persistence, ancestry and recovery across protocols |
 
 Read the [migration guide](../MIGRATION.md) before continuing old checkpoints.
 Run `python -m examples.protocols --protocol rlm-memex` to inspect generations, actor
@@ -79,10 +83,12 @@ papers: [RLM](https://arxiv.org/abs/2512.24601),
 
 ## Limits and next experiments
 
-Supported snapshots cover serializable data, imported modules, simple functions and
-workspace files. Live handles, closures and cell-defined classes/instances are refused.
-Execution is for trusted research code, not container isolation. One trainable actor
-family, local or Ray services, and settled checkpoints are supported. Paper-scale
+CLM snapshots cover serializable data, imported modules, simple functions and workspace
+files; live handles, closures and cell-defined classes/instances are refused there.
+RLM uses Monty snapshots, including suspended call stacks and closures, with a Python
+subset and no host filesystem access. Waiting ancestors and active children are
+restorable, so search can branch inside recursion. One trainable actor
+family and local or Ray inference services are supported. Paper-scale
 reproduction and distributed training of multiple actor families remain future work.
 
 Exercises: implement a registered retention policy; compare sparse and every-decision

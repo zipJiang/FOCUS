@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from pydantic_monty import ExternalSettledResult
+
 from focus.codec import Message
 from focus.execution.budget import ResourceBudget
+from focus.execution.monty import MontyExecutor, MontyResult, MontySnapshot
 from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, Owner
 from focus.execution.process import (
     CallHandler,
@@ -130,6 +135,7 @@ class ExecutionServices:
     processes: ProcessExecutor = field(default_factory=ProcessExecutor)
     usage: dict[str, Usage] = field(default_factory=dict)
     budgets: dict[tuple[str, str], ResourceBudget] = field(default_factory=dict)
+    monty: MontyExecutor = field(default_factory=MontyExecutor)
 
     def __post_init__(self) -> None:
         if self.auxiliary is None:
@@ -220,14 +226,35 @@ class ExecutionServices:
         owner: Owner = DEFAULT_OWNER,
         timeout: float = 30,
     ) -> CellResult:
-        usage = self.usage.setdefault(owner.episode, Usage())
-        self.charge(owner, process_cells=1)
-        usage.process_cells += 1
-        start = time.monotonic()
-        try:
+        async with self._cell(owner, new=True):
             return await self.processes.execute(
                 code, snapshot, handler=handler, owner=owner, timeout=timeout
             )
+
+    async def execute_monty(
+        self,
+        code: str,
+        snapshot: MontySnapshot,
+        *,
+        reply: ExternalSettledResult | None = None,
+        owner: Owner = DEFAULT_OWNER,
+        timeout: float = 30,
+    ) -> MontyResult:
+        # A resumed suspension continues the cell it was charged as.
+        async with self._cell(owner, new=not snapshot.suspended):
+            return await self.monty.execute(
+                code, snapshot, reply=reply, owner=owner, timeout=timeout
+            )
+
+    @asynccontextmanager
+    async def _cell(self, owner: Owner, *, new: bool) -> AsyncIterator[None]:
+        usage = self.usage.setdefault(owner.episode, Usage())
+        if new:
+            self.charge(owner, process_cells=1)
+            usage.process_cells += 1
+        start = time.monotonic()
+        try:
+            yield
         finally:
             usage.process_seconds += time.monotonic() - start
 
@@ -248,6 +275,7 @@ class ExecutionServices:
     async def aclose(self) -> None:
         assert self.auxiliary is not None
         results = await asyncio.gather(
+            self.monty.aclose(),
             self.processes.aclose(),
             self.inference.aclose(),
             self.auxiliary.aclose(),

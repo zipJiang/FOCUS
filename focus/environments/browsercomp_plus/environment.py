@@ -149,9 +149,9 @@ class BrowserRunner(Runner[State, ToolTurn]):
         self.context_limit = context_limit
         self.compaction_failure = compaction_failure
 
-    async def compact(self, rs):
+    async def _compact(self, rs):
         try:
-            result = await super().compact(rs)
+            result = await super()._compact(rs)
             return replace(
                 result,
                 turns=rs.turns
@@ -182,31 +182,30 @@ class BrowserRunner(Runner[State, ToolTurn]):
             capped.append(replace(turn, compaction_penalty=penalty))
         return tuple(capped)
 
-    async def advance(self, rs, *, sampling_params=None):
+    async def _advance(self, rs, *, sampling_params=None):
         if (
             not rs.done
             and not rs.truncated
             and rs.turns_taken >= rs.state.task_limit - 1
         ):
-            return await self.finish(rs, sampling_params=sampling_params)
+            return await self._finish(rs, sampling_params=sampling_params)
         if not rs.done and not rs.truncated and not self.protocol.manages_context:
             size = len(
                 self._policy.prepare(rs.messages, tools=self._tools or ()).tokens
             )
             if size < self.context_limit and size >= self.context_limit - 16384 - 1024:
-                return await self.finish(rs, sampling_params=sampling_params)
-        return await super().advance(rs, sampling_params=sampling_params)
+                return await self._finish(rs, sampling_params=sampling_params)
+        return await super()._advance(rs, sampling_params=sampling_params)
 
-    async def finish(self, rs, *, sampling_params=None):
+    async def _finish(self, rs, *, sampling_params=None):
         if rs.done:
             return rs
         rs.check_continuation()
         if self._finish_prompt is None:
             return replace(rs, truncated=True)
-        if self.protocol.needs_prepare(rs, self):
-            rs = await self.compact(rs)
-            if rs.done:
-                return rs
+        rs = await self.protocol.before(rs, self)
+        if rs.done:
+            return rs
         messages = [*rs.messages, {"role": "user", "content": self._finish_prompt}]
         tools = tuple(t for t in self._tools or () if t["function"]["name"] == "submit")
         return await self._generate_turn(

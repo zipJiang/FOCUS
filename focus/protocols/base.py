@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from focus.codec import Message
 from focus.execution import Usage
+from focus.generation import SamplingParams
 from focus.generation.parsing.base import ToolTurn
 from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
@@ -27,6 +28,23 @@ class ProtocolError(ValueError):
 class Applied:
     rollout: AnyRollout
     transition: StepResult[Any] | None = None
+
+
+class OperationSuspended(Exception):
+    """An operation has saved all unfinished work in its rollout."""
+
+    def __init__(self, rollout: AnyRollout):
+        self.rollout = rollout
+
+
+@dataclass(frozen=True)
+class PendingOperations:
+    action: ToolTurn
+    index: int
+    origin: int
+    exchange: tuple[Message, ...]
+    exchange_refs: tuple[int | None, ...]
+    context_before: int
 
 
 class ContextProtocol:
@@ -49,6 +67,19 @@ class ContextProtocol:
 
     async def before(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
         return rs
+
+    def has_pending(self, rs: AnyRollout) -> bool:
+        return False
+
+    async def resume(
+        self,
+        rs: AnyRollout,
+        runner: Runner[Any, Any],
+        *,
+        sampling_params: SamplingParams | None = None,
+    ) -> Applied:
+        """Advance saved protocol work without generating another local task turn."""
+        raise ValueError("protocol has no pending operation")
 
     async def compact(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
         raise ValueError("Runner has no compactor configured")
@@ -96,6 +127,32 @@ class ToolProtocol(ContextProtocol):
 
     manages_context = True
 
+    def has_pending(self, rs: AnyRollout) -> bool:
+        return "pending_operations" in rs.execution
+
+    async def resume_operation(
+        self,
+        rs: AnyRollout,
+        name: str,
+        arguments: dict[str, Any],
+        runner: Runner[Any, Any],
+        sampling_params: SamplingParams | None,
+    ) -> tuple[AnyRollout, str, str]:
+        return await self.operation(rs, name, arguments, runner)
+
+    async def resume(
+        self,
+        rs: AnyRollout,
+        runner: Runner[Any, Any],
+        *,
+        sampling_params: SamplingParams | None = None,
+    ) -> Applied:
+        execution = dict(rs.execution)
+        pending = execution.pop("pending_operations")
+        return await self._operations(
+            replace(rs, execution=execution), pending, runner, sampling_params
+        )
+
     async def operation(
         self,
         rs: AnyRollout,
@@ -130,8 +187,6 @@ class ToolProtocol(ContextProtocol):
             or not any(c.name in names for c in action.tool_calls)
         ):
             return await self.task_apply(rs, action, runner, ending=ending)
-        origin = len(rs.turns) - 1
-        mixed = any(c.name not in names for c in action.tool_calls)
         # Native adapters require the active call and all of its replies to remain
         # contiguous. Edit only settled context, then restore this exchange intact.
         # History still records every original message at its stable index.
@@ -145,9 +200,37 @@ class ToolProtocol(ContextProtocol):
             rs = replace(
                 rs, messages=rs.messages[:-1], context_refs=rs.context_refs[:-1]
             )
-        for index, call in enumerate(action.tool_calls):
+        return await self._operations(
+            rs,
+            PendingOperations(
+                action,
+                0,
+                len(rs.turns) - 1,
+                exchange,
+                exchange_refs,
+                rs.context_version,
+            ),
+            runner,
+            None,
+        )
+
+    async def _operations(
+        self,
+        rs: AnyRollout,
+        pending: PendingOperations,
+        runner: Runner[Any, Any],
+        sampling_params: SamplingParams | None,
+    ) -> Applied:
+        action = pending.action
+        names = {s["function"]["name"] for s in self.schemas()}
+        mixed = any(c.name not in names for c in action.tool_calls)
+        exchange, exchange_refs = pending.exchange, pending.exchange_refs
+        for index in range(pending.index, len(action.tool_calls)):
+            call = action.tool_calls[index]
             kind = ""
-            before = rs.context_version
+            before = (
+                pending.context_before if index == pending.index else rs.context_version
+            )
             try:
                 if rs.truncated:
                     raise ProtocolError(
@@ -171,8 +254,8 @@ class ToolProtocol(ContextProtocol):
                 missing = set(contract.get("required", ())) - arguments.keys()
                 if missing:
                     raise ProtocolError(f"missing arguments: {sorted(missing)}")
-                candidate, text, effect_kind = await self.operation(
-                    rs, call.name, arguments, runner
+                candidate, text, effect_kind = await self.resume_operation(
+                    rs, call.name, arguments, runner, sampling_params
                 )
                 # Complete pending responses provisionally for validation only.
                 # Commit neither context nor execution state if the edit is invalid.
@@ -188,11 +271,26 @@ class ToolProtocol(ContextProtocol):
                 except ValueError as exc:
                     raise ProtocolError(str(exc)) from exc
                 rs, kind = candidate, effect_kind
+            except OperationSuspended as paused:
+                return Applied(
+                    replace(
+                        paused.rollout,
+                        execution={
+                            **paused.rollout.execution,
+                            "pending_operations": PendingOperations(
+                                action,
+                                index,
+                                pending.origin,
+                                exchange,
+                                exchange_refs,
+                                before,
+                            ),
+                        },
+                    )
+                )
             except ProtocolError as exc:
                 text = f"Invalid {call.name}: {exc}. Previous valid context preserved."
-            message: Message = {"role": "tool", "name": call.name, "content": text}
-            if call.call_id:
-                message["tool_call_id"] = call.call_id
+            message: Message = {**tool_reply(call, text), "name": call.name}
             if exchange:
                 exchange = (*exchange, message)
                 exchange_refs = (*exchange_refs, len(rs.history))
@@ -211,7 +309,7 @@ class ToolProtocol(ContextProtocol):
                         *rs.effects,
                         Effect(
                             kind,
-                            origin,
+                            pending.origin,
                             before,
                             rs.context_version,
                             call.name,
