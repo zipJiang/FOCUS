@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from examples.custom_protocol import KeepRecent
 from focus.generation.parsing.hermes import HermesToolCallParser
 from tests.helpers import ScriptedGenerator, tool_call, toy_runner
+from tests.protocols.helpers import KeepRecent
 
 
 async def test_custom_protocol_changes_context_without_task_transition():

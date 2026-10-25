@@ -1,4 +1,4 @@
-"""Example extension: model-controlled retention without scheduler changes."""
+"""Test protocol for context edits, native tool history, and checkpoint recovery."""
 
 from dataclasses import replace
 from typing import Any

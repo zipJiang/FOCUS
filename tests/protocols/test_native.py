@@ -2,7 +2,6 @@
 
 import pytest
 
-from examples.custom_protocol import KeepRecent
 from focus import OpenAIChatPolicy, OpenAIResponsesPolicy, Runner
 from focus.generation import NativeToolCall
 from tests.generation.test_openai_chat import (
@@ -27,6 +26,7 @@ from tests.generation.test_openai_responses import (
     _wire as responses_wire,
 )
 from tests.helpers import FakeChatTokenizer, SubmitEnv, native_format
+from tests.protocols.helpers import KeepRecent
 
 
 @pytest.fixture(params=["chat", "responses"])

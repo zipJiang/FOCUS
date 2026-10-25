@@ -7,7 +7,6 @@ from dataclasses import replace
 
 import pytest
 
-from examples.custom_protocol import KeepRecent
 from focus.execution.budget import ResourceBudget
 from focus.generation.parsing import HermesToolCallParser
 from focus.harness import (
@@ -20,6 +19,7 @@ from focus.harness import (
 from focus.protocols import AppendOnly, Summary
 from tests.harness.test_runner import QuietMemory, ToyCompactor
 from tests.helpers import ScriptedGenerator, ToyEnv, tool_call, toy_runner
+from tests.protocols.helpers import KeepRecent
 
 
 @pytest.fixture(params=["memory", "sqlite"])
