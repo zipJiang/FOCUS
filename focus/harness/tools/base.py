@@ -14,7 +14,10 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from focus.harness.workspace.base import Workspace
 
 
 @runtime_checkable
@@ -70,6 +73,14 @@ class BaseTool(ABC):
             "description": self.description,
             "parameters": self.parameters,
         }
+
+    def validate_workspace(self, workspace: Workspace) -> None:
+        """Check this tool's workspace requirements before generation.
+
+        ToolEnv calls this optional hook for each tool. Stateless tools accept
+        any workspace; tools that read or write state can require capabilities.
+        """
+        return None
 
     def verify_args(self, params: str | dict[str, Any]) -> dict[str, Any]:
         """Parse ``params``, check required keys, and coerce to the declared types."""

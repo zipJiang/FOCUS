@@ -12,7 +12,7 @@ from focus.config import RolloutConfig
 from focus.execution import Usage
 from focus.generation import TokenId
 from focus.harness import AnyRollout, RolloutState, Runner
-from focus.harness.rescoring import PolicyScorer, TokenScorer, reevaluate
+from focus.harness.rescoring import PolicyScorer, reevaluate
 from focus.harness.workspace import Workspace
 from focus.preparation import AdvantageEstimator, PreparedBatch, prepare_samples
 from focus.reward import RewardModel
@@ -40,50 +40,24 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Runtime:
-    """Live objects for one worker, plus the configuration it runs them at.
+    """Connect a runner, optional scorers, and a search configuration.
 
-    The split is what a field *is*, not what it does: ``runner``, ``scorer``,
-    ``value_model`` and ``value_serialize`` **hold a socket** (or are a function over
-    one), so they are built where the endpoint is known -- in-process, or inside a Ray
-    actor by its factory. Everything else can be *said*, and is said once, on
-    :class:`~focus.config.RolloutConfig`: one record, with real defaults,
-    that a config file or a :class:`~focus.config.RolloutSpec` carries whole. The
-    runtime keeps immutable rollout configuration separate from per-prompt state.
-
-    No per-prompt state, so one runtime serves every prompt a worker runs.
+    Construction preserves each collaborator's configuration and service ownership.
+    Pass the same ExecutionServices to Runner and TokenScorer when generation and
+    rescoring should share capacity. Each search creates its own tree and workspace.
     """
 
     runner: Runner[Any, Any]
-    #: The anchor policy's scorer -- e.g. ``TokenScorer(anchor_generator)``. Needed
-    #: only when ``config.proposal`` can draw off-anchor: an edge some other law
-    #: produced is corrected by an importance ratio, and that ratio needs the anchor's
-    #: logprobs over tokens the anchor did not generate. ``None`` is right for the v1
-    #: anchor-only configuration, where every ratio is exactly 1 and the channel is
-    #: never read.
+    #: Supplies anchor-policy log probabilities for off-anchor continuations.
     scorer: PolicyScorer | None = None
-    #: Checkpoint remaining-return predictions. Required by refined TD, optional
-    #: for search and GRPO. Scores provide the prior for the completed-suffix blend.
-    #: They are filed under config.reward_config.value_version.
+    #: Predicts remaining return at checkpoints. Estimates are stored under
+    #: config.reward_config.value_version.
     value_model: RewardModel | None = None
-    #: How a node's payload is rendered for :attr:`value_model`. ``None`` is
-    #: :func:`~focus.scheduler.core.critic.rollout_text`, which is what every
-    #: rollout payload wants; pass one for a model that needs its own chat template.
+    #: Renders a checkpoint for the value model; None uses rollout_text.
     value_serialize: Callable[[AnyRollout], str] | None = None
-    #: Seconds one :attr:`value_model` batch may take before it is abandoned as a
-    #: scoring failure (the rollouts are kept; only the estimate is missing). Lives
-    #: here, beside the socket it bounds, for the same reason ``generate_timeout``
-    #: lives on the :class:`Runner`: a bound on a backend is a property of the backend,
-    #: not something a config file can promise about someone else's endpoint. ``None``
-    #: waits as long as the reward server does -- which, since a pass drains its
-    #: in-flight expansions rather than cancelling them, is as long as the training
-    #: step waits. :attr:`scorer` is the caller's own object, so its bound is set where
-    #: it is built (``TokenScorer(gen, timeout=...)``).
+    #: Maximum seconds for one critic batch; None leaves it unbounded.
     score_timeout: float | None = None
     config: RolloutConfig = field(default_factory=RolloutConfig)
-
-    def __post_init__(self) -> None:
-        if isinstance(self.scorer, TokenScorer):
-            self.scorer.services = self.runner.services
 
 
 def _expander(runtime: Runtime, pass_id: str) -> RolloutExpander[Any]:

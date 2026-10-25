@@ -39,7 +39,6 @@ from focus.harness.rollout import RolloutState
 from focus.harness.turn import Turn
 from focus.harness.workspace import (
     NullWorkspace,
-    StorageTool,
     Workspace,
 )
 from focus.protocols import AppendOnly, ContextProtocol
@@ -82,51 +81,6 @@ def _chained_prefix[S](
     return packed + prefix[n:]
 
 
-def _check_workspace(env: object, workspace: Workspace) -> None:
-    """Refuse a rollout whose ``storage`` tool would have no store to write to.
-
-    A :class:`~...workspace.storage.StorageTool` executes against the workspace the
-    *rollout* carries -- the env forwards it per call, overriding whatever the tool was
-    constructed with -- so an env that offers one under a
-    :class:`~...workspace.null.NullWorkspace` is a rollout whose memory tool cannot
-    work. Nothing downstream says so, which is why it is said here: a tool fault is
-    caught by ``dispatch`` and handed back as the result string the model reads
-    (``'NullWorkspace' object has no attribute 'write'``), where no log records it and
-    no metric counts it, and the rollout generates on around a memory it never has. The
-    mistake is per-run configuration -- a caller that built its env from a workspace and
-    then forgot to pass that workspace to the run -- so it belongs beside the other two
-    contracts :meth:`Runner.root` settles, before a token is generated.
-
-    Narrow on purpose, in both directions. Only ``NullWorkspace`` is refused: any other
-    backend is presumed to be the store its own tools were made for, and a workspace
-    that duck-types the KV methods is a legitimate one. And only a tool the *library*
-    knows needs a store is looked for, by type: a custom tool's requirements are its
-    own, and matching on the name ``"storage"`` would fire on any tool that happened to
-    be called that.
-    """
-    if not isinstance(workspace, NullWorkspace):
-        return
-    tools = getattr(env, "tools", ())
-    if not isinstance(tools, Sequence) or not any(
-        isinstance(tool, StorageTool) for tool in tools
-    ):
-        return
-    raise ValueError(
-        " ".join(
-            (
-                f"{type(env).__name__} offers the `storage` tool but this rollout's",
-                "workspace is a NullWorkspace, which has no store: every storage call",
-                "would come back to the model as an error string. Pass the workspace",
-                "the env's tools were built from --",
-                "`run_search(prompt, runtime, workspace=...)`,",
-                "`runner.run_from(prompt, workspace=...)`, or, in a slime actor,",
-                "`make_generate(..., workspace_factory=...)`, which builds one per",
-                "prompt.",
-            )
-        )
-    )
-
-
 #: Logical feedback for one final answer attempt when the step budget expires. Task
 #: specific in its wording only -- pass ``finish_prompt=`` to say it in the task's own
 #: terms (a required answer format, say), or ``None`` to truncate bare.
@@ -139,23 +93,17 @@ DEFAULT_FINISH_PROMPT = (
 
 
 class Runner[S, A]:
-    """Drive a :class:`RolloutState`: start, advance one turn, or run to the end.
+    """Generate actions, apply task transitions, and record a rollout.
 
-    Holds shared collaborators (policy, env, protocol and services), so one runner
-    can drive many forked checkpoints concurrently. The workspace is not a runner field
-    -- it lives in the :class:`RolloutState` and is supplied per run.
+    The policy produces actions accepted by the environment. The context protocol
+    controls the live conversation; the checkpoint policy selects branch points.
+    These collaborators are shared, while task state and workspace live in each
+    RolloutState. The environment validates workspace requirements at initialization.
 
-    One :class:`~focus.generation.policy.Policy`, not a generator plus a codec
-    plus a parser: those three are facets of one model and the runner has never had a
-    use for them apart. It is the seam where the policy's and env's shared action ``A``
-    must agree -- the runner pairs a compatible ``(policy, env)``.
-
-    With ``checkpointer``, complete states commit after initialization and every
-    advance, compaction and finish. ``checkpoint_retries`` bounds retries of
-    ``retry_on`` exceptions from the last committed state (two retries by default).
-    Subclasses customize ``_advance``, ``_compact`` and ``_finish`` so their changes
-    stay inside the shared commit/retry boundary. Derived helper runners do not save
-    independently: their work belongs to the enclosing rollout's complete snapshot.
+    An optional checkpointer persists complete states independently of branch-point
+    selection. checkpoint_retries bounds retries of retry_on exceptions from the
+    last committed state. Subclass _advance, _compact, or _finish to keep custom
+    behavior within that commit/retry boundary.
     """
 
     def __init__(
@@ -389,7 +337,7 @@ class Runner[S, A]:
         # Default NullWorkspace: no store / tools / guidance unless the caller opts in.
         # `is not None`, not `or`: an empty Workspace is falsy.
         ws = workspace if workspace is not None else NullWorkspace()
-        _check_workspace(self._env, ws)
+        self._env.validate_workspace(ws)
         messages = tuple(seed)
         state = await self._env.reset()
         rs = RolloutState(

@@ -1,17 +1,9 @@
-"""The task environment: pure world dynamics an agent acts on, one step at a time.
+"""Task state, action effects, observations, and rewards.
 
-An :class:`Env` is deliberately **model-free** -- it holds no generator, codec, or
-tokenizer. Its one job is :meth:`Env.step`: given a state and an *already-decoded*
-action, apply the world dynamics and return a :class:`StepResult`. Generation (render,
-generate, then parse into an action) happens outside, in the rollout loop; the parser
-that turns a model completion into the action is a separate :class:`ActionParser`.
-
-Keeping the env pure is what makes it unit-testable with no model server, and keeps
-generation/seed/policy provenance out of the task code. ``step`` is stateless over the
-state passed in (state in, new state out), so steps run concurrently and tree-search
-branches stay independent. The one ambient dependency a step may need -- the durable
-:class:`Workspace` its tools read/write -- is passed **in** per call, never captured, so
-the task state stays pure data and forked branches get isolated workspaces.
+An Env receives actions that the policy has already parsed. It applies the task
+rules and returns a StepResult; model generation belongs to the runner. Return new
+states from step() so continuations can share their starting state safely. Tools
+receive the active branch's workspace on each call.
 """
 
 from __future__ import annotations
@@ -63,12 +55,10 @@ class StepResult[S_co]:
 
 @registrable(slot="env")
 class Env[S, A](ABC):
-    """User-implemented world dynamics -- see the module docstring for the model-free
-    stance.
+    """Define the task's initial state and response to each parsed action.
 
-    Subclass and implement :meth:`reset` (the initial state) and :meth:`step` (apply one
-    decoded action). Both are async so a task whose actions do I/O -- run a command,
-    call a tool -- can ``await``; a pure-compute task writes ``async def``, no await.
+    Implement reset() and step(). Both are asynchronous so environments can await
+    tool I/O. Override validate_workspace() for task-specific storage requirements.
     """
 
     @abstractmethod
@@ -87,6 +77,14 @@ class Env[S, A](ABC):
         is the rollout's durable scratch space, passed per call so tools write to *this*
         branch's store; envs that need no workspace ignore it.
         """
+
+    def validate_workspace(self, workspace: Workspace) -> None:
+        """Check task-specific workspace requirements before an episode starts.
+
+        The default accepts any workspace. Override this method to reject an
+        incompatible store before the runner requests a model generation.
+        """
+        return None
 
     async def finish(self, state: S, action: A) -> StepResult[S]:
         """End the episode *on* ``action`` -- the rollout is out of steps.

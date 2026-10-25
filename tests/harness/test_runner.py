@@ -665,11 +665,10 @@ async def test_a_storage_tool_with_no_store_behind_it_is_refused_at_the_root() -
         parser=HermesToolCallParser(),
     )
 
-    # the message has to name the way *out*, in each of the two vocabularies a caller
-    # arrives with -- a harness run, and a slime actor's per-prompt factory
+    # The tool reports its missing capability before model generation.
     with pytest.raises(ValueError, match="workspace=") as caught:
         await runner.start("hi", workspace=NullWorkspace())
-    assert "workspace_factory" in str(caught.value)
+    assert "storage requires" in str(caught.value)
     # the default workspace is that same NullWorkspace: an omission is refused too
     with pytest.raises(ValueError, match="NullWorkspace"):
         await runner.root(({"role": "user", "content": "hi"},))

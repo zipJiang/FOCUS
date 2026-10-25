@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from focus.harness.tools import BaseTool, ToolError
-from focus.harness.workspace.base import WorkspaceError
+from focus.harness.workspace.base import Workspace, WorkspaceError
 from focus.harness.workspace.memory import InMemoryWorkspace
 
 
@@ -63,6 +63,16 @@ class StorageTool(BaseTool):
 
     def __init__(self, workspace: InMemoryWorkspace | None = None) -> None:
         self.workspace = workspace if workspace is not None else InMemoryWorkspace()
+
+    def validate_workspace(self, workspace: Workspace) -> None:
+        """Require the key-value operations used by the storage tool."""
+        required = ("read", "write", "delete", "paths")
+        if not all(callable(getattr(workspace, name, None)) for name in required):
+            raise ValueError(
+                "storage requires a workspace with read, write, delete, and paths; "
+                f"received {type(workspace).__name__}. Pass workspace= with a "
+                "compatible store when starting the rollout."
+            )
 
     def call(
         self,

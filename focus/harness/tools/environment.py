@@ -40,6 +40,17 @@ class ToolEnv(Env[S, ToolTurn], ABC):
         self._tools = [*tools, submit] if submit is not None else list(tools)
         self._by_name = {t.name: t for t in tools}
 
+    def validate_workspace(self, workspace: Workspace) -> None:
+        """Run each tool's workspace check, when it provides one.
+
+        Tools only need the structural Tool interface. Third-party tools without
+        this hook remain usable; their environment may add its own checks.
+        """
+        for tool in self._tools:
+            validate = getattr(tool, "validate_workspace", None)
+            if callable(validate):
+                validate(workspace)
+
     @final
     async def reset(self) -> S:
         """Validate writable task fields before generation starts."""

@@ -51,6 +51,37 @@ context manager closes the services when collection finishes. Here `own_clients=
 also closes the policies bound to the executor; use `False` when another owner manages
 their lifetime.
 
+## Choose services when constructing components
+
+`Runtime` preserves the services on its runner and anchor scorer. Pass the runner's
+service to `TokenScorer` when generation and rescoring should share capacity:
+
+```python
+from focus import Runtime, TokenScorer
+
+runtime = Runtime(
+    runner=runner,
+    scorer=TokenScorer(anchor_policy, services=runner.services),
+    config=config,
+)
+```
+
+The scorer supplies anchor-policy log probabilities for off-anchor continuations.
+It can use a separate service when rescoring needs a different pool; the caller
+then manages both lifetimes. Critic scoring uses the runner's service through the
+value head constructed by `run_search()`.
+
+The Slime adapter takes its services from `runtime_factory`. Construct a local or
+Ray executor in that factory and pass its `ExecutionServices` into the runner.
+Use `RayRewardModel(executor, "critic-name")` to select a critic registered on the
+same coordinator. The hook performs collection and export with these components.
+
+`make_generate(..., own_services=True)` closes its runner services when the hook's
+`aclose()` is called. Set `own_services=False` when an outer async context owns a
+service shared across hooks. Finish all active calls before closing the hook or
+its services. Scorers with separate services and externally owned model clients
+remain the caller's responsibility.
+
 ## Read budgets and usage
 
 A branch checkpoint carries its remaining model-call, prompt-token, and output-token
