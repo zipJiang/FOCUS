@@ -81,6 +81,7 @@ TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
     (ContextProtocol, {"name": "clm"}),
     (ContextProtocol, {"name": "memex"}),
     (ContextProtocol, {"name": "rlm"}),
+    (Policy, {"name": "token_continuation", "backend": Policy(format=test_format())}),
     # -- generation and reward backends ----------------------------------------------
     (CheckpointPolicy, {"name": "sparse"}),
     (CheckpointPolicy, {"name": "every_decision"}),
@@ -161,6 +162,7 @@ TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
     (Workspace, {"name": "null"}),
     (Workspace, {"name": "memory"}),
     (ActionParser, {"name": "text"}),
+    (ActionParser, {"name": "token_chunk", "chunk_size": 256}),
     (ActionParser, {"name": "hermes"}),
     (ActionParser, {"name": "native"}),
     (ActionParser, {"name": "qwen_xml"}),
