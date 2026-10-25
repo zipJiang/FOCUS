@@ -11,20 +11,8 @@ from .environment import (
     load_cases,
     make_runner,
 )
-from .trace import (
-    BrowserWorkspace,
-    TraceFind,
-    TraceOpen,
-    TraceSearch,
-    browser_navigation,
-)
 
 __all__ = [
-    "BrowserWorkspace",
-    "TraceFind",
-    "TraceOpen",
-    "TraceSearch",
-    "browser_navigation",
     "BrowserFind",
     "BrowserOpen",
     "BrowserRunner",
