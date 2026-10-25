@@ -14,7 +14,7 @@ scalar (``reduce`` picks how) and surfaces per-token values when the payload is 
     rm.startup_check()
     result = rm.score("<a formatted prompt+response>")   # result.score is a float
 
-Needs the ``reward`` extra (``httpx``).
+The standard installation includes the HTTP client.
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ _REDUCERS: dict[str, Callable[[list[float]], float]] = {
 def _import_httpx() -> Any:
     try:
         import httpx
-    except ImportError as exc:  # pragma: no cover - exercised only without the extra
-        raise ImportError("VLLMRewardModel needs httpx; install focus[reward]") from exc
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise ImportError("VLLMRewardModel needs httpx; install httpx") from exc
     return httpx
 
 

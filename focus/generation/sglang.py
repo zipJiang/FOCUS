@@ -25,10 +25,9 @@ from focus.generation.types import GenerateResult, SamplingParams, TokenId
 def _import_httpx() -> Any:
     try:
         import httpx
-    except ImportError as exc:  # pragma: no cover - depends on optional environment
+    except ImportError as exc:  # pragma: no cover - dependency guard
         raise ImportError(
-            "The SGLang backend requires httpx. Install it with: "
-            + "pip install focus[sglang]"
+            "The SGLang backend requires httpx. Install it with: pip install httpx"
         ) from exc
     return httpx
 

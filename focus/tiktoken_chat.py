@@ -18,8 +18,7 @@ deliberately plain: on this path the prompt reaches the model as a *decoded* use
 schemas reach it as the API's own ``tools``, so the template's only job is to render a
 conversation a reader -- and a model reading it as prose -- can follow unambiguously.
 
-``tiktoken`` is lazily imported, like the ``openai`` SDK is: it ships in the
-``openai-chat`` extra, and everything else in this package must import without it.
+``tiktoken`` is included in the standard installation and loaded on first use.
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ from focus.codec import Message
 
 _TIKTOKEN_HINT = (
     "tiktoken is required for TiktokenChatTokenizer. "
-    + "Install it with: pip install focus[openai-chat]"
+    + "Install it with: pip install tiktoken"
 )
 
 

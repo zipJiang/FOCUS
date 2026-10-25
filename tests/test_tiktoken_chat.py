@@ -7,9 +7,6 @@ runner makes. The second is what the template says: role markers a reader (and a
 reading prose) can follow, tool calls visible in the assistant turn that made them, and
 the schemas deliberately *absent*, because on this path they reach the model as the
 API's own ``tools`` parameter.
-
-Skipped where ``tiktoken`` is not installed: it ships in the ``openai-chat`` extra, and
-the package must be importable without it.
 """
 
 from __future__ import annotations
@@ -18,9 +15,6 @@ import pytest
 
 from focus.codec import ChatCodec, HFTokenizer, Message
 from focus.tiktoken_chat import TiktokenChatTokenizer
-
-pytest.importorskip("tiktoken")
-
 
 _CONVERSATION: tuple[Message, ...] = (
     {"role": "system", "content": "You apply the statute."},

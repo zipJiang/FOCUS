@@ -6,25 +6,19 @@ requires-python = ">=3.12"
 dependencies = [
     "regex>=2026.4.4",
     "cloudpickle>=3.1",
+    "openai",
+    "httpx",
+    "transformers",
+    "tiktoken",
+    "jinja2>=3.1.6",
 ]
 
 [project.optional-dependencies]
 ray = ["ray>=2.49"]
-# `openai-chat` targets the hosted OpenAI Chat Completions API; tiktoken is the
-# recommended codec for exact completion-token/logprob recovery.
-openai-chat = ["openai", "tiktoken"]
-vllm = ["openai"]
-sglang = ["httpx"]
-# `reward` scores against a vLLM pooling/reward model over its raw `POST /pooling` endpoint
-# (not an OpenAI-typed route), so it speaks httpx directly.
-reward = ["httpx"]
 tinker = ["tinker>=0.22.3"]
-# `chat` provides an `apply_chat_template` tokenizer for the harness `ChatCodec`.
-chat = ["transformers"]
 
 [dependency-groups]
 dev = [
-    "jinja2>=3.1.6",
     "mypy>=2.3.1",
     "pytest",
     "pytest-asyncio",
@@ -138,8 +132,7 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 disable_error_code = ["no-untyped-call"]
 
-# The optional backends are lazily imported and deliberately not installed in the dev
-# environment, so neither they nor their stubs are available to the checker.
+# External integrations do not all ship complete type information.
 [[tool.mypy.overrides]]
 module = [
     "openai.*",

@@ -1,6 +1,6 @@
 """Shared SDK plumbing and native corporate-policy history validation.
 
-The SDK is optional and loaded when a backend creates its client. vLLM shares the SDK
+The SDK is loaded when a backend creates its client. vLLM shares the SDK
 helpers but retains its exact-token completions protocol.
 """
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 _SDK_HINT = (
     "The OpenAI SDK is required for the OpenAI-compatible generators. "
-    + "Install it with: pip install focus[vllm]"
+    + "Install it with: pip install openai"
 )
 
 
