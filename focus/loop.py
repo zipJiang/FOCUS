@@ -14,6 +14,7 @@ from focus.generation import TokenId
 from focus.harness import AnyRollout, RolloutState, Runner
 from focus.harness.rescoring import PolicyScorer, TokenScorer, reevaluate
 from focus.harness.workspace import Workspace
+from focus.preparation import AdvantageEstimator, PreparedBatch, prepare_samples
 from focus.reward import RewardModel
 from focus.reward.config import RewardConfig
 from focus.scheduler.core.critic import NodeScorer
@@ -353,6 +354,36 @@ async def run_search(
     return state
 
 
+async def collect_samples(
+    prompt: str | AnyRollout,
+    runtime: Runtime,
+    *,
+    estimator: AdvantageEstimator | None,
+    workspace: Workspace | None = None,
+) -> PreparedBatch:
+    """Collect a tree and prepare actor and critic samples for a training batch.
+
+    Use the runtime's reward configuration and policy version for both collection
+    and preparation. ``estimator`` remains explicit: choose a training recipe, or
+    pass ``None`` to prepare only critic targets. Inspect ``batch.stats`` and
+    ``batch.failures`` before training; successful samples from a partial collection
+    are retained. Export with ``to_samples`` or consume the typed records directly.
+
+    The caller owns execution services and model clients. Keep those services open
+    around a batch or several concurrent collections, then close them when finished.
+    This function returns the prepared batch without retaining the rollout tree.
+    Use ``run_search`` followed by ``prepare_samples`` when you need the tree for
+    inspection or want to compare several estimators on the same evidence.
+    """
+    tree = await run_search(prompt, runtime, workspace=workspace)
+    return prepare_samples(
+        tree,
+        estimator=estimator,
+        reward_config=runtime.config.reward_config,
+        behavior_version=runtime.runner.policy.version,
+    )
+
+
 def _resource_stats(
     state: SchedulerState[AnyRollout],
     runtime: Runtime,
@@ -364,4 +395,4 @@ def _resource_stats(
         state.stats["resource_" + name] = float(value - before[name])
 
 
-__all__ = ["Runtime", "rescore_anchor", "run_search"]
+__all__ = ["Runtime", "collect_samples", "rescore_anchor", "run_search"]

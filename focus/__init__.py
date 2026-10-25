@@ -70,7 +70,7 @@ from focus.harness import (
     regions,
 )
 from focus.harness.checkpoint import CheckpointPolicy, EveryDecision, SparseCheckpoints
-from focus.loop import Runtime, run_search
+from focus.loop import Runtime, collect_samples, run_search
 from focus.preparation import (
     AdvantageEstimator,
     DirectBranchTdEstimator,
@@ -157,6 +157,7 @@ __all__ = [
     "format_edges",
     "format_tree",
     "run_search",
+    "collect_samples",
     "to_samples",
     # The env you write, and the runner that drives it.
     "BaseTool",

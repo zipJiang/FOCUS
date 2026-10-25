@@ -31,8 +31,8 @@ from focus.execution import ExecutionServices
 from focus.execution.ray import RayInferenceExecutor, RayRewardModel
 from focus.export import CriticSampleFactory, SampleFactory, to_samples
 from focus.harness.workspace import Workspace
-from focus.loop import Runtime, run_search
-from focus.preparation import AdvantageEstimator, prepare_samples
+from focus.loop import Runtime, collect_samples
+from focus.preparation import AdvantageEstimator
 from focus.preparation.records import ESTIMATOR_KEY, LANE_KEY
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,10 @@ def make_generate(
     min_abs_advantage: float | None = None,
 ) -> GenerateHook:
     """Build the coroutine slime's ``--custom-generate-function-path`` expects.
+
+    Sampling is configured by ``Runner`` and ``RolloutConfig.proposal``. The
+    callback accepts Slime's ``sampling_params`` argument for its call signature;
+    that argument does not override the FOCUS sampling configuration.
 
     ``min_abs_advantage`` is forwarded to :func:`to_samples` after preparation;
     it filters actor edges without changing search or critic targets.
@@ -142,11 +146,8 @@ def make_generate(
         # Per sample, never per actor: the workspace is this prompt's scratch, and the
         # tree forks it per branch from whatever it starts as.
         workspace = None if workspace_factory is None else workspace_factory(sample)
-        result = prepare_samples(
-            await run_search(to_prompt(sample), runtime, workspace=workspace),
-            estimator=estimator,
-            reward_config=runtime.config.reward_config,
-            behavior_version=runtime.runner.policy.version,
+        result = await collect_samples(
+            to_prompt(sample), runtime, estimator=estimator, workspace=workspace
         )
         samples = to_samples(
             result,

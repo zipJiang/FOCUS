@@ -108,9 +108,9 @@ async def test_make_generate_builds_one_runtime_per_actor_and_returns_a_group(
         # the runtime, and nothing on the way through dereferences its runner.
         return _runtime()
 
-    monkeypatch.setattr("focus.integrations.slime.run_search", fake_rollout)
+    monkeypatch.setattr("focus.loop.run_search", fake_rollout)
     monkeypatch.setattr(
-        "focus.integrations.slime.prepare_samples", lambda *a, **kw: _result()
+        "focus.loop.prepare_samples", lambda *a, **kw: _result()
     )
     generate = make_generate(
         RolloutSpec(), runtime_factory=factory, estimator=RefinedTdEstimator()
@@ -156,7 +156,7 @@ async def test_concurrent_args_keep_the_runtime_that_generated_each_tree(
             ),
         )
 
-    monkeypatch.setattr("focus.integrations.slime.run_search", paused_search)
+    monkeypatch.setattr("focus.loop.run_search", paused_search)
     generate = make_generate(
         RolloutSpec(
             config=RolloutConfig(
@@ -471,9 +471,9 @@ async def test_the_spec_s_config_replaces_the_factory_s_and_the_live_objects_sta
         seen.append(runtime)
         return _result()
 
-    monkeypatch.setattr("focus.integrations.slime.run_search", fake_rollout)
+    monkeypatch.setattr("focus.loop.run_search", fake_rollout)
     monkeypatch.setattr(
-        "focus.integrations.slime.prepare_samples", lambda *a, **kw: _result()
+        "focus.loop.prepare_samples", lambda *a, **kw: _result()
     )
     scorer, value_model = object(), object()
     spec = RolloutSpec(
