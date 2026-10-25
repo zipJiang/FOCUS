@@ -7,12 +7,10 @@ themselves from a mapping through the registry.
 
 Implementations register themselves through the registry ``register`` free
 function (e.g. ``register(Policy, "name", ...)``); there are no per-type
-registration wrappers here. ``load_yaml`` is re-exported here for convenience; it
-imports OmegaConf inside the call, so this package still costs nothing to import
-without the ``config`` extra.
+registration wrappers here. Pass a mapping to ``build`` to construct typed
+configuration objects.
 """
 
-from focus.config.omegaconf import load_yaml
 from focus.config.rollout import (
     RolloutConfig,
     RolloutSpec,
@@ -25,5 +23,4 @@ __all__ = [
     "VinePpoConfig",
     "RolloutConfig",
     "RolloutSpec",
-    "load_yaml",
 ]

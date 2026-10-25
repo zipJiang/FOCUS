@@ -15,7 +15,6 @@ from focus.config import (
     RolloutSpec,
     SearchPass,
     VinePpoConfig,
-    load_yaml,
 )
 from focus.execution import AdmissionPool, ExecutionServices, LocalInferenceExecutor
 from focus.execution.budget import ResourceBudget
@@ -232,7 +231,6 @@ __all__ = [
     # Saying all of the above in a config file, and building it from a name.
     "RolloutConfig",
     "RolloutSpec",
-    "load_yaml",
     "build",
     "construct_target",
     "register",

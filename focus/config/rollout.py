@@ -60,8 +60,8 @@ class RolloutConfig:
     config read back after loading is the configuration, with nothing left to resolve
     somewhere downstream.
 
-    A ``builds_self`` registry namespace, so a loaded YAML mapping becomes this record
-    in one call -- ``build(RolloutConfig, load_yaml(path))``. Each field is annotated
+    A ``builds_self`` registry namespace, so a nested mapping becomes this record
+    in one call -- ``build(RolloutConfig, mapping)``. Each field is annotated
     with the interface it holds, which is what lets the registry turn a nested mapping
     (a proposal, a list of search passes, a ``reward_config:``
     block) into the object the field is typed for, rather than leaving a ``dict`` that

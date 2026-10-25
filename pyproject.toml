@@ -9,7 +9,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-config = ["omegaconf"]
 ray = ["ray>=2.49"]
 # `openai-chat` targets the hosted OpenAI Chat Completions API; tiktoken is the
 # recommended codec for exact completion-token/logprob recovery.
@@ -22,8 +21,6 @@ reward = ["httpx"]
 tinker = ["tinker>=0.22.3"]
 # `chat` provides an `apply_chat_template` tokenizer for the harness `ChatCodec`.
 chat = ["transformers"]
-# LocBench can read JSONL with the core install; its pinned upstream release is Parquet.
-locbench = ["pyarrow"]
 
 [dependency-groups]
 dev = [
@@ -154,8 +151,6 @@ module = [
     "safetensors.*",
     "tokenizers.*",
     "httpx.*",
-    "omegaconf.*",
-    "pyarrow.*",
     "cloudpickle.*",
     "ray.*",
 ]

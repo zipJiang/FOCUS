@@ -1,29 +1,16 @@
-"""Pinned Loc-Bench V1 download and private scoring labels."""
+"""LocBench case records and private scoring labels."""
 
 from __future__ import annotations
 
 import ast
-import hashlib
 import json
 import re
-import tempfile
-import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .metrics import Gold, location, relative_path
-
-DATASET = "czlll/Loc-Bench_V1"
-REVISION = "c44cf3b74e07ca642cec841b471a9939907c12a7"
-SHA256 = "8df0833c2c1276c5837aab923d489ab97d7654529abe759d0f59242c4978a662"
-CONFIG = "default"
-SPLIT = "test"
-URL = (
-    f"https://huggingface.co/datasets/{DATASET}/resolve/{REVISION}"
-    "/data/test-00000-of-00001.parquet"
-)
 
 
 def validate_source(repo: str, commit: str) -> None:
@@ -115,63 +102,9 @@ class Case:
 
 
 def load_cases(path: Path) -> list[Case]:
-    if path.suffix == ".parquet":
-        import pyarrow.parquet as pq
-
-        rows = pq.read_table(path).to_pylist()
-    else:
-        rows = [
-            json.loads(line) for line in path.read_text().splitlines() if line.strip()
-        ]
+    """Read user-supplied JSONL records and validate their case identities."""
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     cases = [Case.from_row(row) for row in rows]
     if len({case.id for case in cases}) != len(cases):
         raise ValueError("duplicate instance_id in dataset")
     return cases
-
-
-def download(directory: Path) -> Path:
-    """Fetch one pinned parquet atomically and record its content hash."""
-    directory.mkdir(parents=True, exist_ok=True)
-    target = directory / f"{SPLIT}-{REVISION}.parquet"
-    if not target.exists():
-        with tempfile.NamedTemporaryFile(dir=directory, delete=False) as output:
-            temp = Path(output.name)
-            try:
-                with urllib.request.urlopen(URL, timeout=120) as source:
-                    while chunk := source.read(1024 * 1024):
-                        output.write(chunk)
-                output.flush()
-            except BaseException:
-                temp.unlink(missing_ok=True)
-                raise
-        try:
-            # Check schema/labels before publishing the cached download.
-            import pyarrow.parquet as pq
-
-            if hashlib.sha256(temp.read_bytes()).hexdigest() != SHA256:
-                raise ValueError("download does not match the pinned parquet SHA-256")
-            rows = pq.read_table(temp).to_pylist()
-            if len(rows) != 560:
-                raise ValueError(f"expected 560 pinned cases, received {len(rows)}")
-            for row in rows:
-                Case.from_row(row)
-            temp.replace(target)
-        finally:
-            temp.unlink(missing_ok=True)
-    if hashlib.sha256(target.read_bytes()).hexdigest() != SHA256:
-        raise ValueError("cached parquet does not match the pinned SHA-256")
-    cases = load_cases(target)
-    manifest = {
-        "dataset": DATASET,
-        "revision": REVISION,
-        "config": CONFIG,
-        "split": SPLIT,
-        "url": URL,
-        "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
-        "cases": len(cases),
-        "repositories": len({case.repo for case in cases}),
-    }
-    target.with_suffix(".manifest.json").write_text(
-        json.dumps(manifest, indent=2) + "\n"
-    )
-    return target
