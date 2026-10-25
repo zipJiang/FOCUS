@@ -26,10 +26,7 @@ class CheckpointPolicy(Protocol):
 @register(CheckpointPolicy, "sparse")
 class SparseCheckpoints:
     def selects(self, effects: tuple[Effect, ...]) -> bool:
-        return any(
-            effect.kind in {"compaction", "context", "memory", "invoke"}
-            for effect in effects
-        )
+        return any(effect.kind in {"compaction", "context"} for effect in effects)
 
 
 @register(CheckpointPolicy, "every_decision")

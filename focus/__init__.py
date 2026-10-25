@@ -81,7 +81,7 @@ from focus.preparation import (
     register_estimator,
 )
 from focus.preparation.records import ActorSample, CriticSample, PreparedBatch
-from focus.protocols import CLM, RLM, AppendOnly, ContextProtocol, Memex, Summary
+from focus.protocols import AppendOnly, ContextProtocol, Summary
 from focus.registry import (
     build,
     construct_target,
@@ -145,9 +145,6 @@ __all__ = [
     "ContextProtocol",
     "AppendOnly",
     "Summary",
-    "CLM",
-    "Memex",
-    "RLM",
     # The one call, what it is given, and what it hands back.
     "ActorSample",
     "CriticSample",

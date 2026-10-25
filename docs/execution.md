@@ -14,8 +14,12 @@ The example assumes an `actor`, `task`, and input prompt are already configured:
 
 ```python
 from focus import (
-    AdmissionPool, ExecutionServices, LocalInferenceExecutor,
-    ResourceBudget, Runner, SamplingParams,
+    AdmissionPool,
+    ExecutionServices,
+    LocalInferenceExecutor,
+    ResourceBudget,
+    Runner,
+    SamplingParams,
 )
 
 async with ExecutionServices(

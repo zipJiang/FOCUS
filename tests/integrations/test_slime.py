@@ -109,9 +109,7 @@ async def test_make_generate_builds_one_runtime_per_actor_and_returns_a_group(
         return _runtime()
 
     monkeypatch.setattr("focus.loop.run_search", fake_rollout)
-    monkeypatch.setattr(
-        "focus.loop.prepare_samples", lambda *a, **kw: _result()
-    )
+    monkeypatch.setattr("focus.loop.prepare_samples", lambda *a, **kw: _result())
     generate = make_generate(
         RolloutSpec(), runtime_factory=factory, estimator=RefinedTdEstimator()
     )
@@ -472,9 +470,7 @@ async def test_the_spec_s_config_replaces_the_factory_s_and_the_live_objects_sta
         return _result()
 
     monkeypatch.setattr("focus.loop.run_search", fake_rollout)
-    monkeypatch.setattr(
-        "focus.loop.prepare_samples", lambda *a, **kw: _result()
-    )
+    monkeypatch.setattr("focus.loop.prepare_samples", lambda *a, **kw: _result())
     scorer, value_model = object(), object()
     spec = RolloutSpec(
         config=RolloutConfig(

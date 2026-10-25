@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 from focus.codec import Message
 from focus.execution import Usage
-from focus.generation import SamplingParams
 from focus.generation.parsing.base import ToolTurn
 from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
@@ -30,28 +29,11 @@ class Applied:
     transition: StepResult[Any] | None = None
 
 
-class OperationSuspended(Exception):
-    """An operation has saved all unfinished work in its rollout."""
-
-    def __init__(self, rollout: AnyRollout):
-        self.rollout = rollout
-
-
-@dataclass(frozen=True)
-class PendingOperations:
-    action: ToolTurn
-    index: int
-    origin: int
-    exchange: tuple[Message, ...]
-    exchange_refs: tuple[int | None, ...]
-    context_before: int
-
-
 class ContextProtocol:
     """Stateless protocol; branch-owned data belongs in rollout.execution.
 
     apply receives the already-recorded generation. Its effects reference that index,
-    even when apply appends child generations. Only task operations return transitions.
+    and only task operations return transitions.
     """
 
     manages_context = False
@@ -67,19 +49,6 @@ class ContextProtocol:
 
     async def before(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
         return rs
-
-    def has_pending(self, rs: AnyRollout) -> bool:
-        return False
-
-    async def resume(
-        self,
-        rs: AnyRollout,
-        runner: Runner[Any, Any],
-        *,
-        sampling_params: SamplingParams | None = None,
-    ) -> Applied:
-        """Advance saved protocol work without generating another local task turn."""
-        raise ValueError("protocol has no pending operation")
 
     async def compact(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
         raise ValueError("Runner has no compactor configured")
@@ -127,32 +96,6 @@ class ToolProtocol(ContextProtocol):
 
     manages_context = True
 
-    def has_pending(self, rs: AnyRollout) -> bool:
-        return "pending_operations" in rs.execution
-
-    async def resume_operation(
-        self,
-        rs: AnyRollout,
-        name: str,
-        arguments: dict[str, Any],
-        runner: Runner[Any, Any],
-        sampling_params: SamplingParams | None,
-    ) -> tuple[AnyRollout, str, str]:
-        return await self.operation(rs, name, arguments, runner)
-
-    async def resume(
-        self,
-        rs: AnyRollout,
-        runner: Runner[Any, Any],
-        *,
-        sampling_params: SamplingParams | None = None,
-    ) -> Applied:
-        execution = dict(rs.execution)
-        pending = execution.pop("pending_operations")
-        return await self._operations(
-            replace(rs, execution=execution), pending, runner, sampling_params
-        )
-
     async def operation(
         self,
         rs: AnyRollout,
@@ -162,16 +105,6 @@ class ToolProtocol(ContextProtocol):
     ) -> tuple[AnyRollout, str, str]:
         raise NotImplementedError
 
-    async def task_apply(
-        self,
-        rs: AnyRollout,
-        action: Any,
-        runner: Runner[Any, Any],
-        *,
-        ending: bool,
-    ) -> Applied:
-        return await super().apply(rs, action, runner, ending=ending)
-
     async def apply(
         self,
         rs: AnyRollout,
@@ -180,13 +113,15 @@ class ToolProtocol(ContextProtocol):
         *,
         ending: bool,
     ) -> Applied:
-        names = {s["function"]["name"] for s in self.schemas()}
+        contracts = {
+            s["function"]["name"]: s["function"]["parameters"] for s in self.schemas()
+        }
         if (
             ending
             or not isinstance(action, ToolTurn)
-            or not any(c.name in names for c in action.tool_calls)
+            or not any(c.name in contracts for c in action.tool_calls)
         ):
-            return await self.task_apply(rs, action, runner, ending=ending)
+            return await super().apply(rs, action, runner, ending=ending)
         # Native adapters require the active call and all of its replies to remain
         # contiguous. Edit only settled context, then restore this exchange intact.
         # History still records every original message at its stable index.
@@ -200,41 +135,15 @@ class ToolProtocol(ContextProtocol):
             rs = replace(
                 rs, messages=rs.messages[:-1], context_refs=rs.context_refs[:-1]
             )
-        return await self._operations(
-            rs,
-            PendingOperations(
-                action,
-                0,
-                len(rs.turns) - 1,
-                exchange,
-                exchange_refs,
-                rs.context_version,
-            ),
-            runner,
-            None,
-        )
-
-    async def _operations(
-        self,
-        rs: AnyRollout,
-        pending: PendingOperations,
-        runner: Runner[Any, Any],
-        sampling_params: SamplingParams | None,
-    ) -> Applied:
-        action = pending.action
-        names = {s["function"]["name"] for s in self.schemas()}
-        mixed = any(c.name not in names for c in action.tool_calls)
-        exchange, exchange_refs = pending.exchange, pending.exchange_refs
-        for index in range(pending.index, len(action.tool_calls)):
-            call = action.tool_calls[index]
+        origin = len(rs.turns) - 1
+        mixed = any(c.name not in contracts for c in action.tool_calls)
+        for index, call in enumerate(action.tool_calls):
             kind = ""
-            before = (
-                pending.context_before if index == pending.index else rs.context_version
-            )
+            before = rs.context_version
             try:
                 if rs.truncated:
                     raise ProtocolError(
-                        "invocation is truncated; no further operations can run"
+                        "rollout is truncated; no further operations can run"
                     )
                 if mixed:
                     raise ProtocolError(
@@ -246,16 +155,12 @@ class ToolProtocol(ContextProtocol):
                     raise ProtocolError(str(exc)) from exc
                 if not isinstance(arguments, dict):
                     raise ProtocolError("tool arguments must be an object")
-                contract = next(
-                    s["function"]["parameters"]
-                    for s in self.schemas()
-                    if s["function"]["name"] == call.name
-                )
+                contract = contracts[call.name]
                 missing = set(contract.get("required", ())) - arguments.keys()
                 if missing:
                     raise ProtocolError(f"missing arguments: {sorted(missing)}")
-                candidate, text, effect_kind = await self.resume_operation(
-                    rs, call.name, arguments, runner, sampling_params
+                candidate, text, effect_kind = await self.operation(
+                    rs, call.name, arguments, runner
                 )
                 # Complete pending responses provisionally for validation only.
                 # Commit neither context nor execution state if the edit is invalid.
@@ -271,23 +176,6 @@ class ToolProtocol(ContextProtocol):
                 except ValueError as exc:
                     raise ProtocolError(str(exc)) from exc
                 rs, kind = candidate, effect_kind
-            except OperationSuspended as paused:
-                return Applied(
-                    replace(
-                        paused.rollout,
-                        execution={
-                            **paused.rollout.execution,
-                            "pending_operations": PendingOperations(
-                                action,
-                                index,
-                                pending.origin,
-                                exchange,
-                                exchange_refs,
-                                before,
-                            ),
-                        },
-                    )
-                )
             except ProtocolError as exc:
                 text = f"Invalid {call.name}: {exc}. Previous valid context preserved."
             message: Message = {**tool_reply(call, text), "name": call.name}
@@ -309,7 +197,7 @@ class ToolProtocol(ContextProtocol):
                         *rs.effects,
                         Effect(
                             kind,
-                            pending.origin,
+                            origin,
                             before,
                             rs.context_version,
                             call.name,

@@ -1,13 +1,10 @@
 """Context protocols must preserve the native adapters' tool-history contract."""
 
-import json
-
 import pytest
 
+from examples.custom_protocol import KeepRecent
 from focus import OpenAIChatPolicy, OpenAIResponsesPolicy, Runner
 from focus.generation import NativeToolCall
-from focus.protocols import CLM, RLM, Memex
-from focus.protocols.rlm import InvocationEnv
 from tests.generation.test_openai_chat import (
     _Completions,
     _tool_call,
@@ -29,7 +26,7 @@ from tests.generation.test_openai_responses import (
 from tests.generation.test_openai_responses import (
     _wire as responses_wire,
 )
-from tests.helpers import FakeChatTokenizer, native_format
+from tests.helpers import FakeChatTokenizer, SubmitEnv, native_format
 
 
 @pytest.fixture(params=["chat", "responses"])
@@ -60,170 +57,81 @@ def native_backend(request, monkeypatch):
     return policy, respond
 
 
-async def test_memory_compression_preserves_native_exchange(native_backend):
+async def test_custom_protocol_preserves_native_batch_and_history(native_backend):
     policy, respond = native_backend
     respond(
-        NativeToolCall(
-            "memory_compress", json.dumps({"indices": [1], "summary": "short"}), "c1"
-        ),
-        NativeToolCall("memory_retrieve", '{"index": 0}', "c2"),
+        NativeToolCall("keep_recent", '{"n": 1}', "c1"),
+        NativeToolCall("keep_recent", '{"n": 1}', "c2"),
     )
     runner = Runner(
-        policy=policy, env=InvocationEnv(), system_prompt="sys", protocol=Memex()
+        policy=policy, env=SubmitEnv([]), system_prompt="sys", protocol=KeepRecent()
     )
     try:
         root = await runner.start("original evidence")
         changed = await runner.advance(root)
-        assert changed.context_version == 1
-        assert root.messages[1] not in changed.messages
+        assert changed.context_version == 2
+        assert changed.messages[0] == root.messages[1]
         assert [m.get("tool_call_id") for m in changed.messages[-2:]] == ["c1", "c2"]
-        assert json.loads(changed.messages[-1]["content"]) == [root.history[1]]
+        assert changed.transitions == ()
+        assert [e.turn_index for e in changed.effects] == [0, 0]
+        assert [(e.context_before, e.context_after) for e in changed.effects] == [
+            (0, 1),
+            (1, 2),
+        ]
         assert all(
             ref is None or message == changed.history[ref]
             for message, ref in zip(changed.messages, changed.context_refs, strict=True)
         )
-        respond()
+        policy.validate_context(changed.messages)
+        respond(NativeToolCall("submit", '{"answer": "done"}', "finish"))
         assert (await runner.advance(changed)).done
     finally:
         await runner.services.aclose()
 
 
-async def test_clm_replacement_preserves_native_exchange(native_backend):
-    policy, respond = native_backend
-    replacement = [{"role": "user", "content": "replacement"}]
-    code = (
-        "from pathlib import Path\n"
-        f"Path('context.json').write_text({json.dumps(replacement)!r})"
-    )
-    respond(
-        NativeToolCall("context_edit", json.dumps({"code": code}), "c1"),
-        NativeToolCall("context_edit", '{"code": "n = 2"}', "c2"),
-    )
-    runner = Runner(
-        policy=policy, env=InvocationEnv(), system_prompt="sys", protocol=CLM()
-    )
-    try:
-        changed = await runner.advance(await runner.start("original evidence"))
-        assert changed.context_version == 2
-        assert changed.messages[0] == replacement[0]
-        assert "original evidence" not in str(changed.messages)
-        assert [m.get("tool_call_id") for m in changed.messages[-2:]] == ["c1", "c2"]
-        assert len(changed.messages) == len(changed.context_refs)
-        respond()
-        assert (await runner.advance(changed)).done
-    finally:
-        await runner.services.aclose()
-
-
-@pytest.mark.parametrize("protocol", [CLM(), Memex()])
-async def test_invalid_native_context_edit_rolls_back(native_backend, protocol):
+async def test_invalid_native_context_edit_rolls_back(native_backend):
     policy, respond = native_backend
     respond(NativeToolCall("unknown", "{}", "old"))
     runner = Runner(
-        policy=policy, env=InvocationEnv(), system_prompt="sys", protocol=protocol
+        policy=policy, env=SubmitEnv([]), system_prompt="sys", protocol=KeepRecent()
     )
     try:
         previous = await runner.advance(await runner.start("evidence"))
-        # Drop only the assistant half of a completed native tool exchange.
-        if isinstance(protocol, CLM):
-            code = (
-                "import json\nfrom pathlib import Path\n"
-                "p = Path('context.json')\nmessages = json.loads(p.read_text())\n"
-                "messages = [m for m in messages if m['role'] != 'assistant']\n"
-                "p.write_text(json.dumps(messages))\n"
-                "leaked = True"
-            )
-            call = NativeToolCall("context_edit", json.dumps({"code": code}), "new")
-        else:
-            call = NativeToolCall(
-                "memory_compress", '{"indices": [2], "summary": "short"}', "new"
-            )
-        respond(call)
+        # Retaining only the tool reply would orphan its assistant call.
+        respond(NativeToolCall("keep_recent", '{"n": 1}', "new"))
         rejected = await runner.advance(previous)
         assert rejected.context_version == 0
         assert rejected.execution == previous.execution
         assert rejected.messages[: len(previous.messages)] == previous.messages
         assert "Invalid" in rejected.messages[-1]["content"]
-        respond()
+        policy.validate_context(rejected.messages)
+        respond(NativeToolCall("submit", '{"answer": "done"}', "finish"))
         assert (await runner.advance(rejected)).done
     finally:
         await runner.services.aclose()
 
 
-@pytest.mark.parametrize("invalid_return", [False, True])
-async def test_child_tool_feedback_allows_native_retry(native_backend, invalid_return):
+async def test_mixed_native_batch_rejects_context_and_task_operations(native_backend):
     policy, respond = native_backend
-    calls = [NativeToolCall("unknown", "{}", "c1")]
-    if invalid_return:
-        calls.insert(0, NativeToolCall("rlm_return", '{"answer": 42}', "c0"))
-    respond(*calls)
-    runner = Runner(policy=policy, env=InvocationEnv(), system_prompt="sys")
-    try:
-        rejected = await runner.advance(await runner.start("question"))
-        assert not rejected.done
-        assert [
-            m.get("tool_call_id") for m in rejected.messages if m["role"] == "tool"
-        ] == [c.call_id for c in calls]
-        respond(NativeToolCall("rlm_return", '{"answer": "corrected"}', "next"))
-        result = await runner.advance(rejected)
-        assert result.done
-        assert result.state == "corrected"
-    finally:
-        await runner.services.aclose()
-
-
-async def test_rlm_fork_preserves_pending_native_batch_and_call_ids(native_backend):
-    import pickle
-
-    policy, respond = native_backend
+    respond(
+        NativeToolCall("keep_recent", '{"n": 1}', "edit"),
+        NativeToolCall("submit", '{"answer": "premature"}', "finish"),
+    )
     runner = Runner(
-        policy=policy, env=InvocationEnv(), system_prompt="sys", protocol=RLM()
+        policy=policy, env=SubmitEnv([]), system_prompt="sys", protocol=KeepRecent()
     )
     try:
-        respond(
-            NativeToolCall(
-                "rlm_python",
-                json.dumps(
-                    {
-                        "code": "x=1; print(llm_query('one'))",
-                    }
-                ),
-                "parent1",
-            ),
-            NativeToolCall(
-                "rlm_python",
-                json.dumps(
-                    {
-                        "code": "x+=1; print(llm_query('two'), x)",
-                    }
-                ),
-                "parent2",
-            ),
-        )
-        pending = await runner.advance(await runner.start("input"))
-        respond(NativeToolCall("rlm_return", '{"answer":"first"}', "child1"))
-        pending = await runner.advance(pending)
-        checkpoint = pickle.loads(pickle.dumps(pending))
-        for answer in ("A", "B"):
-            respond(
-                NativeToolCall("rlm_return", json.dumps({"answer": answer}), "child2")
-            )
-            settled = await runner.advance(checkpoint.fork())
-            assert not runner.protocol.has_pending(settled)
-            assert [m.get("tool_call_id") for m in settled.messages[-2:]] == [
-                "parent1",
-                "parent2",
-            ]
-            assert settled.messages[-2]["content"] == "first\n"
-            assert settled.messages[-1]["content"] == f"{answer} 2\n"
-            assert all(
-                ref is None or message == settled.history[ref]
-                for message, ref in zip(
-                    settled.messages, settled.context_refs, strict=True
-                )
-            )
-            policy.validate_context(settled.messages)
-            respond()
-            assert (await runner.advance(settled)).done
+        root = await runner.start("evidence")
+        rejected = await runner.advance(root)
+        assert rejected.context_version == 0
+        assert rejected.state == root.state
+        assert rejected.transitions == ()
+        assert not rejected.done
+        assert [m.get("tool_call_id") for m in rejected.messages[-2:]] == [
+            "edit",
+            "finish",
+        ]
+        assert all("separately" in m["content"] for m in rejected.messages[-2:])
+        policy.validate_context(rejected.messages)
     finally:
         await runner.services.aclose()

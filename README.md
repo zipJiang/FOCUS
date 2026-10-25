@@ -81,21 +81,21 @@ uv run pytest -q
 The initial clean snapshot was derived from `zipJiang/rollout-controller` commit
 `19494aead05c9446ce33b4d4e500d8fcfa3174e0`.
 
-## Context protocols and shared execution
+## Compaction and context extensions
 
-The runtime supports editable CLM context, indexed Memex memory and recursive/parallel
-RLM invocations with shared local or Ray inference admission. Start with the
-[migration and extension guide](docs/MIGRATION.md) and run
-`python -m examples.protocols --protocol rlm-memex` for a deterministic demonstration.
-Implementation decisions and milestone validation are in [implementation notes](docs/implementation/00-overview.md).
+The supported context-management path is compaction through `Summary(compactor)`;
+`AppendOnly()` is the default when compaction is disabled. CLM, Memex and RLM are no
+longer included. Existing compaction actor-critic training remains supported.
 
-RLM executes Python with Monty and can fork inside recursive children. Checkpoints
-include waiting ancestor continuations, so each alternative resumes through its
-parents to the task outcome. See the [Monty implementation](docs/implementation/12-monty.md)
-for execution boundaries and Python compatibility.
+The `ContextProtocol` and `ToolProtocol` interfaces remain open for custom context
+management. See the [extension guide](docs/context-protocols.md) and
+[KeepRecent example](examples/custom_protocol.py). Custom algorithms need their own
+validated training recipes.
 
-Complete rollout persistence is available through `Runner(checkpointer=...)` with
-`MemoryCheckpointer` or `SQLiteCheckpointer` from `focus.harness`. Every protocol uses
-the same complete-snapshot recovery path, independently of search checkpoint selection.
-Transient failures retry from the last intact snapshot; parallel work in a failed round
-is rerun together. See [checkpointer usage and recovery semantics](docs/implementation/13-checkpointer.md).
+Shared local/Ray inference admission remains available through `ExecutionServices`.
+See [execution services](docs/execution.md) for configuration. Complete rollout
+persistence uses `Runner(checkpointer=...)` with `MemoryCheckpointer` or
+`SQLiteCheckpointer`; see [checkpoint recovery](docs/checkpoints.md).
+
+For configuration changes and checkpoint compatibility, see the
+[migration guide](docs/MIGRATION.md).

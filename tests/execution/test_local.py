@@ -4,7 +4,6 @@ from functools import partial
 import pytest
 
 from focus.execution import AdmissionPool, CapacityError, Owner
-from focus.execution.process import ProcessExecutor, ProcessSnapshot
 
 
 async def test_queue_is_bounded_and_cancel_releases_capacity():
@@ -58,115 +57,6 @@ async def test_episode_fairness_and_queue_timeout():
     assert pool.stats.peak_active == 1
 
 
-async def test_python_restores_without_replaying_and_branches_files():
-    executor = ProcessExecutor(1)
-    original = await executor.execute(
-        "x += 1\nopen('value', 'w').write(str(x))",
-        ProcessSnapshot.variables(x=1),
-    )
-    assert original.snapshot is not None
-    branches = await asyncio.gather(
-        *[executor.execute("x += 1\nprint(x)", original.snapshot) for _ in range(2)]
-    )
-    assert [b.output.strip() for b in branches] == ["3", "3"]
-    assert original.snapshot.files["value"] == b"2"
-    await executor.aclose()
-
-
-async def test_recursive_callback_releases_process_capacity():
-    executor = ProcessExecutor(1)
-
-    async def child(kind, prompts, model):
-        result = await executor.execute("print('child')")
-        return [result.output.strip()]
-
-    result = await executor.execute("print(rlm_query('question'))", handler=child)
-    assert result.output.strip() == "child"
-    assert executor.pool.stats.peak_active == 1
-    await executor.aclose()
-
-
-async def test_unserializable_state_and_timeout_are_explicit():
-    executor = ProcessExecutor(1)
-    result = await executor.execute("handle = open('file', 'w')")
-    assert result.snapshot is None
-    assert "handle" in result.error
-    with pytest.raises(TimeoutError):
-        await executor.execute("while True: pass", timeout=0.2)
-    assert executor._resident == 0
-    assert executor.pool.stats.active == 0
-    await executor.aclose()
-
-
-async def test_restored_functions_see_live_globals_and_callbacks():
-    executor = ProcessExecutor(1)
-    first = await executor.execute(
-        "x=1\ndef f(): return x\ndef query(): return llm_query(str(x))"
-    )
-
-    async def handler(kind, prompts, model):
-        return prompts
-
-    second = await executor.execute(
-        "x=2\nprint(f(), query())", first.snapshot, handler=handler
-    )
-    assert second.output.strip() == "2 2"
-    third = await executor.execute("x=3\nprint(f())", second.snapshot)
-    assert third.output.strip() == "3"
-    await executor.aclose()
-
-
-async def test_restored_function_defaults_keep_live_globals_and_identity():
-    executor = ProcessExecutor()
-    try:
-        first = await executor.execute(
-            "x=1\ndef f(): return x\n"
-            "def g(fn=f): return fn()\n"
-            "def h(*, fn=f): return fn()\n"
-            "def recursive(fn=None): return x\n"
-            "recursive.__defaults__ = (recursive,)"
-        )
-        assert first.snapshot is not None
-        for x in (2, 3):
-            restored = await executor.execute(
-                f"x={x}\nprint(f(), g(), h())\n"
-                "assert g.__defaults__[0] is f\n"
-                "assert h.__kwdefaults__['fn'] is f\n"
-                "assert recursive.__defaults__[0] is recursive",
-                first.snapshot,
-            )
-            assert restored.error == ""
-            assert restored.output.strip() == f"{x} {x} {x}"
-            assert restored.snapshot is not None
-            first = restored
-    finally:
-        await executor.aclose()
-
-
-async def test_process_death_preserves_error_and_releases_capacity():
-    executor = ProcessExecutor(1)
-    with pytest.raises(RuntimeError, match="exited without a result"):
-        await executor.execute("import os\nos._exit(3)")
-    assert executor._resident == 0
-    assert executor.pool.stats.active == 0
-    await executor.aclose()
-
-
-async def test_resident_exhaustion_rejects_descendant_without_deadlock():
-    executor = ProcessExecutor(1, max_resident=1)
-
-    async def child(kind, prompts, model):
-        await executor.execute("print('unreachable')")
-        return []
-
-    result = await asyncio.wait_for(
-        executor.execute("rlm_query('child')", handler=child), 3
-    )
-    assert "resident process limit" in result.error
-    assert executor._resident == 0
-    await executor.aclose()
-
-
 async def test_backend_limits_and_active_deadline_do_not_leak_permits():
     pool = AdmissionPool(2, resource_limits={"slow": 1})
     entered, release = asyncio.Event(), asyncio.Event()
@@ -185,40 +75,6 @@ async def test_backend_limits_and_active_deadline_do_not_leak_permits():
     await pool.aclose()
     await asyncio.gather(first, second, return_exceptions=True)
     assert pool.stats.active == pool.stats.pending == 0
-
-
-async def test_managed_cell_terminates_descendant_in_separate_session():
-    import os
-    import sys
-
-    executor = ProcessExecutor()
-    result = await executor.execute(
-        "import subprocess\n"
-        f"p = subprocess.Popen([{sys.executable!r}, '-c', "
-        "'import time; time.sleep(60)'], "
-        "start_new_session=True)\nprint(p.pid)\ndel p"
-    )
-    pid = int(result.output.strip())
-    async with asyncio.timeout(3):
-        while True:
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                break
-            # A terminated orphan may briefly remain as a zombie until reaped.
-            process = await asyncio.create_subprocess_exec(
-                "ps",
-                "-p",
-                str(pid),
-                "-o",
-                "stat=",
-                stdout=asyncio.subprocess.PIPE,
-            )
-            status, _ = await process.communicate()
-            if not status.strip() or status.strip().startswith(b"Z"):
-                break
-            await asyncio.sleep(0.02)
-    await executor.aclose()
 
 
 async def test_owned_clients_all_close_even_if_one_fails():

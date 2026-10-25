@@ -1,4 +1,4 @@
-"""Remaining resources travel with checkpoints; descendants share a live scope."""
+"""Remaining inference resources travel with each branch checkpoint."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ class ResourceBudget:
     model_calls: int | None = None
     prompt_tokens: int | None = None
     output_tokens: int | None = None
-    process_cells: int | None = None
 
     def __post_init__(self) -> None:
         for item in fields(self):

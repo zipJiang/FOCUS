@@ -30,7 +30,7 @@ class KeepRecent(ToolProtocol):
         runner: Runner[Any, Any],
     ) -> tuple[AnyRollout, str, str]:
         n = arguments["n"]
-        if not isinstance(n, int) or n < 1:
+        if type(n) is not int or n < 1:
             raise ProtocolError("n must be a positive integer")
         return (
             replace(

@@ -2,7 +2,7 @@
 
 Runner owns trace ordering, continuation limits and checkpoint notifications. A context
 protocol owns prompt preparation and action effects. ExecutionServices owns shared
-inference/process resources; derived runners inherit it. Search sees settled snapshots
+inference resources; derived runners inherit it. Search sees settled snapshots
 without protocol-name branches.
 
 start/root initialize an episode; advance makes one decision; iter_run exposes selected
@@ -379,14 +379,10 @@ class Runner[S, A]:
     async def advance(
         self, rs: RolloutState[S], *, sampling_params: SamplingParams | None = None
     ) -> RolloutState[S]:
-        """Generate one turn, or advance an already-pending protocol operation.
-
-        A pending recursive operation advances its children and restores the waiting
-        parent as needed, without sampling another parent decision. Its checkpoint
-        contains every continuation required to resume or fork the enclosing task.
+        """Generate one task turn or compact the context.
 
         The fold check runs first, on the current context. If it fires, this turn is the
-        fold alone (no task generation): see :meth:`_fold`. Otherwise: render ->
+        fold alone (no task generation): see :meth:`compact`. Otherwise: render ->
         generate -> parse -> ``env.step`` -> append the world's reply turns, and record
         the whole thing as one :class:`~focus.harness.turn.Turn` carrying the
         exact prefix that was sent.
@@ -401,31 +397,7 @@ class Runner[S, A]:
         stateless for that to be safe.
         """
         return await self._checkpointed(
-            rs, lambda current: self._step(current, sampling_params=sampling_params)
-        )
-
-    async def _step(
-        self, rs: RolloutState[S], *, sampling_params: SamplingParams | None
-    ) -> RolloutState[S]:
-        # Pending protocol work resumes before any subclass's local decision rules,
-        # so an override of `_advance` can never end a rollout mid-operation.
-        if self.protocol.has_pending(rs):
-            return await self._resume(rs, sampling_params=sampling_params)
-        return await self._advance(rs, sampling_params=sampling_params)
-
-    async def _resume(
-        self, rs: RolloutState[S], *, sampling_params: SamplingParams | None
-    ) -> RolloutState[S]:
-        rs.check_continuation()
-        if rs.done or rs.truncated:
-            return rs
-        self.services.attach_budget(rs.owner, rs.budget)
-        applied = await self.protocol.resume(
-            rs, self, sampling_params=self._params(sampling_params)
-        )
-        return self._mark(
-            rs,
-            replace(applied.rollout, budget=self.services.remaining(rs.owner)),
+            rs, lambda current: self._advance(current, sampling_params=sampling_params)
         )
 
     async def _advance(
@@ -507,10 +479,8 @@ class Runner[S, A]:
         )
 
     def _mark(self, rs: RolloutState[S], current: RolloutState[S]) -> RolloutState[S]:
-        """Select ``current`` as a checkpoint for its new effects or pending work."""
-        selected = self.protocol.has_pending(current) or self._checkpoints.selects(
-            current.effects[len(rs.effects) :]
-        )
+        """Select ``current`` as a checkpoint for its new effects."""
+        selected = self._checkpoints.selects(current.effects[len(rs.effects) :])
         return replace(current, checkpoint_at=len(current.turns) if selected else -1)
 
     async def _generate(
@@ -636,8 +606,6 @@ class Runner[S, A]:
         if rs.done:
             return rs
         rs.check_continuation()
-        while self.protocol.has_pending(rs) and not rs.truncated:
-            rs = await self.advance(rs, sampling_params=sampling_params)
         if rs.done or rs.truncated:
             return rs
         return await self._checkpointed(
@@ -690,8 +658,6 @@ class Runner[S, A]:
         rs.check_continuation()
         if rs.done or rs.truncated:
             raise ValueError("Cannot compact a finished rollout for continuation")
-        if self.protocol.has_pending(rs):
-            raise ValueError("Cannot compact while a protocol operation is pending")
         return self._mark(rs, await self.protocol.compact(rs, self))
 
     @property
@@ -709,9 +675,8 @@ class Runner[S, A]:
         """Run to completion, exposing selected continuations and the endpoint.
 
         A new local decision consumes one step, including a fold-only advance.
-        Resuming pending work spends its children's horizons and shared resources,
-        without consuming another parent step. Finalization is outside that budget
-        and happens once. Every yielded checkpoint has an independent snapshot.
+        Finalization is outside that budget and happens once. Every yielded
+        checkpoint has an independent snapshot.
         """
         rs.check_continuation()
         if rs.done or rs.truncated:
@@ -730,24 +695,18 @@ class Runner[S, A]:
         if max_steps is not None or remaining != rs.steps_remaining:
             rs = self.save_checkpoint(replace(rs, steps_remaining=remaining))
         step = 0
-        while budget < 0 or step < budget or self.protocol.has_pending(rs):
-            was_pending = self.protocol.has_pending(rs)
+        while budget < 0 or step < budget:
             before = len(rs.turns)
             rs = await self.advance(rs, sampling_params=sampling_params)
-            if not was_pending:
-                step += 1
+            step += 1
             if rs.done or rs.truncated:
                 break
-            if len(rs.turns) == before and not was_pending:
+            if len(rs.turns) == before:
                 break
             if rs.forkable:
                 # Bare truncation at this boundary is one endpoint, not two nodes
                 # with identical logs and an empty edge between them.
-                if (
-                    step == budget
-                    and self._finish_prompt is None
-                    and not self.protocol.has_pending(rs)
-                ):
+                if step == budget and self._finish_prompt is None:
                     break
                 yield rs.snapshot()
         if not rs.done and not rs.truncated:

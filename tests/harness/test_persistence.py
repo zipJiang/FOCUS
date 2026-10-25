@@ -7,8 +7,8 @@ from dataclasses import replace
 
 import pytest
 
+from examples.custom_protocol import KeepRecent
 from focus.execution.budget import ResourceBudget
-from focus.generation import GenerateResult
 from focus.generation.parsing import HermesToolCallParser
 from focus.harness import (
     CorruptCheckpoint,
@@ -17,11 +17,9 @@ from focus.harness import (
     SQLiteCheckpointer,
     regions,
 )
-from focus.protocols import CLM, RLM, AppendOnly, Memex, Summary
-from focus.protocols.rlm import InvocationEnv
+from focus.protocols import AppendOnly, Summary
 from tests.harness.test_runner import QuietMemory, ToyCompactor
 from tests.helpers import ScriptedGenerator, ToyEnv, tool_call, toy_runner
-from tests.protocols.test_rlm import recursive_runner
 
 
 @pytest.fixture(params=["memory", "sqlite"])
@@ -180,9 +178,7 @@ async def test_retry_is_bounded_and_does_not_swallow_programming_errors_or_cance
     await runner.services.aclose()
 
 
-@pytest.mark.parametrize(
-    "approach", ["plain", "summary", "clm", "memex", "rlm", "rlm_memex"]
-)
+@pytest.mark.parametrize("approach", ["plain", "summary", "custom"])
 async def test_all_protocols_restore_complete_state_with_fresh_runner(
     tmp_path, approach
 ):
@@ -192,26 +188,15 @@ async def test_all_protocols_restore_complete_state_with_fresh_runner(
         return {
             "plain": AppendOnly,
             "summary": lambda: Summary(ToyCompactor()),
-            "clm": CLM,
-            "memex": Memex,
-            "rlm": RLM,
-            "rlm_memex": lambda: RLM(Memex()),
+            "custom": KeepRecent,
         }[approach]()
 
     initial = {
         "plain": "go",
         "summary": "go",
-        "clm": tool_call("context_edit", code="n=1; print(n)"),
-        "memex": tool_call("memory_compress", indices=[1], summary="short"),
-        "rlm": tool_call("rlm_python", code="n=1; print(n)"),
-        "rlm_memex": tool_call("rlm_python", code="n=1; print(n)"),
+        "custom": tool_call("keep_recent", n=1),
     }[approach]
-    subsequent = {
-        "clm": tool_call("context_edit", code="n+=1; print(n)"),
-        "memex": tool_call("memory_retrieve", index=0),
-        "rlm": tool_call("rlm_python", code="n+=1; print(n)"),
-        "rlm_memex": tool_call("memory_compress", indices=[1], summary="short"),
-    }.get(approach, "stop")
+    subsequent = "stop"
 
     def make_runner(output):
         return toy_runner(
@@ -237,94 +222,9 @@ async def test_all_protocols_restore_complete_state_with_fresh_runner(
     result = await restarted.advance(restored)
     assert result.turns[: len(saved.turns)] == saved.turns
     assert regions(restored.turns) == regions(saved.turns)
-    if approach in ("clm", "rlm"):
-        assert "2\n" in result.messages[-1]["content"]
-    if approach == "memex":
-        assert "hi" in result.messages[-1]["content"]
     if approach == "summary":
         assert result.workspace.snapshot() == {"summary": "compacted at step 1"}
     await restarted.services.aclose()
-
-
-async def test_parallel_rlm_failure_retries_entire_round_without_pending_writes(
-    tmp_path,
-):
-    counts = {"A": 0, "B": 0, "root": 0}
-    a_finished = asyncio.Event()
-
-    class ParallelGenerator(ScriptedGenerator):
-        async def agenerate_tokens(self, tokens, sampling_params=None):
-            prompt = "".join(map(chr, tokens))
-            if "Input is in context" in prompt:  # parent RLM prompt
-                counts["root"] += 1
-                text = (
-                    tool_call("rlm_python", code="print(llm_query_batched(['A','B']))")
-                    if counts["root"] == 1
-                    else "done"
-                )
-            elif "uA" in prompt:
-                counts["A"] += 1
-                text = "answer A"
-                a_finished.set()
-            else:
-                counts["B"] += 1
-                await a_finished.wait()
-                await asyncio.sleep(0.01)  # let A complete before failing B
-                if counts["B"] == 1:
-                    raise ConnectionError("B failed")
-                text = "answer B"
-            return GenerateResult(
-                text=text, tokens=tuple(map(ord, text)), logprobs=[-0.1] * len(text)
-            )
-
-    store = SQLiteCheckpointer(tmp_path / "checkpoints.sqlite")
-    runner = toy_runner(
-        ParallelGenerator([""]),
-        env=InvocationEnv(),
-        parser=HermesToolCallParser(),
-        protocol=RLM(),
-        checkpointer=store,
-        resource_budget=ResourceBudget(model_calls=4, process_cells=1),
-    )
-    root = await runner.start("input")
-    pending = await runner.advance(root)
-    assert pending.checkpoint_id is not None
-    checkpoint = store.get(pending.checkpoint_id)
-    endpoint = await runner.run(pending)
-    assert counts == {"A": 2, "B": 2, "root": 2}
-    assert len(endpoint.turns) == 4  # discarded attempt has no training trace
-    assert endpoint.budget.model_calls == 0
-    assert endpoint.budget.process_cells == 0
-    assert runner.services.usage[root.episode_id].calls == 6
-    assert all(not c.turns for c in checkpoint.execution["rlm_pending"].children)
-    assert len(store.list(root.episode_id, root.branch_id)) == 4
-    assert "['answer A', 'answer B']" in str(endpoint.history)
-    await runner.services.aclose()
-
-
-async def test_recursive_snapshot_recovers_entire_stack_with_fresh_services(tmp_path):
-    path = tmp_path / "checkpoints.sqlite"
-    first, _ = recursive_runner(
-        [
-            tool_call("rlm_python", code="x=[1]; print(rlm_query('nested'),len(x))"),
-            tool_call("rlm_python", code="print(llm_query('leaf'))"),
-        ]
-    )
-    first.checkpointer = SQLiteCheckpointer(path)
-    saved = await first.advance(await first.advance(await first.start("input")))
-    assert saved.checkpoint_id is not None
-    await first.services.aclose()
-    second, _ = recursive_runner(["leaf-result", "nested-result", "root-result"])
-    second.checkpointer = SQLiteCheckpointer(path)
-    restored = second.restore(saved.checkpoint_id)
-    endpoint = await second.run(restored)
-    assert endpoint.state == "root-result"
-    assert len(endpoint.turns) == 5
-    assert "nested-result 1" in str(endpoint.history)
-    assert endpoint.branch_id == saved.branch_id
-    assert len(endpoint.edge(saved)) == 3
-    assert second.services.usage[saved.episode_id].calls == 3
-    await second.services.aclose()
 
 
 async def test_storage_frequency_is_independent_of_sparse_search_and_finalization(

@@ -78,9 +78,6 @@ TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
     (InferenceExecutor, {"name": "local"}),
     (ContextProtocol, {"name": "append_only"}),
     (ContextProtocol, {"name": "summary"}),
-    (ContextProtocol, {"name": "clm"}),
-    (ContextProtocol, {"name": "memex"}),
-    (ContextProtocol, {"name": "rlm"}),
     (Policy, {"name": "token_continuation", "backend": Policy(format=test_format())}),
     # -- generation and reward backends ----------------------------------------------
     (CheckpointPolicy, {"name": "sparse"}),

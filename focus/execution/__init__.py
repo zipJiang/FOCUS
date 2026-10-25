@@ -1,4 +1,4 @@
-"""Shared execution services for inference and managed code."""
+"""Shared inference admission and resource accounting."""
 
 from .inference import (
     ExecutionServices,
