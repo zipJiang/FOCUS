@@ -102,17 +102,13 @@ The name and namespace identify the existing coordinator. `max_outstanding=32` b
 this worker's outstanding requests. The coordinator separately bounds aggregate
 capacity and its queue; bound upstream submissions to keep transport queues controlled.
 
-## Connect Slime and manage shutdown
+## Close workers and the shared service
 
-Slime's `make_generate` accepts `execution_service=(name, namespace)` to use the shared
-coordinator. Set `value_service="registered-reward-key"` to route critic scoring to
-one of its configured reward backends. Generation and value scoring consume the same
-coordinator capacity.
-
-Each worker calls `await generate.aclose()` when it finishes. The job owner shuts down
-the shared service with `shutdown.remote()` and then `ray.kill(handle)`. Heartbeats
-reclaim work from workers that disappear. Requests with an unknown outcome require
-caller reconciliation before resubmission.
+Each worker closes its `ExecutionServices` instance when collection finishes. The
+job owner shuts down the shared coordinator with `await handle.shutdown.remote()`
+and then `ray.kill(handle)` after all workers have disconnected. Heartbeats reclaim
+work from workers that disappear. Requests with an unknown outcome require caller
+reconciliation before resubmission.
 
 The integration suite exercises Ray with actual processes:
 
