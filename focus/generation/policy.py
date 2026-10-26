@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from copy import deepcopy
-from dataclasses import dataclass
+from copy import copy, deepcopy
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 from focus.codec import ChatCodec, HFTokenizer, Message
@@ -20,13 +20,16 @@ class PolicyFormat[A]:
     """Explicit, immutable tokenizer/template/parser binding for one model artifact.
 
     The codec renders messages as model tokens. The parser independently defines
-    the environment action. Context protocols choose which prompt to prepare.
-    Known model families resolve through :meth:`resolve`.
+    the environment action. Context managers choose which prompt to prepare.
+    Known model families resolve through :meth:`resolve`; an agent then picks the
+    action parser its environment and context manager need.
     """
 
     name: str
     codec: ChatCodec
     parser: ActionParser[A]
+    #: Built by :meth:`resolve`, so an agent may choose the action parser.
+    resolved: bool = field(default=False, compare=False)
 
     def prepare(
         self,
@@ -69,6 +72,14 @@ class PolicyFormat[A]:
         tokenizer: HFTokenizer | None = None,
         profile: str | None = None,
     ) -> PolicyFormat[Any]:
+        """The tokenizer, chat template, and parser for a known model family.
+
+        ``profile`` names the parser: ``"qwen_xml"`` (Qwen3.5 tool calls),
+        ``"hermes"`` (Qwen2.5 tool calls), ``"native"`` (API tool calls),
+        ``"text"``, or ``"token_chunk"`` (exact segments). Without one, the model
+        name selects the tool dialect.
+        """
+        from focus.generation.continuation import TokenChunkParser
         from focus.generation.parsing.base import TextActionParser
         from focus.generation.parsing.hermes import HermesToolCallParser
         from focus.generation.parsing.native import NativeToolCallParser
@@ -89,6 +100,7 @@ class PolicyFormat[A]:
             "hermes": HermesToolCallParser(),
             "native": NativeToolCallParser(),
             "text": TextActionParser(),
+            "token_chunk": TokenChunkParser(),
         }
         if profile not in parsers:
             raise ValueError(f"Unknown format profile {profile!r}")
@@ -102,7 +114,9 @@ class PolicyFormat[A]:
 
                 tokenizer = cast(HFTokenizer, AutoTokenizer.from_pretrained(model))
         assert tokenizer is not None
-        return cls(f"{model}:{profile}", ChatCodec(tokenizer), parsers[profile])
+        return cls(
+            f"{model}:{profile}", ChatCodec(tokenizer), parsers[profile], resolved=True
+        )
 
 
 @dataclass(frozen=True)
@@ -168,6 +182,18 @@ class Policy[A]:
     @property
     def format(self) -> PolicyFormat[A]:
         return self._format
+
+    def with_parser[B](self, parser: ActionParser[B]) -> Policy[B]:
+        """The same model and client, parsing actions with ``parser``."""
+        if parser.requires_native_channel and not self.provides_native_tool_calls:
+            raise ValueError("This parser requires a structured tool-call channel")
+        derived: Any = copy(self)
+        derived._format = PolicyFormat(
+            f"{self._format.name}+{type(parser).__name__}",
+            self._format.codec,
+            parser,
+        )
+        return cast(Policy[B], derived)
 
     @property
     def model(self) -> str:

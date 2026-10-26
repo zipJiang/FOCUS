@@ -28,9 +28,11 @@ from focus.generation import (
     SamplingParams,
     TokenId,
 )
+from focus.generation.continuation import TokenChunkParser
 from focus.generation.interfaces import (
     merge_sampling_params,
 )
+from focus.generation.parsing.base import ActionParser, TextActionParser
 from focus.generation.policy import Policy, PreparedPrompt
 from focus.harness.checkpoint import (
     CheckpointPolicy,
@@ -129,6 +131,29 @@ class Execution:
             raise ValueError("retries must be nonnegative")
 
 
+def _with_action_parser(
+    policy: Policy[Any], env: Env[Any, Any], context: ContextManager[Any]
+) -> Policy[Any]:
+    """The policy, parsing the action kind ``env`` and ``context`` expect.
+
+    Only a format resolved from the model name is adapted; an explicit format is
+    the caller's choice. Exact segments parse as token chunks, tool environments keep
+    the model's tool dialect, and text environments read the reply's text.
+    """
+    if not policy.format.resolved:
+        return policy
+    parser: ActionParser[Any]
+    if isinstance(context, Segments):
+        parser = TokenChunkParser()
+    elif env.action == "tool":
+        return policy
+    else:
+        parser = TextActionParser()
+    if type(policy.format.parser) is type(parser):
+        return policy
+    return policy.with_parser(parser)
+
+
 class _Default:
     """Marks an argument the agent fills in from its context manager."""
 
@@ -176,6 +201,8 @@ class Agent[S, A]:
         self.execution = execution if execution is not None else Execution()
         self.actor = actor
         self.protocol: ContextManager[Any] = context or AppendOnly()
+        self._given_policy: Policy[Any] = policy
+        policy = _with_action_parser(policy, env, self.protocol)
         segments = isinstance(self.protocol, Segments)
         if segments:
             # One decision is one segment: branch after each, and end without a
@@ -359,7 +386,7 @@ class Agent[S, A]:
         -- pass either to override, e.g. a colder temperature for a summarizer.
         """
         return Agent(
-            policy=self._policy,
+            policy=self._given_policy,
             env=env,
             system_prompt=system_prompt,
             context=AppendOnly(),

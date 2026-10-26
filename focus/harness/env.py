@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from focus.codec import Message
 from focus.harness.workspace import Workspace
@@ -63,6 +63,11 @@ class Env[S, A](ABC):
     Implement reset() and step(). Both are asynchronous so environments can await
     tool I/O. Override validate_workspace() for task-specific storage requirements.
     """
+
+    #: The action kind :meth:`step` expects: ``"text"`` (the reply's text) or
+    #: ``"tool"`` (a :class:`~focus.generation.parsing.ToolTurn`). An agent whose
+    #: policy format was resolved from the model name picks the matching parser.
+    action: Literal["text", "tool"] = "text"
 
     @abstractmethod
     async def reset(self) -> S:

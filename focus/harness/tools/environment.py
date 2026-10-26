@@ -36,6 +36,8 @@ class ToolEnv(Env[S, ToolTurn], ABC):
     dispatched tool call.
     """
 
+    action = "tool"
+
     def __init__(
         self, tools: Sequence[Tool], *, submit: SubmitTool | None = SUBMIT
     ) -> None:

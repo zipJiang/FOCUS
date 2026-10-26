@@ -42,15 +42,21 @@ class SlimePolicy(Policy[Any]):
         url: str,
         *,
         model: str,
-        format: PolicyFormat[Any],
+        format: PolicyFormat[Any] | None = None,
+        profile: str | None = None,
         version: str = "policy",
         default_params: SamplingParams | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> None:
+        if format is not None and profile is not None:
+            raise ValueError("Supply either format or profile")
         self._post = post
         self._url = url
         super().__init__(
-            model=model, format=format, version=version, default_params=default_params
+            model=model,
+            format=format or PolicyFormat.resolve(model, profile=profile),
+            version=version,
+            default_params=default_params,
         )
         # Passed through as ``**``: a host whose ``post`` takes no ``headers`` keyword
         # (the common case) must not be called with one.
