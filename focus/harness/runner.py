@@ -408,7 +408,7 @@ class Runner[S, A]:
             return rs
         prepared = await self.protocol.before(rs, self)
         if len(prepared.turns) != len(rs.turns):
-            return self._mark(rs, prepared)
+            return self._mark(prepared)
         rs = prepared
         cond = self._policy.prepare(rs.messages, tools=self._tools)
         return await self._generate_turn(
@@ -465,7 +465,6 @@ class Runner[S, A]:
         turns = list(current.turns)
         turns[origin] = replace(turns[origin], transition=applied.transition)
         return self._mark(
-            rs,
             replace(
                 current,
                 budget=self.services.remaining(rs.owner),
@@ -478,9 +477,9 @@ class Runner[S, A]:
             ),
         )
 
-    def _mark(self, rs: RolloutState[S], current: RolloutState[S]) -> RolloutState[S]:
-        """Select ``current`` as a checkpoint for its new effects."""
-        selected = self._checkpoints.selects(current.effects[len(rs.effects) :])
+    def _mark(self, current: RolloutState[S]) -> RolloutState[S]:
+        """Evaluate eligibility after the operation has committed its state."""
+        selected = self._checkpoints.eligible(current)
         return replace(current, checkpoint_at=len(current.turns) if selected else -1)
 
     async def _generate(
@@ -658,7 +657,7 @@ class Runner[S, A]:
         rs.check_continuation()
         if rs.done or rs.truncated:
             raise ValueError("Cannot compact a finished rollout for continuation")
-        return self._mark(rs, await self.protocol.compact(rs, self))
+        return self._mark(await self.protocol.compact(rs, self))
 
     @property
     def max_steps(self) -> int:

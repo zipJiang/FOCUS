@@ -84,6 +84,7 @@ class Summary(ContextProtocol):
                     rs.context_version,
                     rs.context_version + 1,
                     invocation_id=rs.invocation_id,
+                    turn_end=len(rs.turns) + len(turns or (marker,)),
                 ),
             ),
             advances=rs.advances + 1,

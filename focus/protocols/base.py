@@ -202,6 +202,7 @@ class ToolProtocol(ContextProtocol):
                             rs.context_version,
                             call.name,
                             rs.invocation_id,
+                            turn_end=len(rs.turns),
                         ),
                     ),
                 )
