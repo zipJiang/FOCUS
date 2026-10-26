@@ -36,6 +36,7 @@ import re
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
+from typing import Literal
 
 from focus.environments.toolkit import (
     Corpus,
@@ -487,8 +488,9 @@ class RunConfig:
     #: transcript whole, so this and ``max_prompt_tokens`` share the model's window
     #: with the task's generation budget -- see the CLI's ``--max-prompt-tokens``.
     fold_reply_tokens: int = 4096
-    #: What to do after both validated structured-fold attempts are rejected.
-    compaction_failure: str = "raise"
+    #: What to do after both validated structured-fold attempts are rejected:
+    #: ``"raise"``, or ``"end"`` the episode with zero outcome reward.
+    compaction_failure: Literal["raise", "end"] = "raise"
 
 
 # -- the world one case is run in ----------------------------------------------------
@@ -525,8 +527,6 @@ def build_world(case: Case, cfg: RunConfig) -> World:
         scorer=cfg.scorer,
         roll_call_budget=True,
     )
-    if cfg.compaction_failure not in ("raise", "terminal_zero"):
-        raise ValueError("Unknown compaction failure policy")
     agent: Agent[DeonticState, ToolTurn] = Agent(
         policy=cfg.policy,
         env=env,
@@ -535,9 +535,7 @@ def build_world(case: Case, cfg: RunConfig) -> World:
         context=AppendOnly() if cfg.no_compact else build_deontic_context(cfg),
         max_steps=cfg.max_steps,
         finish_prompt=finish_prompt(case),
-        on_compaction_failure=(
-            "end" if cfg.compaction_failure == "terminal_zero" else "raise"
-        ),
+        on_compaction_failure=cfg.compaction_failure,
     )
     return World(
         agent=agent,

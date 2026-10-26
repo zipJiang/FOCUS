@@ -7,6 +7,7 @@ import json
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Literal
 
 from focus.generation import Policy, SamplingParams
 from focus.generation.parsing import ToolTurn
@@ -223,7 +224,7 @@ def make_agent(
     compactor_temperature=0.2,
     compactor_top_p=0.95,
     context_limit=98304,
-    compaction_failure="raise",
+    compaction_failure: Literal["raise", "end"] = "raise",
 ) -> Agent[State, ToolTurn]:
     """The browsing agent; run it on a case's question."""
     env = SearchEnv(
@@ -250,8 +251,6 @@ def make_agent(
     )
     from .browser import FINISH_PROMPT, SYSTEM
 
-    if compaction_failure not in ("raise", "terminal_zero"):
-        raise ValueError("Unknown compaction failure policy")
     return Agent(
         policy=policy,
         env=env,
@@ -261,7 +260,5 @@ def make_agent(
         max_steps=max_steps,
         finish_prompt={"role": "user", "content": FINISH_PROMPT},
         context_limit=context_limit,
-        on_compaction_failure="end"
-        if compaction_failure == "terminal_zero"
-        else "raise",
+        on_compaction_failure=compaction_failure,
     )

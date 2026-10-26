@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections import Counter
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Literal
 
 from focus.generation import Policy, SamplingParams
 from focus.generation.parsing import ToolTurn
@@ -293,14 +293,14 @@ class RunConfig:
     fold_reply_tokens: int = 8192
     max_locations: int = MAX_LOCATIONS
     repeat_limit: int = 0
-    compaction_failure: str = "raise"
+    #: ``"raise"``, or ``"end"`` the episode with zero outcome reward when a fold is
+    #: rejected.
+    compaction_failure: Literal["raise", "end"] = "raise"
     count_folds_in_horizon: bool = False
 
     def __post_init__(self) -> None:
         if self.repeat_limit < 0:
             raise ValueError("repeat_limit must be nonnegative (zero disables it)")
-        if self.compaction_failure not in ("raise", "terminal_zero"):
-            raise ValueError("Unknown compaction failure policy")
         if (
             min(
                 self.max_steps,
@@ -397,8 +397,6 @@ def build_world(case: Case, repo: Repository, config: RunConfig) -> World:
             "Investigation budget exhausted. Call submit with your ranked locations "
             "now, using the evidence already gathered."
         ),
-        on_compaction_failure=(
-            "end" if config.compaction_failure == "terminal_zero" else "raise"
-        ),
+        on_compaction_failure=config.compaction_failure,
     )
     return World(agent, workspace, case.task_prompt())
