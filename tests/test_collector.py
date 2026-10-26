@@ -10,21 +10,13 @@ from typing import Any
 
 import pytest
 
-from focus import (
-    Collector,
-    DirectBranchTd,
-    ErrorReduction,
-    Fifo,
-    NodeInfo,
-    Phase,
-    Priority,
-    Search,
-)
+from focus import Collector, DirectBranchTd, ErrorReduction, Fifo, Phase, Search
 from focus.allocation import Observations
 from focus.codec import ChatCodec
 from focus.collector import _budget
 from focus.critic import Critic
 from focus.export import to_samples
+from focus.extend import NodeInfo, Priority
 from focus.generation import (
     GenerateResult,
     Policy,

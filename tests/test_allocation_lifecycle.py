@@ -8,13 +8,7 @@ from typing import Any
 
 import pytest
 
-from focus import (
-    ErrorReduction,
-    Fifo,
-    Phase,
-    RewardConfig,
-    TokenEntropy,
-)
+from focus import ErrorReduction, Fifo, Phase, RewardConfig, TokenEntropy
 from focus.allocation import RolloutLedger
 from focus.scheduler import (
     AllocationSession,

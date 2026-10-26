@@ -124,7 +124,7 @@ class Usage:
 
 @dataclass
 class ExecutionServices:
-    """Explicitly shared services; derived runners inherit this same object."""
+    """Explicitly shared services; derived agents inherit this same object."""
 
     inference: InferenceExecutor = field(default_factory=LocalInferenceExecutor)
     auxiliary: AdmissionPool | None = None

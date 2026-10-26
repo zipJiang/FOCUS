@@ -57,7 +57,7 @@ type TurnTag = Literal["task", "fold"]
 class Turn[S_co]:
     """One generate: the prefix sent, the completion, and what the world did with it."""
 
-    #: Exactly what the engine was conditioned on -- the ids the runner sent, never a
+    #: Exactly what the engine was conditioned on -- the ids the agent sent, never a
     #: reconstruction. Packing chains turns by testing this against the running pack.
     prefix: tuple[TokenId, ...]
     #: What the engine generated. The only trainable span this turn contributes.
@@ -75,7 +75,7 @@ class Turn[S_co]:
     #: rewrites context, it does not act on the world, so it is not a time step.
     transition: StepResult[S_co] | None = None
     #: ``"task"`` for the work, ``"fold"`` for a context fold's own generations. The
-    #: diagnostic label; effects and CheckpointPolicy govern continuation.
+    #: diagnostic label; effects and BranchPoints govern continuation.
     tag: TurnTag = "task"
     #: Raw shaping on a compaction attempt; does not advance task time.
     compaction_penalty: float = 0.0

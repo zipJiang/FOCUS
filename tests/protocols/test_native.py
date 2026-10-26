@@ -2,11 +2,8 @@
 
 import pytest
 
-from focus import (
-    Agent,
-    OpenAIChatPolicy,
-    OpenAIResponsesPolicy,
-)
+from focus import Agent
+from focus.backends import OpenAIChatPolicy, OpenAIResponsesPolicy
 from focus.generation import NativeToolCall
 from tests.generation.test_openai_chat import (
     _Completions,

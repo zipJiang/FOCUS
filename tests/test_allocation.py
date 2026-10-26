@@ -8,11 +8,7 @@ from typing import Any
 
 import pytest
 
-from focus import (
-    ErrorReduction,
-    NodeInfo,
-    Priority,
-)
+from focus import ErrorReduction
 from focus.allocation import (
     BetaBernoulli,
     CalibrationModel,
@@ -21,6 +17,7 @@ from focus.allocation import (
     RolloutLedger,
     retraining_gain,
 )
+from focus.extend import NodeInfo, Priority
 from focus.harness import RolloutState
 from focus.scheduler import (
     Budget,

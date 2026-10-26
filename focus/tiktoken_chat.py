@@ -53,7 +53,7 @@ def _arguments_text(arguments: Any) -> str:
         return arguments
     try:
         return json.dumps(arguments, ensure_ascii=False, sort_keys=True)
-    except TypeError:  # pragma: no cover - a mapping the runner never builds
+    except TypeError:  # pragma: no cover - a mapping the agent never builds
         return str(arguments)
 
 

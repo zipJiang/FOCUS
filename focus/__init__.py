@@ -1,160 +1,60 @@
-"""FOCUS: active critic learning with selective rollouts for language-model agents."""
+"""FOCUS: active critic learning with selective rollouts for language-model agents.
 
-from focus.codec import ChatCodec, Message, TextCodec
+An :class:`Agent` runs a policy in an environment. A :class:`Collector` searches from a
+prompt -- continuing the checkpoints its :class:`Search` ranks highest, scored by a
+:class:`Critic` -- and prepares actor advantages and critic targets as a
+:class:`Batch`. Extension interfaces live in :mod:`focus.extend`; model backends in
+:mod:`focus.backends`.
+"""
+
 from focus.collector import Collector, Tree
-from focus.critic import Critic, VLLMCritic
-from focus.execution import AdmissionPool, ExecutionServices, LocalInferenceExecutor
-from focus.execution.budget import ResourceBudget
-from focus.generation import (
-    GenerateResult,
-    OpenAIChatPolicy,
-    OpenAIResponsesPolicy,
-    Policy,
-    PolicyFormat,
-    PreparedPrompt,
-    SamplingParams,
-    SGLangPolicy,
-    SlimePolicy,
-    TinkerPolicy,
-    TokenChunk,
-    TokenChunkParser,
-    TokenId,
-    VLLMPolicy,
-)
-from focus.generation.parsing import (
-    HermesToolCallParser,
-    NativeToolCallParser,
-    QwenXMLToolCallParser,
-    ToolTurn,
-)
+from focus.critic import Critic
 from focus.harness import (
-    SUBMIT,
     Agent,
-    AnyOf,
     AppendOnly,
-    BaseTool,
-    ContextManager,
     Env,
     Execution,
-    InMemoryWorkspace,
-    NullWorkspace,
-    PromptTokens,
-    RolloutState,
-    RoundBudget,
     Segments,
-    StateCounter,
     StepResult,
-    SubmitFields,
     Summarize,
     ToolEnv,
     ToolError,
-    Trigger,
-    Turn,
-    Workspace,
-    build_budget,
-    regions,
     tool,
 )
-from focus.harness.checkpoint import CheckpointPolicy, EveryDecision, SparseCheckpoints
-from focus.preparation import (
-    Advantage,
-    DirectBranchTd,
-    Edge,
-    Estimator,
-    Grpo,
-)
-from focus.preparation.records import ActorSample, Batch, CriticSample
-from focus.search import (
-    ErrorReduction,
-    Fifo,
-    NodeInfo,
-    Phase,
-    Priority,
-    Search,
-    Selective,
-    TokenEntropy,
-)
-from focus.tiktoken_chat import TiktokenChatTokenizer
+from focus.preparation import ActorSample, Batch, CriticSample, DirectBranchTd, Grpo
+from focus.search import ErrorReduction, Fifo, Phase, Search, Selective, TokenEntropy
 from focus.values import RewardConfig
 
-# Grouped by the concern a reader has when they reach for the name, and sorted inside
-# each group. The groups are the documentation: they are the order the docs introduce
-# the library in, which is not the order an alphabetical list would give.
+# Grouped in the order the documentation introduces them.
 __all__ = [
+    # Collecting a training batch
     "Agent",
-    "Execution",
     "Collector",
-    "Tree",
+    "Critic",
     "Batch",
     "ActorSample",
     "CriticSample",
-    "Critic",
-    "VLLMCritic",
+    "Tree",
+    "Execution",
+    # Where to spend the rollout budget
     "Search",
     "Selective",
     "Phase",
-    "Priority",
-    "NodeInfo",
     "Fifo",
     "ErrorReduction",
     "TokenEntropy",
-    "Estimator",
+    # Actor recipes and reward weighting
     "DirectBranchTd",
     "Grpo",
-    "Edge",
-    "Advantage",
     "RewardConfig",
-    "ChatCodec",
-    "Message",
-    "TextCodec",
-    "AdmissionPool",
-    "ExecutionServices",
-    "LocalInferenceExecutor",
-    "ResourceBudget",
-    "GenerateResult",
-    "OpenAIChatPolicy",
-    "OpenAIResponsesPolicy",
-    "Policy",
-    "PolicyFormat",
-    "PreparedPrompt",
-    "SamplingParams",
-    "SGLangPolicy",
-    "SlimePolicy",
-    "TinkerPolicy",
-    "TokenChunk",
-    "TokenChunkParser",
-    "TokenId",
-    "VLLMPolicy",
-    "HermesToolCallParser",
-    "NativeToolCallParser",
-    "QwenXMLToolCallParser",
-    "ToolTurn",
-    "SUBMIT",
-    "Summarize",
-    "AnyOf",
-    "BaseTool",
-    "ContextManager",
-    "Segments",
+    # The task
     "Env",
-    "InMemoryWorkspace",
-    "NullWorkspace",
-    "PromptTokens",
-    "RolloutState",
-    "RoundBudget",
-    "StateCounter",
-    "StepResult",
-    "SubmitFields",
     "ToolEnv",
-    "ToolError",
+    "StepResult",
     "tool",
-    "Trigger",
-    "Turn",
-    "Workspace",
-    "build_budget",
-    "regions",
-    "CheckpointPolicy",
-    "EveryDecision",
-    "SparseCheckpoints",
+    "ToolError",
+    # What the policy sees
     "AppendOnly",
-    "TiktokenChatTokenizer",
+    "Segments",
+    "Summarize",
 ]

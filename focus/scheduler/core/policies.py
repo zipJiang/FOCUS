@@ -57,12 +57,12 @@ class Budget[P: Payload](Termination[P]):
     ``max_nodes`` has the same overshoot, for the same reason. Only ``max_rollouts``
     is exact, because a rollout can be counted before it runs.
 
-    That bound assumes the runner *has* a step budget. Under ``Agent.max_steps = -1``
+    That bound assumes the agent *has* a step budget. Under ``Agent.max_steps = -1``
     one expansion is unlimited, so a turn or node budget still stops the loop
     *launching* but bounds nothing: an env that never ends the episode makes the pass as
     long as its slowest in-flight expansion, which is then bounded only by
     ``Agent.generate_timeout``. A run that wants a guaranteed ceiling needs a
-    ``max_rollouts`` (exact whatever the runner does) or a finite ``max_steps``.
+    ``max_rollouts`` (exact whatever the agent does) or a finite ``max_steps``.
 
     The overshoot is *carried*, not compounded: the next pass's cap is computed from
     what the tree has already spent (:func:`~focus.collector._budget`), so a pass

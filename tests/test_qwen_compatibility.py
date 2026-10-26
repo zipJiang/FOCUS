@@ -196,14 +196,14 @@ async def test_qwen_thinking_rewrites_preserve_original_training_tokens(
 
 
 async def test_qwen_continuation_keeps_unfinished_thinking_and_exact_fork_prefixes():
-    from focus import (
-        AppendOnly,
-        EveryDecision,
+    from focus import AppendOnly
+    from focus.backends import (
         GenerateResult,
         SamplingParams,
         TokenChunk,
         TokenChunkParser,
     )
+    from focus.extend import EveryDecision
     from focus.harness import Env, StepResult, regions
 
     class Segments(Env[int, TokenChunk]):

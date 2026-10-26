@@ -86,8 +86,11 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # The scheduler, allocation, and preparation packages re-export in dependency order (protocols, then
 # the implementations built on them), which reads better than the alphabetical order
-# RUF022 wants -- but only in `__init__`, where the ordering is documentation.
+# RUF022 wants -- but only in the public entry points, where the ordering is
+# documentation.
 "focus/**/__init__.py" = ["RUF022"]
+"focus/extend.py" = ["RUF022"]
+"focus/backends.py" = ["RUF022"]
 
 # Static type gate:
 #     uv run mypy

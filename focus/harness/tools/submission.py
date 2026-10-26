@@ -5,7 +5,7 @@ That reads the ending off an absence, and an absence is a weak signal: a model
 post-trained on tool use keeps emitting calls, so the ending it produces most naturally
 is the one the convention cannot see. The failure is real -- a rollout whose
 out-of-budget turn ended on a tool call scored blank, because
-:meth:`~...runner.Agent.finish` does not dispatch those and there was no visible text
+:meth:`~...agent.Agent.finish` does not dispatch those and there was no visible text
 left to read.
 
 :class:`SubmitTool` makes the ending a positive act. The model calls ``submit``, its

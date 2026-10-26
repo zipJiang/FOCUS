@@ -24,7 +24,11 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import pytest
+
 import focus
+import focus.backends
+import focus.extend
 
 
 def _module_names() -> list[str]:
@@ -73,40 +77,31 @@ def test_every_module_imports_first_in_a_fresh_interpreter() -> None:
     assert not failures, "\n\n".join(failures)
 
 
-def test_the_front_door_exports_everything_it_claims_to() -> None:
-    """``__all__`` is grouped by concern rather than sorted, so nothing checks it.
-
-    RUF022 is off for `__init__` files here (the grouping is documentation), which
-    means a name that no longer resolves -- a typo, or one that moved out of its
-    subpackage -- would sit in the list unnoticed until a reader's ``from
-    focus import`` failed.
-    """
-    assert len(set(focus.__all__)) == len(focus.__all__)
-    for name in focus.__all__:
-        assert hasattr(focus, name), f"{name} is exported but unresolved"
+@pytest.mark.parametrize("module", [focus, focus.extend, focus.backends])
+def test_each_entry_point_exports_everything_it_claims_to(module) -> None:
+    """``__all__`` is grouped by concern rather than sorted, so nothing checks it."""
+    assert len(set(module.__all__)) == len(module.__all__)
+    for name in module.__all__:
+        assert hasattr(module, name), f"{name} is exported but unresolved"
 
 
-def test_a_seam_whose_implementations_are_exported_exports_its_interface() -> None:
-    """A user who can name a recipe should be able to name what to subclass.
+def test_the_front_door_stays_small() -> None:
+    """The root names what a training run needs; everything else has a module."""
+    assert len(focus.__all__) <= 30
+    assert not set(focus.__all__) & set(focus.extend.__all__)
+    assert not set(focus.__all__) & set(focus.backends.__all__)
 
-    `register_estimator` without `Estimator` was the shape of the gap: the
-    front door taught how to register an estimator and hid the class to register.
-    """
+
+def test_every_exported_implementation_has_its_interface_in_extend() -> None:
+    """A user who can name a built-in should be able to name what to subclass."""
     pairs = {
-        "Estimator": ("ChildRelative", "register_estimator"),
-        "Trigger": ("PromptTokens", "StateCounter"),
-        "ContextManager": ("Summarize", "build_budget"),
-        "ProposalPolicy": ("AnchorProposal", "MixtureProposal"),
-        "GatingPolicy": ("WidthGating", "ConcurrencyGating"),
-        "Allocator": ("FifoAllocator", "BestFirstAllocator", "TokenEntropyAllocator"),
+        "Priority": (focus.Fifo, focus.ErrorReduction, focus.TokenEntropy),
+        "Estimator": (focus.DirectBranchTd, focus.Grpo),
+        "ContextManager": (focus.AppendOnly, focus.Segments, focus.Summarize),
     }
-    missing = [
-        interface
-        for interface, implementations in pairs.items()
-        if any(name in focus.__all__ for name in implementations)
-        and interface not in focus.__all__
-    ]
-    assert not missing, f"exported implementations without their interface: {missing}"
+    for interface, implementations in pairs.items():
+        base = getattr(focus.extend, interface)
+        assert all(issubclass(cls, base) for cls in implementations), interface
 
 
 def test_generation_has_no_reverse_dependency_on_the_harness() -> None:

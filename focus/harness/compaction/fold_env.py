@@ -4,7 +4,7 @@ A fold is an agent doing a bounded piece of tool work and then saying what it ke
 which is exactly what an :class:`Env` describes -- so the ordinary
 :class:`~focus.harness.agent.Agent` drives it, and the compactor is left
 owning only its *strategy* (the instruction, the budget, the trigger). The alternative
-is a second copy of the runner loop inside the compactor -- generate, parse, dispatch,
+is a second copy of the agent loop inside the compactor -- generate, parse, dispatch,
 observe, finish, with its own nudge and its own budget handling -- drifting from the one
 every rollout uses.
 

@@ -132,7 +132,7 @@ class Summarize(ContextManager[S]):
     them; there is no compaction-shaped record anywhere.
 
     It owns only its strategy in the other sense too -- the machine comes from the
-    :class:`Compaction` (the rollout's own runner), not this object, so a fold speaks
+    :class:`Compaction` (the rollout's own agent), not this object, so a fold speaks
     with the same weights, through the same codec, in the same tool dialect as the
     rollout it is folding, and none of that has to be passed along field by field.
     ``sampling_params`` is the one exception it keeps: a summarizer may legitimately
@@ -257,8 +257,8 @@ class Summarize(ContextManager[S]):
         # `derive`, not a fresh Agent: same model, same codec, same tool dialect,
         # same policy-version tag -- only the world, the prompts and the budget differ.
         # The same call-time-workspace mechanism as the rollout, too: the tools take no
-        # captured store; the runner forwards this fold's workspace per call.
-        fold = compaction.runner.derive(
+        # captured store; the agent forwards this fold's workspace per call.
+        fold = compaction.agent.derive(
             env=env,
             system_prompt=instruction,
             max_steps=self._max_interactions,

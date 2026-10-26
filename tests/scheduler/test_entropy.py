@@ -5,9 +5,7 @@ from typing import Any
 
 import pytest
 
-from focus import (
-    TokenEntropy,
-)
+from focus import TokenEntropy
 from focus.allocation import RolloutLedger
 from focus.harness import RolloutState, Turn
 from focus.scheduler import SchedulerState, SchedulerView

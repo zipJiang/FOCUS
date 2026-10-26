@@ -85,7 +85,7 @@ def _compaction(
         seed=seed,
         state=None,
         workspace=ws,
-        runner=_folding_runner(gen),
+        agent=_folding_runner(gen),
     )
 
 
@@ -472,7 +472,7 @@ async def test_a_toolless_fold_under_a_native_policy_keeps_its_reply() -> None:
     gen = _ChannelScripted(["reasoning\n</think>\n\nkept summary"])
     c = replace(
         _compaction([{"role": "user", "content": "grown"}], ws, gen),
-        runner=_folding_runner(gen, parser=NativeToolCallParser()),
+        agent=_folding_runner(gen, parser=NativeToolCallParser()),
     )
 
     result = await Summarize[None](max_interactions=8).compact(c)
@@ -632,7 +632,7 @@ async def test_compactor_reads_state_to_trigger_and_resets_it_on_compact() -> No
         seed=({"role": "system", "content": "s"},),
         state=BudgetState(remaining=0),
         workspace=InMemoryWorkspace(),
-        runner=_folding_runner(gen),
+        agent=_folding_runner(gen),
     )
     result = await compactor.compact(c)
     assert result.state == BudgetState(remaining=5)  # the trigger relieved itself
@@ -664,7 +664,7 @@ async def test_the_fold_speaks_the_rollout_s_tool_dialect() -> None:
     gen = ScriptedGenerator([_xml_store("author", "Christie"), _reply("kept")])
     c = replace(
         _compaction([{"role": "user", "content": "grown"}], ws, gen),
-        runner=_folding_runner(gen, QwenXMLToolCallParser()),
+        agent=_folding_runner(gen, QwenXMLToolCallParser()),
     )
 
     await Summarize[None](max_interactions=4).compact(c)
@@ -898,13 +898,13 @@ async def test_the_fold_states_its_length_budget_and_is_held_to_it() -> None:
         NullWorkspace(),
         ScriptedGenerator(["kept context"]),
     )
-    real_derive = compaction.runner.derive
+    real_derive = compaction.agent.derive
 
     def spy(**kwargs: Any) -> Any:
         seen.update(kwargs)
         return real_derive(**kwargs)
 
-    compaction.runner.derive = spy  # type: ignore[method-assign]
+    compaction.agent.derive = spy  # type: ignore[method-assign]
     compactor: Summarize[Any] = Summarize(max_reply_tokens=777)
 
     await compactor.compact(compaction)

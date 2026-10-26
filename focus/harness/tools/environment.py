@@ -28,7 +28,7 @@ S = TypeVar("S")
 class ToolEnv(Env[S, ToolTurn], ABC):
     """Dispatch tools, or end on the first valid submit.
 
-    No-tool replies receive feedback until the runner's budget expires. With
+    No-tool replies receive feedback until the agent's budget expires. With
     ``submit=None``, visible text instead ends the task (used by fold environments).
     A task state that inherits :class:`~focus.harness.tools.submission.SubmitFields`
     records the submitted answer; one that inherits

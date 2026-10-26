@@ -11,12 +11,7 @@ from typing import Any
 
 import pytest
 
-from focus import (
-    ChatCodec,
-    Policy,
-    PolicyFormat,
-    QwenXMLToolCallParser,
-)
+from focus.backends import ChatCodec, Policy, PolicyFormat, QwenXMLToolCallParser
 from focus.environments.browsercomp_plus import (
     BrowserFind,
     BrowserOpen,

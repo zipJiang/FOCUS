@@ -152,7 +152,7 @@ class OpenAIChatPolicy(NativePolicy):
         this is a chat backend, so ``message.tool_calls`` is always there to be read,
         and a turn that carries none -- schemas not sent, or sent and declined -- is a
         prose turn, reported as ``()``. That distinction is load-bearing for folds: the
-        fold's derived runner inherits the rollout's policy, and under a toolless
+        fold's derived agent inherits the rollout's policy, and under a toolless
         ``FoldEnv`` (a ``NullWorkspace`` fold) its generations send no schemas -- a
         native parser must read those as "no call made", not as the misconfiguration
         ``None`` names (a token-native backend that has no structured channel at all).

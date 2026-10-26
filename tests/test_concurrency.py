@@ -33,18 +33,12 @@ from typing import Any
 
 import pytest
 
-from focus import (
-    Collector,
-    Fifo,
-    NodeInfo,
-    Phase,
-    Priority,
-    Search,
-)
+from focus import Collector, Fifo, Phase, Search
 from focus.allocation import Observations, RolloutLedger
 from focus.codec import ChatCodec
 from focus.critic import Critic
 from focus.export import to_samples
+from focus.extend import NodeInfo, Priority
 from focus.generation import (
     GenerateResult,
     Policy,

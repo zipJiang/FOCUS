@@ -13,12 +13,7 @@ from typing import Any
 
 import pytest
 
-from focus import (
-    Collector,
-    Fifo,
-    Phase,
-    Search,
-)
+from focus import Collector, Fifo, Phase, Search
 from focus.codec import ChatCodec
 from focus.generation.parsing import HermesToolCallParser
 from focus.harness import (

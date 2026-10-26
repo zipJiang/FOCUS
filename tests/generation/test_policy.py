@@ -280,7 +280,7 @@ def test_a_policy_is_a_value_and_is_shared_rather_than_copied() -> None:
 
 
 def _resolved_policy() -> Any:
-    from focus import Policy, PolicyFormat
+    from focus.backends import Policy, PolicyFormat
     from focus.codec import ChatCodec
     from focus.generation.parsing import HermesToolCallParser
     from tests.helpers import FakeChatTokenizer, ScriptedGenerator
@@ -296,7 +296,8 @@ def _resolved_policy() -> Any:
 
 
 def test_an_agent_picks_the_parser_for_a_resolved_format() -> None:
-    from focus import Agent, Segments, TokenChunkParser
+    from focus import Agent, Segments
+    from focus.backends import TokenChunkParser
     from focus.generation.parsing import HermesToolCallParser, TextActionParser
     from tests.helpers import SubmitEnv, ToyEnv
 

@@ -7,17 +7,9 @@ import pickle
 import pytest
 
 import focus
-from focus import (
-    DirectBranchTd,
-    ErrorReduction,
-    Fifo,
-    NodeInfo,
-    Phase,
-    Priority,
-    Search,
-    Selective,
-)
+from focus import DirectBranchTd, ErrorReduction, Fifo, Phase, Search, Selective
 from focus.allocation import Observations
+from focus.extend import NodeInfo, Priority
 from focus.preparation import prepare_samples
 from focus.scheduler import PASS_KEY
 from tests.estimators import FixedWeight

@@ -41,11 +41,8 @@ registered, one expansion is *expand then score*: children come back already sco
 a node's critic value is on it before selection can ever see it on the frontier. That
 ordering is the point -- a value-guided selection needs it, and a separate scoring loop
 cannot give it, since it races the selection that reads it. Scores go to
-``node.critic[version]``; ``node.mean_return`` remains the :class:`AllocationSession`'s,
-fed by
-the realized return alone. To score an *existing* tree instead (post-hoc, a second
-model, another version), run a
-:class:`~focus.scheduler.core.critic.CriticScheduler` over the same state.
+``node.critic``; ``node.mean_return`` remains the :class:`AllocationSession`'s, fed by
+the realized return alone.
 """
 
 from __future__ import annotations
@@ -167,8 +164,8 @@ class Scheduler[P: Payload]:
     async def run_on(self, state: SchedulerState[P]) -> SchedulerState[P]:
         """Search over an existing (possibly shared) tree until termination.
 
-        Lets a second scheduler -- e.g. a ``CriticScheduler`` -- run concurrently over
-        the same ``state`` under ``state.lock``. Gating comes from ``state.gating`` (set
+        Lets other code run concurrently over the same ``state`` under
+        ``state.lock``. Gating comes from ``state.gating`` (set
         when the state was built), not this scheduler's own default.
 
         Returns the very ``state`` it was handed. The tree *is* the result: its

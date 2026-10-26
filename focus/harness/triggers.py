@@ -2,7 +2,7 @@
 
 A :class:`Trigger` answers one question about the current checkpoint ("is it time?") and
 owns the matching answer to "what has to change so it stops being time?". Those two
-belong together and nowhere else: the runner front-loads the check, so a trigger that
+belong together and nowhere else: the agent front-loads the check, so a trigger that
 fires but is never relieved re-fires on the very next turn and the rollout folds
 forever. Keeping :meth:`Trigger.relieve` beside :meth:`Trigger.fires` is what makes that
 pairing checkable in one place rather than split across a compactor's two overrides.
@@ -17,7 +17,7 @@ The state a trigger reads is the *task* state, passed through untouched. That is
 :class:`StateCounter` names its fields as strings: the harness has no opinion about what
 a task calls its budget, only that resetting it is what relieves the trigger.
 
-The *prompt* it reads is the rendered token ids, as a bare sequence. The runner has that
+The *prompt* it reads is the rendered token ids, as a bare sequence. The agent has that
 list in hand -- it is what it is about to generate from -- and the only question asked
 of it here is how long it is, which a wrapper answered no better than ``len`` does.
 """
@@ -42,7 +42,7 @@ class Trigger[S](ABC):
     def check(self, state: S) -> None:
         """Refuse a state this trigger cannot read, once, before a rollout is spent.
 
-        Called by the runner with the state :meth:`~...Env.reset` returned, which is the
+        Called by the agent with the state :meth:`~...Env.reset` returned, which is the
         first moment a trigger's contract is checkable at all -- it names its fields as
         strings and the harness is generic over the state, so nothing earlier can see
         the shape. Every other place the mismatch surfaces is worse: :meth:`fires` runs

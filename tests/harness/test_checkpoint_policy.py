@@ -4,12 +4,9 @@ from dataclasses import replace
 
 import pytest
 
-from focus import (
-    EveryDecision,
-    SparseCheckpoints,
-)
+from focus.extend import EveryDecision, SparseCheckpoints
 from focus.harness import InMemoryWorkspace
-from focus.harness.checkpoint import CheckpointPolicy
+from focus.harness.checkpoint import BranchPoints
 from focus.harness.rollout import AnyRollout
 from tests.harness.test_runner import QuietMemory, TalkativeCompactor, ToyCompactor
 from tests.helpers import ScriptedGenerator, ToyState, toy_runner
@@ -24,7 +21,7 @@ class AtProgress:
 
 async def test_custom_eligibility_reads_completed_state_and_forked_workspace():
     policy = AtProgress()
-    assert isinstance(policy, CheckpointPolicy)
+    assert isinstance(policy, BranchPoints)
     runner = toy_runner(ScriptedGenerator(["go", "go", "go"]), branch_points=policy)
     workspace = InMemoryWorkspace()
     workspace.write("target", "2")

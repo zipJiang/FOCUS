@@ -49,7 +49,7 @@ class Checkpointer(ABC):
     One writer drives each branch; different branches may share a store. The caller
     must supply compatible policy, protocol, environment and runtime on recovery.
     Backends implement atomic insertion and newest-first lookup; serialization and
-    validation are shared. No live runners, model clients or tasks are persisted.
+    validation are shared. No live agents, model clients or tasks are persisted.
     """
 
     @abstractmethod
@@ -170,7 +170,7 @@ class MemoryCheckpointer(Checkpointer):
 class SQLiteCheckpointer(Checkpointer):
     """Durable local snapshots. Each operation opens and closes its own connection.
 
-    Commits are synchronous: a runner does not continue or emit a checkpoint before
+    Commits are synchronous: a agent does not continue or emit a checkpoint before
     the commit succeeds. Use a file path, not SQLite's connection-local :memory:.
     """
 

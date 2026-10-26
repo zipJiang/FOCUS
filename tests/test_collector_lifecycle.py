@@ -6,16 +6,9 @@ import asyncio
 
 import pytest
 
-from focus import (
-    Collector,
-    DirectBranchTd,
-    ExecutionServices,
-    Fifo,
-    InMemoryWorkspace,
-    Phase,
-    RewardConfig,
-    Search,
-)
+from focus import Collector, DirectBranchTd, Fifo, Phase, RewardConfig, Search
+from focus.execution import ExecutionServices
+from focus.extend import InMemoryWorkspace
 from focus.generation.parsing import HermesToolCallParser
 from focus.harness import StorageTool
 from focus.preparation import Estimator

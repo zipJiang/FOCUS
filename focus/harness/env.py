@@ -1,7 +1,7 @@
 """Task state, action effects, observations, and rewards.
 
 An Env receives actions that the policy has already parsed. It applies the task
-rules and returns a StepResult; model generation belongs to the runner. Return new
+rules and returns a StepResult; model generation belongs to the agent. Return new
 states from step() so continuations can share their starting state safely. Tools
 receive the active branch's workspace on each call.
 """
@@ -90,7 +90,7 @@ class Env[S, A](ABC):
         """Check task-specific workspace requirements before an episode starts.
 
         The default accepts any workspace. Override this method to reject an
-        incompatible store before the runner requests a model generation.
+        incompatible store before the agent requests a model generation.
         """
         return None
 

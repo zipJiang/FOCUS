@@ -1,6 +1,6 @@
-"""Expand isolated rollouts through the runner's completion loop.
+"""Expand isolated rollouts through the agent's completion loop.
 
-The runner exposes folds and the endpoint; the expander returns them with the
+The agent exposes folds and the endpoint; the expander returns them with the
 metadata each new node records, such as the search pass that produced it.
 """
 
@@ -36,12 +36,12 @@ class RolloutExpander[S](Expander[RolloutState[S]]):
 
     def __init__(
         self,
-        runner: Agent[S, Any],
+        agent: Agent[S, Any],
         *,
         sampling_params: SamplingParams | None = None,
         annotation: Mapping[str, object] | None = None,
     ) -> None:
-        self._runner = runner
+        self._agent = agent
         self._sampling_params = sampling_params
         self._annotation: Mapping[str, object] = MappingProxyType(
             dict(annotation or {})
@@ -54,7 +54,7 @@ class RolloutExpander[S](Expander[RolloutState[S]]):
         # isolated; the region then advances in place on that private copy.
         chain = [
             checkpoint
-            async for checkpoint in self._runner.iter_run(
+            async for checkpoint in self._agent.iter_run(
                 payload.fork(), sampling_params=self._sampling_params
             )
         ]
@@ -66,7 +66,7 @@ class RolloutExpander[S](Expander[RolloutState[S]]):
         self, prompt: str, *, workspace: Workspace | None = None
     ) -> RolloutState[S]:
         """Convenience: build the search root from a prompt (keeps the Agent here)."""
-        return await self._runner.start(prompt, workspace=workspace)
+        return await self._agent.start(prompt, workspace=workspace)
 
 
 __all__ = ["PASS_KEY", "Expander", "RolloutExpander"]

@@ -87,7 +87,7 @@ class RolloutState[S]:
     The append-only generation trace supplies exact training spans. Explicit effects
     and checkpoint_at select restorable states independently of diagnostic fold tags.
     Snapshot copies mutable messages, task state, execution state and workspace;
-    generation records and their branch-independent rescoring caches remain shared.
+    generation records remain shared.
     """
 
     messages: tuple[Message, ...]
@@ -189,7 +189,7 @@ class RolloutState[S]:
         A boundary is the first turn *after* a run of fold turns: the one place the
         prompt is not an extension of the previous turn's, and therefore where a branch
         restores a context rather than a suffix. Read off the tag rather than stored on
-        the turn, so a log assembled by any means answers the same way the runner's
+        the turn, so a log assembled by any means answers the same way the agent's
         does.
         """
         return tuple(
@@ -238,7 +238,7 @@ class RolloutState[S]:
         The unit compute is actually spent in, and monotone because the log is
         append-only. So the difference between two checkpoints on one line is exactly
         what the later one cost for scheduler accounting. Fold turns are not counted
-        here; a fold-only advance still consumes one step of the runner's budget.
+        here; a fold-only advance still consumes one step of the agent's budget.
         """
         return len(self.transitions)
 

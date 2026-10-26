@@ -2,7 +2,7 @@
 
 Agent owns trace ordering, continuation limits and checkpoint notifications. A context
 protocol owns prompt preparation and action effects. ExecutionServices owns shared
-inference resources; derived runners inherit it. Search sees settled snapshots
+inference resources; derived agents inherit it. Search sees settled snapshots
 without protocol-name branches.
 
 start/root initialize an episode; advance makes one decision; iter_run exposes selected
@@ -35,7 +35,7 @@ from focus.generation.interfaces import (
 from focus.generation.parsing.base import ActionParser, TextActionParser
 from focus.generation.policy import Policy, PreparedPrompt
 from focus.harness.checkpoint import (
-    CheckpointPolicy,
+    BranchPoints,
     Effect,
     EveryDecision,
     SparseCheckpoints,
@@ -186,7 +186,7 @@ class Agent[S, A]:
         max_steps: int = 32,
         finish_prompt: str | Message | _Default | None = _DEFAULT,
         tools: Sequence[dict[str, Any]] | None = None,
-        branch_points: CheckpointPolicy | None = None,
+        branch_points: BranchPoints | None = None,
         context_limit: int | None = None,
         on_compaction_failure: Literal["raise", "end"] = "raise",
         execution: Execution | None = None,
@@ -264,7 +264,7 @@ class Agent[S, A]:
         return self.checkpointer.put(rs)
 
     def restore(self, checkpoint_id: str) -> RolloutState[S]:
-        """Recover the same branch using compatible runner collaborators.
+        """Recover the same branch using compatible agent collaborators.
 
         Do not restore a branch while it is still running. Logical resource budgets
         roll back with execution state; physical Usage counters retain failed work.
@@ -340,24 +340,24 @@ class Agent[S, A]:
 
     @property
     def policy(self) -> Policy[A]:
-        """The model this runner drives, whole.
+        """The model this agent drives, whole.
 
-        Read rather than reassembled: a compactor deriving a nested runner carries the
+        Read rather than reassembled: a compactor deriving a nested agent carries the
         same object rather than four fields that could drift apart.
         """
         return self._policy
 
     @property
     def tools(self) -> tuple[dict[str, Any], ...]:
-        """The tool schemas rendered into this runner's prompts.
+        """The tool schemas rendered into this agent's prompts.
 
         A data collector needs the same schemas to render an exact critic context.
-        Return a copy so an auditor cannot mutate the runner's generation contract.
+        Return a copy so an auditor cannot mutate the agent's generation contract.
         """
         return deepcopy(tuple(self._tools or ()))
 
-    # `T` is scoped to this method: a derived runner's task state is a fold's own
-    # world, unrelated to the `S` this runner drives.
+    # `T` is scoped to this method: a derived agent's task state is a fold's own
+    # world, unrelated to the `S` this agent drives.
     def derive[T](
         self,
         *,
@@ -368,21 +368,21 @@ class Agent[S, A]:
         sampling_params: SamplingParams | None = None,
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> Agent[T, A]:
-        """The same runner over a different world: same policy, new env and prompt.
+        """The same agent over a different world: same policy, new env and prompt.
 
         A nested rollout -- a model-driven fold, and anything else shaped like it -- is
         not a second agent: it is *this* agent, generating with the same weights through
         the same codec and speaking the same tool dialect, on a world of its own. So it
-        is built by deriving from this runner rather than by assembling a fresh one from
+        is built by deriving from this agent rather than by assembling a fresh one from
         the pieces, which is what forced a caller to smuggle a generator, a codec, a
         parser and a version string across the seam and then guess a parser when one was
         missing. It is now one field: the dialect (Hermes JSON vs Qwen XML vs a
         backend's own structure) is a property of the :class:`Policy`, decided once at
         the top and inherited whole.
 
-        The derived runner uses AppendOnly: the fold is the thing
+        The derived agent uses AppendOnly: the fold is the thing
         being run, and a fold that folds is a loop with no floor. ``tools``
-        defaults to the new env's own schemas, and ``sampling_params`` to this runner's
+        defaults to the new env's own schemas, and ``sampling_params`` to this agent's
         -- pass either to override, e.g. a colder temperature for a summarizer.
         """
         return Agent(
@@ -478,9 +478,9 @@ class Agent[S, A]:
         its tools) and is mutated **in place** -- ``fork`` the checkpoint before
         branching.
 
-        ``sampling_params`` overlays the runner's defaults for this turn only, so a
+        ``sampling_params`` overlays the agent's defaults for this turn only, so a
         proposal can vary temperature per expansion without a second ``Agent`` per
-        proposal -- the runner is shared across concurrent branches and must stay
+        proposal -- the agent is shared across concurrent branches and must stay
         stateless for that to be safe.
         """
         return await self._checkpointed(
@@ -712,11 +712,9 @@ class Agent[S, A]:
         :class:`~focus.harness.tools.environment.ToolEnv` still *reads* a
         ``submit`` call, since by now that is how the model ends every turn.
 
-        ``sampling_params`` overlays the runner's defaults exactly as in
-        :meth:`advance`, and for the same reason one step further on: the forced turn is
-        part of the line it ends, so an expansion drawn from a non-anchor proposal must
-        answer under that law too. Sampled under the runner defaults instead, the last
-        turn of the edge would be the one turn its recorded provenance mis-names.
+        ``sampling_params`` overlays the agent's defaults exactly as in
+        :meth:`advance`: the forced turn is part of the continuation it ends, so a
+        search phase's sampling override applies to it too.
 
         An ended episode is unchanged. With ``finish_prompt=None``, mark bare
         truncation without generating.
@@ -801,7 +799,7 @@ class Agent[S, A]:
                     seed=rs.seed,
                     state=rs.state,
                     workspace=rs.workspace,
-                    runner=self,
+                    agent=self,
                     checkpoint=rs,
                 )
             )

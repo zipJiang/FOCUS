@@ -2,15 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from focus import (
-    Collector,
-    ExecutionServices,
-    Fifo,
-    InMemoryWorkspace,
-    NullWorkspace,
-    Phase,
-    Search,
-)
+from focus import Collector, Fifo, Phase, Search
+from focus.execution import ExecutionServices
+from focus.extend import InMemoryWorkspace, NullWorkspace
 from focus.generation.parsing import HermesToolCallParser
 from focus.harness import BaseTool, Env, StepResult
 from focus.harness.workspace import StorageTool

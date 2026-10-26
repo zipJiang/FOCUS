@@ -8,15 +8,15 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from focus import (
-    AppendOnly,
-    ExecutionServices,
+from focus import AppendOnly
+from focus.backends import (
     Policy,
     PreparedPrompt,
     SamplingParams,
     TokenChunk,
     TokenChunkParser,
 )
+from focus.execution import ExecutionServices
 from focus.generation import GenerateResult
 from tests.helpers import test_format
 
@@ -340,8 +340,10 @@ def test_same_policy_supports_independent_context_protocols():
 
 
 def test_segments_sets_the_continuation_defaults_on_the_agent():
-    from focus import Agent, EveryDecision, PolicyFormat, Segments
+    from focus import Agent, Segments
+    from focus.backends import PolicyFormat
     from focus.codec import ChatCodec
+    from focus.extend import EveryDecision
     from tests.helpers import FakeChatTokenizer, ScriptedGenerator, ToyEnv, toy_policy
 
     format = PolicyFormat("chunks", ChatCodec(FakeChatTokenizer()), TokenChunkParser())
@@ -361,7 +363,7 @@ def test_segments_sets_the_continuation_defaults_on_the_agent():
 
 def replace_format(policy, format):
     """The same backend under another format."""
-    from focus import Policy
+    from focus.backends import Policy
 
     return Policy(
         format=format,

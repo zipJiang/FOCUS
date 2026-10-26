@@ -62,17 +62,17 @@ class IncompleteCompactionError(ValueError):
 
 @dataclass(frozen=True)
 class Compaction[S]:
-    """Everything a compaction is handed -- the conversation to fold, and the runner.
+    """Everything a compaction is handed -- the conversation to fold, and the agent.
 
     A compactor reads ``messages`` (the grown conversation), persists what matters into
     ``workspace``, and returns the messages to continue from -- ``seed`` (the system +
     first user message) for a plain reset, or ``seed`` with what it kept folded in; how
     the fold is shaped is the compactor's own policy.
 
-    Its one collaborator is the ``runner`` being folded, not a bag of that runner's
+    Its one collaborator is the ``agent`` being folded, not a bag of that agent's
     parts: a model-driven fold is a rollout under the *same* policy on a different
     world, so it asks for :meth:`~focus.harness.agent.Agent.derive` instead
-    of reassembling a runner out of a generator, a codec, a parser and a version tag
+    of reassembling a agent out of a generator, a codec, a parser and a version tag
     smuggled across this seam -- and cannot end up guessing a tool dialect the rollout
     never spoke. A compactor that generates nothing simply ignores it.
     """
@@ -81,10 +81,10 @@ class Compaction[S]:
     seed: tuple[Message, ...]
     state: S
     workspace: Workspace
-    #: The runner whose rollout is being folded: the model, the codec, the tool dialect
+    #: The agent whose rollout is being folded: the model, the codec, the tool dialect
     #: and the policy-version tag in one piece. Loose in the action parameter because a
     #: fold's env speaks the parser's actions, which need not be the task env's.
-    runner: Agent[S, Any]
+    agent: Agent[S, Any]
 
     checkpoint: Any = None
 
@@ -100,10 +100,10 @@ class CompactionResult[S]:
 
     ``turns`` are the turns a model-driven compactor generated getting here --
     transition-free, because a fold rewrites the working context rather than acting on
-    the world. The runner appends them to its log like any others (stamping them
+    the world. The agent appends them to its log like any others (stamping them
     ``"fold"`` on the way in, so the tag is its own statement rather than a plug-in's),
     so a fold's tool-call turns are first-class trainable data rather than a special
-    kind of record. A plain compactor returns none, and the runner leaves one zero-token
+    kind of record. A plain compactor returns none, and the agent leaves one zero-token
     ``"fold"`` turn in their place -- the marker that records that anything happened.
     """
 
@@ -156,28 +156,28 @@ class ContextManager[S]:
     def prepare(
         self,
         rs: AnyRollout,
-        runner: Agent[Any, Any],
+        agent: Agent[Any, Any],
         *,
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> PreparedPrompt:
         """Render this branch's context; ``tools`` overrides the agent's schemas."""
-        return runner.policy.prepare(
-            rs.messages, tools=runner.tools if tools is None else tools
+        return agent.policy.prepare(
+            rs.messages, tools=agent.tools if tools is None else tools
         )
 
     def record_reply(
         self,
         result: GenerateResult,
         messages: list[Message],
-        runner: Agent[Any, Any],
+        agent: Agent[Any, Any],
     ) -> None:
         """Append the generated reply to the branch's live conversation."""
-        runner.policy.record_reply(result, messages)
+        agent.policy.record_reply(result, messages)
 
     def schemas(self) -> tuple[dict[str, Any], ...]:
         return ()
 
-    async def initialize(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
+    async def initialize(self, rs: AnyRollout, agent: Agent[Any, Any]) -> AnyRollout:
         """Check the root state; a trigger refuses state fields it cannot read."""
         if self.trigger is not None:
             self.trigger.check(rs.state)
@@ -187,18 +187,18 @@ class ContextManager[S]:
         self,
         rs: AnyRollout,
         action: Any,
-        runner: Agent[Any, Any],
+        agent: Agent[Any, Any],
         *,
         ending: bool,
     ) -> Applied:
         if not ending and isinstance(action, ToolTurn):
-            runner.services.usage.setdefault(rs.episode_id, Usage()).tool_calls += len(
+            agent.services.usage.setdefault(rs.episode_id, Usage()).tool_calls += len(
                 action.tool_calls
             )
         transition = (
-            await runner.env.finish(rs.state, action)
+            await agent.env.finish(rs.state, action)
             if ending
-            else await runner.env.step(rs.state, action, workspace=rs.workspace)
+            else await agent.env.step(rs.state, action, workspace=rs.workspace)
         )
         messages = () if ending or transition.done else transition.messages
         return Applied(
@@ -226,18 +226,18 @@ class AppendOnly(ContextManager[Any]):
     def __init__(self, *, continuation: bool = False) -> None:
         self.continuation = continuation
 
-    def _check_policy(self, runner: Agent[Any, Any]) -> None:
+    def _check_policy(self, agent: Agent[Any, Any]) -> None:
         if self.continuation and (
-            not runner.policy.provides_exact_tokens
-            or runner.policy.provides_native_tool_calls
+            not agent.policy.provides_exact_tokens
+            or agent.policy.provides_native_tool_calls
         ):
             raise ValueError("Token continuation requires an exact token-input policy")
 
-    async def initialize(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
-        self._check_policy(runner)
+    async def initialize(self, rs: AnyRollout, agent: Agent[Any, Any]) -> AnyRollout:
+        self._check_policy(agent)
         return rs
 
-    def _boundary(self, messages: Sequence[Message], runner: Agent[Any, Any]) -> int:
+    def _boundary(self, messages: Sequence[Message], agent: Agent[Any, Any]) -> int:
         boundary = next(
             (
                 i
@@ -259,7 +259,7 @@ class AppendOnly(ContextManager[Any]):
                 type(token) is not int for token in tokens
             ):
                 raise ValueError("Continuation metadata must contain integer token IDs")
-            if message.get("content") != runner.policy.decode(
+            if message.get("content") != agent.policy.decode(
                 tokens, skip_special_tokens=True
             ):
                 raise ValueError(
@@ -270,17 +270,17 @@ class AppendOnly(ContextManager[Any]):
     def prepare(
         self,
         rs: AnyRollout,
-        runner: Agent[Any, Any],
+        agent: Agent[Any, Any],
         *,
         tools: Sequence[dict[str, Any]] | None = None,
     ) -> PreparedPrompt:
         """Render chat context, or append exact segments to the initial prompt."""
         if not self.continuation:
-            return super().prepare(rs, runner, tools=tools)
-        self._check_policy(runner)
-        boundary = self._boundary(rs.messages, runner)
-        initial = runner.policy.prepare(
-            rs.messages[:boundary], tools=runner.tools if tools is None else tools
+            return super().prepare(rs, agent, tools=tools)
+        self._check_policy(agent)
+        boundary = self._boundary(rs.messages, agent)
+        initial = agent.policy.prepare(
+            rs.messages[:boundary], tools=agent.tools if tools is None else tools
         )
         tokens = initial.tokens + tuple(
             token
@@ -298,7 +298,7 @@ class AppendOnly(ContextManager[Any]):
         self,
         result: GenerateResult,
         messages: list[Message],
-        runner: Agent[Any, Any],
+        agent: Agent[Any, Any],
     ) -> None:
         """Keep exact token IDs with each assistant segment in continuation mode."""
         if self.continuation and (
@@ -307,7 +307,7 @@ class AppendOnly(ContextManager[Any]):
             or result.native_output
         ):
             raise ValueError("Token continuation requires an exact text completion")
-        super().record_reply(result, messages, runner)
+        super().record_reply(result, messages, agent)
         if self.continuation:
             messages[-1]["focus_continuation_tokens"] = tuple(result.tokens)
 
@@ -344,7 +344,7 @@ class ContextTools(ContextManager[Any]):
         rs: AnyRollout,
         name: str,
         arguments: dict[str, Any],
-        runner: Agent[Any, Any],
+        agent: Agent[Any, Any],
     ) -> tuple[AnyRollout, str, str]:
         raise NotImplementedError
 
@@ -352,7 +352,7 @@ class ContextTools(ContextManager[Any]):
         self,
         rs: AnyRollout,
         action: Any,
-        runner: Agent[Any, Any],
+        agent: Agent[Any, Any],
         *,
         ending: bool,
     ) -> Applied:
@@ -364,13 +364,13 @@ class ContextTools(ContextManager[Any]):
             or not isinstance(action, ToolTurn)
             or not any(c.name in contracts for c in action.tool_calls)
         ):
-            return await super().apply(rs, action, runner, ending=ending)
+            return await super().apply(rs, action, agent, ending=ending)
         # Native adapters require the active call and all of its replies to remain
         # contiguous. Edit only settled context, then restore this exchange intact.
         # History still records every original message at its stable index.
         exchange: tuple[Message, ...] = ()
         exchange_refs: tuple[int | None, ...] = ()
-        if runner.policy.provides_native_tool_calls and rs.messages[-1].get(
+        if agent.policy.provides_native_tool_calls and rs.messages[-1].get(
             "tool_calls"
         ):
             exchange = rs.messages[-1:]
@@ -403,7 +403,7 @@ class ContextTools(ContextManager[Any]):
                 if missing:
                     raise ContextError(f"missing arguments: {sorted(missing)}")
                 candidate, text, effect_kind = await self.operation(
-                    rs, call.name, arguments, runner
+                    rs, call.name, arguments, agent
                 )
                 # Complete pending responses provisionally for validation only.
                 # Commit neither context nor execution state if the edit is invalid.
@@ -415,7 +415,7 @@ class ContextTools(ContextManager[Any]):
                         *(tool_reply(c, "") for c in action.tool_calls[index:]),
                     )
                 try:
-                    runner.policy.validate_context(context)
+                    agent.policy.validate_context(context)
                 except ValueError as exc:
                     raise ContextError(str(exc)) from exc
                 rs, kind = candidate, effect_kind

@@ -7,10 +7,8 @@ from typing import Any
 
 import pytest
 
-from focus import (
-    Critic,
-    VLLMCritic,
-)
+from focus import Critic
+from focus.backends import VLLMCritic
 from tests.helpers import rollout
 
 

@@ -10,18 +10,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from focus import (
-    Agent,
-    NullWorkspace,
+from focus import Agent, Summarize
+from focus.backends import (
     OpenAIChatPolicy,
     OpenAIResponsesPolicy,
     Policy,
     PolicyFormat,
     SamplingParams,
-    Summarize,
     TinkerPolicy,
     VLLMPolicy,
 )
+from focus.extend import NullWorkspace
 from focus.generation import GenerateResult, NativeToolCall
 from focus.generation.parsing import TextActionParser
 from focus.harness import format_transcript

@@ -148,7 +148,7 @@ class Policy[A]:
 
     Backends implement ``agenerate_tokens`` or, for corporate APIs, ``agenerate``.
     A custom token policy may instead supply a completion callable. No codec or parser
-    is independently selected by the runner. Remote vLLM is still token-native.
+    is independently selected by the agent. Remote vLLM is still token-native.
     """
 
     provides_exact_tokens = True

@@ -24,13 +24,20 @@ class Effect:
 
 
 @runtime_checkable
-class CheckpointPolicy(Protocol):
+class BranchPoints(Protocol):
+    """Which completed states search may continue from.
+
+    Implement :meth:`eligible`; the agent calls it after every decision.
+    """
+
     def eligible(self, state: AnyRollout) -> bool:
         """Whether the completed state is a candidate for another continuation."""
         ...
 
 
 class SparseCheckpoints:
+    """The root, and the states that end a compaction or context edit."""
+
     def eligible(self, state: AnyRollout) -> bool:
         if not state.turns:
             return True
@@ -47,5 +54,7 @@ class SparseCheckpoints:
 
 
 class EveryDecision:
+    """Every live state after every decision."""
+
     def eligible(self, state: AnyRollout) -> bool:
         return True

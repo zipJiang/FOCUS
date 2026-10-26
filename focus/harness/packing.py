@@ -25,7 +25,7 @@ turn, would make ``spans`` stop indexing the turn log. A zero-token pack costs n
 to carry and nothing reads it (:func:`~focus.export.spans_of` keeps only packs that hold
 tokens), so the emptiness stays where it came from instead of turning into a gap.
 
-The runner produces exactly one such turn, and on purpose: the marker a silent fold
+The agent produces exactly one such turn, and on purpose: the marker a silent fold
 leaves (:meth:`~focus.harness.agent.Agent._fold`), which is how a fold that
 generated nothing is still visible in the log. It packs alone -- its tag flushes the
 task turns either side of it -- into a pack with spans and no tokens, and every reader
@@ -33,7 +33,7 @@ of a pack is stated over its spans for that reason. Beyond it, this is for a log
 assembled by other means: a test, an import, a backend that reported an empty
 ``prefix_tokens`` against an empty ``cond``.
 
-No render fallback lives here: the runner sends the backend a token list and records
+No render fallback lives here: the agent sends the backend a token list and records
 exactly that list as the turn's ``prefix``, so packing never has to guess where a
 completion sat inside a re-render.
 """
