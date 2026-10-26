@@ -40,6 +40,8 @@ class HermesToolCallParser(ActionParser[ToolTurn]):
     every other tool dialect; this parser is only :func:`_parse_call`, the JSON body.
     """
 
+    action = "tool"
+
     def parse(self, result: GenerateResult) -> ToolTurn:
         return tool_turn(result.text, _parse_call)
 

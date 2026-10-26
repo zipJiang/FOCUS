@@ -64,10 +64,12 @@ class Env[S, A](ABC):
     tool I/O. Override validate_workspace() for task-specific storage requirements.
     """
 
-    #: The action kind :meth:`step` expects: ``"text"`` (the reply's text) or
-    #: ``"tool"`` (a :class:`~focus.generation.parsing.ToolTurn`). An agent whose
-    #: policy format was resolved from the model name picks the matching parser.
-    action: Literal["text", "tool"] = "text"
+    #: The action kind :meth:`step` expects: ``"text"`` (the reply's text; the
+    #: default), ``"tool"`` (a :class:`~focus.generation.parsing.ToolTurn`), or
+    #: ``None`` for whatever the agent's parser produces. A text environment reads text
+    #: even from a policy whose format parses tool calls; a tool environment needs a
+    #: tool-call parser.
+    action: Literal["text", "tool"] | None = "text"
 
     @abstractmethod
     async def reset(self) -> S:

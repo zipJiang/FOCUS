@@ -279,7 +279,7 @@ def test_a_policy_is_a_value_and_is_shared_rather_than_copied() -> None:
         policy.version = "other"  # type: ignore[misc]
 
 
-def _resolved_policy() -> Any:
+def _hermes_policy() -> Any:
     from focus.backends import Policy, PolicyFormat
     from focus.codec import ChatCodec
     from focus.generation.parsing import HermesToolCallParser
@@ -287,45 +287,87 @@ def _resolved_policy() -> Any:
 
     gen = ScriptedGenerator(["go"])
     format = PolicyFormat(
-        "m:hermes",
-        ChatCodec(FakeChatTokenizer()),
-        HermesToolCallParser(),
-        resolved=True,
+        "m:hermes", ChatCodec(FakeChatTokenizer()), HermesToolCallParser()
     )
     return Policy(format=format, complete=gen.agenerate_tokens)
 
 
-def test_an_agent_picks_the_parser_for_a_resolved_format() -> None:
+def test_the_parser_follows_the_declared_action_kinds() -> None:
     from focus import Agent, Segments
     from focus.backends import TokenChunkParser
-    from focus.generation.parsing import HermesToolCallParser, TextActionParser
+    from focus.generation.parsing import TextActionParser
+    from focus.harness.compaction import FoldEnv
     from tests.helpers import SubmitEnv, ToyEnv
 
-    policy = _resolved_policy()
+    policy = _hermes_policy()
     tool_agent = Agent(policy=policy, env=SubmitEnv([]), system_prompt="sys")
     text_agent = Agent(policy=policy, env=ToyEnv(), system_prompt="sys")
     chunk_agent = Agent(
         policy=policy, env=ToyEnv(), system_prompt="sys", context=Segments(8)
     )
 
-    assert tool_agent.policy is policy  # tools keep the model's dialect
-    assert isinstance(text_agent.policy.format.parser, TextActionParser)
-    assert isinstance(chunk_agent.policy.format.parser, TokenChunkParser)
-    assert text_agent.policy.format.codec is policy.format.codec
-    # a fold over a tool world gets the dialect back, whatever the task speaks
-    from focus.harness.compaction import FoldEnv
+    class Anything(ToyEnv):
+        action = None
 
+    open_agent = Agent(policy=policy, env=Anything(), system_prompt="sys")
+
+    assert tool_agent.parser is policy.format.parser  # tools keep the dialect
+    assert isinstance(text_agent.parser, TextActionParser)
+    assert isinstance(chunk_agent.parser, TokenChunkParser)
+    assert open_agent.parser is policy.format.parser
+    # a fold over a tool world reads the dialect, whatever the task speaks
     fold = text_agent.derive(
         env=FoldEnv(()), system_prompt="s", max_steps=1, finish_prompt=None
     )
-    assert isinstance(fold.policy.format.parser, HermesToolCallParser)
+    assert fold.parser is policy.format.parser
 
 
-def test_an_explicit_format_is_left_alone() -> None:
+async def test_an_agent_never_copies_its_policy() -> None:
+    """Choosing a parser leaves the policy's identity, routing, and accounting alone."""
     from focus import Agent
-    from focus.generation.parsing import HermesToolCallParser
-    from tests.helpers import ScriptedGenerator, ToyEnv, toy_policy
+    from focus.execution.inference import policy_key
+    from focus.harness.compaction import FoldEnv
+    from tests.helpers import ToyEnv
 
-    policy = toy_policy(ScriptedGenerator(["go"]), parser=HermesToolCallParser())
-    agent = Agent(policy=policy, env=ToyEnv(), system_prompt="sys")
+    policy = _hermes_policy()
+    key = policy_key(policy)
+    agent = Agent(policy=policy, env=ToyEnv(), system_prompt="sys", max_steps=1)
+    fold = agent.derive(
+        env=FoldEnv(()), system_prompt="s", max_steps=1, finish_prompt=None
+    )
     assert agent.policy is policy
+    assert fold.policy is policy
+    result = await agent.run_from("hi")
+    assert {turn.format_id for turn in result.turns} == {policy.format.name}
+    assert agent.services.inference.bind(agent.policy) == key
+
+
+def test_an_explicit_parser_wins_and_a_missing_dialect_is_refused() -> None:
+    from focus import Agent
+    from focus.backends import TextActionParser
+    from focus.generation.parsing import ActionParser, NativeToolCallParser
+    from tests.helpers import ScriptedGenerator, SubmitEnv, ToyEnv, toy_policy
+
+    class Custom(ActionParser[str]):
+        def parse(self, result):
+            return "custom"
+
+    policy = _hermes_policy()
+    custom = Custom()
+    agent = Agent(policy=policy, env=ToyEnv(), system_prompt="s", parser=custom)
+    assert agent.parser is custom
+    # an explicit parser is the caller's choice, even against the env's declaration
+    hermes = policy.format.parser
+    explicit = Agent(policy=policy, env=ToyEnv(), system_prompt="s", parser=hermes)
+    assert explicit.parser is hermes
+
+    text_policy = toy_policy(ScriptedGenerator(["go"]), parser=TextActionParser())
+    with pytest.raises(ValueError, match="SubmitEnv needs tool actions"):
+        Agent(policy=text_policy, env=SubmitEnv([]), system_prompt="s")
+    with pytest.raises(ValueError, match="structured tool-call channel"):
+        Agent(
+            policy=policy,
+            env=SubmitEnv([]),
+            system_prompt="s",
+            parser=NativeToolCallParser(),
+        )

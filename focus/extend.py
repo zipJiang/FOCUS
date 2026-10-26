@@ -5,6 +5,7 @@ Subclass these to add a search priority (:class:`Priority`), an actor recipe
 tools (:class:`BaseTool`), workspaces, branch-point rules, or persistence.
 """
 
+from focus.generation.parsing.base import ActionKind
 from focus.harness.agent import DEFAULT_FINISH_PROMPT
 from focus.harness.checkpoint import BranchPoints, EveryDecision, SparseCheckpoints
 from focus.harness.context import (
@@ -47,7 +48,8 @@ __all__ = [
     "TreeValues",
     "NodeValues",
     "tree_values",
-    # Context management
+    # Context management and actions
+    "ActionKind",
     "ContextManager",
     "ContextTools",
     "ContextError",

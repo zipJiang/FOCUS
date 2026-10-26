@@ -31,6 +31,8 @@ class NativeToolCallParser(ActionParser[ToolTurn]):
     :class:`~focus.harness.tools.environment.ToolEnv`.
     """
 
+    action = "tool"
+
     #: The actions are not in the tokens -- see the module docstring.
     trainable = False
     requires_native_channel = True

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from copy import copy, deepcopy
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from focus.codec import ChatCodec, HFTokenizer, Message
@@ -19,17 +19,16 @@ if TYPE_CHECKING:
 class PolicyFormat[A]:
     """Explicit, immutable tokenizer/template/parser binding for one model artifact.
 
-    The codec renders messages as model tokens. The parser independently defines
-    the environment action. Context managers choose which prompt to prepare.
-    Known model families resolve through :meth:`resolve`; an agent then picks the
-    action parser its environment and context manager need.
+    The codec renders messages as model tokens. The parser is the model's own way of
+    expressing actions -- its tool-call dialect, or plain text -- and the agent's
+    default parser; an agent adapts it to an environment that reads text, and
+    accepts an explicit parser of its own. Context managers choose which prompt to
+    prepare. Known model families resolve through :meth:`resolve`.
     """
 
     name: str
     codec: ChatCodec
     parser: ActionParser[A]
-    #: Built by :meth:`resolve`, so an agent may choose the action parser.
-    resolved: bool = field(default=False, compare=False)
 
     def prepare(
         self,
@@ -114,9 +113,7 @@ class PolicyFormat[A]:
 
                 tokenizer = cast(HFTokenizer, AutoTokenizer.from_pretrained(model))
         assert tokenizer is not None
-        return cls(
-            f"{model}:{profile}", ChatCodec(tokenizer), parsers[profile], resolved=True
-        )
+        return cls(f"{model}:{profile}", ChatCodec(tokenizer), parsers[profile])
 
 
 @dataclass(frozen=True)
@@ -182,18 +179,6 @@ class Policy[A]:
     @property
     def format(self) -> PolicyFormat[A]:
         return self._format
-
-    def with_parser[B](self, parser: ActionParser[B]) -> Policy[B]:
-        """The same model and client, parsing actions with ``parser``."""
-        if parser.requires_native_channel and not self.provides_native_tool_calls:
-            raise ValueError("This parser requires a structured tool-call channel")
-        derived: Any = copy(self)
-        derived._format = PolicyFormat(
-            f"{self._format.name}+{type(parser).__name__}",
-            self._format.codec,
-            parser,
-        )
-        return cast(Policy[B], derived)
 
     @property
     def model(self) -> str:

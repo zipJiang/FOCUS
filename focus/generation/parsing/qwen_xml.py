@@ -57,6 +57,8 @@ class QwenXMLToolCallParser(ActionParser[ToolTurn]):
     Hermes turn is; only :func:`_parse_call` differs.
     """
 
+    action = "tool"
+
     def parse(self, result: GenerateResult) -> ToolTurn:
         return tool_turn(result.text, _parse_call)
 

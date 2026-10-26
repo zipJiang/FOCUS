@@ -25,8 +25,7 @@ from typing import TYPE_CHECKING, Any
 from focus.codec import Message
 from focus.execution import Usage
 from focus.generation import GenerateResult, PreparedPrompt
-from focus.generation.continuation import TokenChunkParser
-from focus.generation.parsing.base import ActionParser, ToolTurn
+from focus.generation.parsing.base import ActionKind, ToolTurn
 from focus.harness.checkpoint import (
     BranchPoints,
     Effect,
@@ -140,6 +139,10 @@ class ContextManager[S]:
     max_tokens: int | None = None
     #: Whether a rollout out of steps takes a final-answer turn by default.
     final_answer: bool = True
+    #: The action kind this manager's decisions need, overriding the environment's:
+    #: ``"tokens"`` for exact segments, ``"tool"`` for context operations the model
+    #: calls. ``None`` leaves it to :attr:`~focus.harness.env.Env.action`.
+    action: ActionKind | None = None
 
     @property
     def manages_context(self) -> bool:
@@ -152,13 +155,6 @@ class ContextManager[S]:
     def branch_points(self) -> BranchPoints:
         """Where search may continue when the agent is given no branch points."""
         return SparseCheckpoints()
-
-    def action_parser(self) -> ActionParser[Any] | None:
-        """The parser a format resolved from the model name should use.
-
-        ``None`` follows the environment's :attr:`~focus.harness.env.Env.action`.
-        """
-        return None
 
     def check_policy(self, policy: Policy[Any]) -> None:
         """Refuse a policy this manager cannot render for; the agent calls it once."""
@@ -248,6 +244,8 @@ class AppendOnly(ContextManager[Any]):
 
     def __init__(self, *, continuation: bool = False) -> None:
         self.continuation = continuation
+        # Each decision continues one reply, so it is read as an exact token chunk.
+        self.action: ActionKind | None = "tokens" if continuation else None
 
     def check_policy(self, policy: Policy[Any]) -> None:
         if self.continuation and (
@@ -355,9 +353,6 @@ class Segments(AppendOnly):
     def branch_points(self) -> BranchPoints:
         return EveryDecision()
 
-    def action_parser(self) -> ActionParser[Any]:
-        return TokenChunkParser()
-
 
 class ContextTools(ContextManager[Any]):
     """Context operations the model calls as tools; mixed batches are refused.
@@ -365,6 +360,8 @@ class ContextTools(ContextManager[Any]):
     Implement :meth:`schemas` and :meth:`operation`. Each successful operation
     records a ``"context"`` effect, which branch-point policies may select.
     """
+
+    action = "tool"
 
     @property
     def manages_context(self) -> bool:

@@ -25,8 +25,12 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Literal
 
 from focus.generation.types import GenerateResult
+
+#: What an action is: reply text, a tool-calling turn, or an exact token chunk.
+type ActionKind = Literal["text", "tool", "tokens"]
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,12 @@ class ActionParser[A](ABC):
     #: :class:`~focus.generation.policy.Policy` is built.
     requires_native_channel: bool = False
 
+    #: The kind of action this parser produces: ``"text"``, ``"tool"`` (a
+    #: :class:`ToolTurn`), or ``"tokens"`` (a
+    #: :class:`~focus.generation.continuation.TokenChunk`). ``None`` marks a
+    #: task-specific action; the agent then trusts the pairing with the environment.
+    action: ActionKind | None = None
+
     @abstractmethod
     def parse(self, result: GenerateResult) -> A:
         """Return the action ``result`` expresses (or a task-defined malformed one)."""
@@ -103,6 +113,8 @@ class ActionParser[A](ABC):
 
 class TextActionParser(ActionParser[str]):
     """The trivial parser: the action is the completion text, stripped."""
+
+    action = "text"
 
     def parse(self, result: GenerateResult) -> str:
         return result.text.strip()
@@ -130,6 +142,7 @@ def tool_turn(text: str, decode: Callable[[str], ToolCall]) -> ToolTurn:
 
 __all__ = [
     "TOOL_CALL",
+    "ActionKind",
     "ActionParser",
     "TextActionParser",
     "ToolCall",

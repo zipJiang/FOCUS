@@ -827,7 +827,10 @@ async def test_a_state_without_a_round_budget_is_refused_at_the_root() -> None:
     `AttributeError` that the scheduler logged as one dead rollout among many.
     """
     runner = toy_runner(
-        ScriptedGenerator(["x"]), env=_BudgetlessEnv([]), compactor=build_budget()
+        parser=HermesToolCallParser(),
+        gen=ScriptedGenerator(["x"]),
+        env=_BudgetlessEnv([]),
+        compactor=build_budget(),
     )
 
     with pytest.raises(TypeError, match="RoundBudget"):
@@ -838,7 +841,10 @@ async def test_a_state_without_a_round_budget_is_refused_at_the_root() -> None:
 async def test_a_round_budget_left_at_its_default_is_refused_at_the_root() -> None:
     """`calls_max=0` means unconfigured, and the fold that would hang never starts."""
     runner = toy_runner(
-        ScriptedGenerator(["x"]), env=_UnconfiguredEnv([]), compactor=build_budget()
+        parser=HermesToolCallParser(),
+        gen=ScriptedGenerator(["x"]),
+        env=_UnconfiguredEnv([]),
+        compactor=build_budget(),
     )
 
     with pytest.raises(ValueError, match="calls_max"):
@@ -848,7 +854,10 @@ async def test_a_round_budget_left_at_its_default_is_refused_at_the_root() -> No
 @pytest.mark.asyncio
 async def test_a_state_that_carries_the_budget_passes_the_check() -> None:
     runner = toy_runner(
-        ScriptedGenerator(["x"]), env=_RoundEnv(2), compactor=build_budget()
+        parser=HermesToolCallParser(),
+        gen=ScriptedGenerator(["x"]),
+        env=_RoundEnv(2),
+        compactor=build_budget(),
     )
 
     rs = await runner.start("q")
@@ -859,7 +868,9 @@ async def test_a_state_that_carries_the_budget_passes_the_check() -> None:
 @pytest.mark.asyncio
 async def test_a_runner_without_a_compactor_asks_no_trigger_at_all() -> None:
     """`compactor=None` is a single unbounded context: there is no contract to check."""
-    runner = toy_runner(ScriptedGenerator(["x"]), env=_BudgetlessEnv([]))
+    runner = toy_runner(
+        ScriptedGenerator(["x"]), env=_BudgetlessEnv([]), parser=HermesToolCallParser()
+    )
 
     assert await runner.start("q") is not None
 

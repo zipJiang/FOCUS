@@ -358,10 +358,12 @@ def toy_runner(
     }
     if execution:
         kwargs["execution"] = Execution(**execution)
+    # A test that names a parser means it: the agent uses it as given.
     return Agent(
         policy=toy_policy(gen, parser=parser, version=version),
         env=env if env is not None else ToyEnv(),
         system_prompt="sys",
+        parser=parser,
         **kwargs,
     )
 

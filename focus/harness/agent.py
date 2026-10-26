@@ -29,10 +29,11 @@ from focus.generation import (
     SamplingParams,
     TokenId,
 )
+from focus.generation.continuation import TokenChunkParser
 from focus.generation.interfaces import (
     merge_sampling_params,
 )
-from focus.generation.parsing.base import TextActionParser
+from focus.generation.parsing.base import ActionParser, TextActionParser
 from focus.generation.policy import Policy, PreparedPrompt
 from focus.harness.checkpoint import (
     BranchPoints,
@@ -128,26 +129,44 @@ class Execution:
             raise ValueError("retries must be nonnegative")
 
 
-def _with_action_parser(
-    policy: Policy[Any], env: Env[Any, Any], context: ContextManager[Any]
-) -> Policy[Any]:
-    """The policy, parsing the action kind ``env`` and ``context`` expect.
+def _action_parser(
+    policy: Policy[Any],
+    env: Env[Any, Any],
+    context: ContextManager[Any],
+    parser: ActionParser[Any] | None,
+) -> ActionParser[Any]:
+    """The parser that turns ``policy``'s replies into actions.
 
-    Only a format resolved from the model name is adapted; an explicit format is
-    the caller's choice. The context manager's parser wins (exact segments parse as
-    token chunks); otherwise tool environments keep the model's tool dialect, and text
-    environments read the reply's text.
+    An explicit ``parser`` is used as given. Otherwise the policy format's own parser
+    is checked against the action kind the rollout needs -- the context manager's
+    (``Segments`` decides in token chunks) or else the environment's. Text and token
+    chunks can be read from any reply; a tool-call dialect cannot be invented, so a
+    format without one is refused where tool calls are needed. A parser or a rollout
+    that declares no kind is trusted.
     """
-    if not policy.format.resolved:
-        return policy
-    parser = context.action_parser()
-    if parser is None:
-        if env.action == "tool":
-            return policy
-        parser = TextActionParser()
-    if type(policy.format.parser) is type(parser):
-        return policy
-    return policy.with_parser(parser)
+    chosen = parser
+    if chosen is None:
+        chosen = policy.format.parser
+        wanted = context.action or env.action
+        if wanted is not None and chosen.action not in (None, wanted):
+            if wanted == "text":
+                chosen = TextActionParser()
+            elif wanted == "tokens":
+                chosen = TokenChunkParser()
+            else:
+                owner = context if context.action else env
+                raise ValueError(
+                    f"{type(owner).__name__} needs {wanted} actions, but the policy "
+                    + f"format parses {chosen.action} actions with "
+                    + f"{type(chosen).__name__}; pass parser=... or a format with a "
+                    + "tool-call dialect"
+                )
+    if chosen.requires_native_channel and not policy.provides_native_tool_calls:
+        raise ValueError(
+            f"{type(chosen).__name__} needs a backend with a structured tool-call "
+            + "channel"
+        )
+    return chosen
 
 
 def _as_fold(turn: Turn[Any]) -> Turn[Any]:
@@ -170,8 +189,11 @@ class Agent[S, A]:
     while task state and workspace live in each RolloutState. The environment
     validates workspace requirements at initialization.
 
-    ``finish_prompt`` defaults (``...``) to :data:`DEFAULT_FINISH_PROMPT`, or to no
-    final-answer turn when the context manager ends without one, as ``Segments`` does.
+    ``parser`` overrides how replies become actions; by default the agent adapts the
+    policy format's own parser to the action kind the context manager or
+    environment needs. ``finish_prompt`` defaults (``...``) to
+    :data:`DEFAULT_FINISH_PROMPT`, or to no final-answer turn when the context manager
+    ends without one, as ``Segments`` does.
     ``execution`` groups services, persistence, retries, resource budgets, and the
     generation timeout. Subclass _advance, _compact, or _finish to keep custom behavior
     within the commit/retry boundary.
@@ -193,6 +215,7 @@ class Agent[S, A]:
         on_compaction_failure: Literal["raise", "end"] = "raise",
         execution: Execution | None = None,
         actor: bool = True,
+        parser: ActionParser[A] | None = None,
     ) -> None:
         if on_compaction_failure not in ("raise", "end"):
             raise ValueError("on_compaction_failure must be 'raise' or 'end'")
@@ -204,8 +227,9 @@ class Agent[S, A]:
         self.actor = actor
         self.context: ContextManager[Any] = context or AppendOnly()
         self.context.check_policy(policy)
-        self._given_policy: Policy[Any] = policy
-        policy = _with_action_parser(policy, env, self.context)
+        self._parser: ActionParser[A] = _action_parser(
+            policy, env, self.context, parser
+        )
         if self.context.max_tokens is not None:
             sampling_params = merge_sampling_params(
                 sampling_params or SamplingParams(),
@@ -339,10 +363,15 @@ class Agent[S, A]:
     def policy(self) -> Policy[A]:
         """The model this agent drives, whole.
 
-        Read rather than reassembled: a compactor deriving a nested agent carries the
-        same object rather than four fields that could drift apart.
+        Never copied: a fold derived from this agent drives the same object, so its
+        requests share this policy's identity, routing, and capacity accounting.
         """
         return self._policy
+
+    @property
+    def parser(self) -> ActionParser[A]:
+        """How this agent turns a reply into its environment's action."""
+        return self._parser
 
     @property
     def tools(self) -> tuple[dict[str, Any], ...]:
@@ -383,7 +412,7 @@ class Agent[S, A]:
         -- pass either to override, e.g. a colder temperature for a summarizer.
         """
         return Agent(
-            policy=self._given_policy,
+            policy=self._policy,
             env=env,
             system_prompt=system_prompt,
             context=AppendOnly(),
@@ -557,7 +586,7 @@ class Agent[S, A]:
         self.services.attach_budget(rs.owner, rs.budget)
         result = await self._generate(cond, params, owner=rs.owner)
         self.context.record_reply(result, messages, self)
-        action = self._policy.parse(result)
+        action = self._parser.parse(result)
         origin = len(rs.turns)
         draft = self._turn(
             rs,
@@ -667,7 +696,7 @@ class Agent[S, A]:
             ),
             tokens=tokens,
             logprobs=lps if len(lps) == len(tokens) else None,
-            exact=self._policy.is_exact(result),
+            exact=result.exact_generation and self._parser.trainable,
             sampling_params=sampling_params,
             tag="task",
             invocation_id=rs.invocation_id,

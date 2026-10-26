@@ -25,6 +25,8 @@ class TokenChunkParser(ActionParser[TokenChunk]):
     are rejected. The generation layer validates the request's token limit.
     """
 
+    action = "tokens"
+
     def parse(self, result: GenerateResult) -> TokenChunk:
         if result.stop_reason not in {"length", "stop"}:
             raise ValueError(f"Unexpected finish reason: {result.stop_reason}")
