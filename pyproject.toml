@@ -140,6 +140,7 @@ module = [
     "openai.*",
     "tiktoken.*",
     "tinker.*",
+    "slime.*",
     "transformers.*",
     "torch.*",
     "numpy.*",

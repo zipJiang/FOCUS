@@ -1,16 +1,47 @@
-"""Adapt FOCUS collection and export to Slime's generation callback."""
+"""Plug FOCUS into Slime's rollout and training hooks.
+
+Slime owns the loop; FOCUS is called through hooks named on Slime's command line. The
+user supplies the same :data:`~focus.integrations.common.CollectorFor` as for Tinker:
+
+.. code-block:: python
+
+    generate = make_generate(collector_for, critic_sink=JsonlDirectory(path))
+    evaluate = make_evaluate(collector_for)
+
+and points Slime at them, plus this module's :func:`preserve_advantages`,
+:func:`advantages`, and :func:`sum_policy_tokens`::
+
+    --custom-generate-function-path my_task.generate
+    --custom-reward-post-process-path focus.integrations.slime.preserve_advantages
+    --custom-advantage-function-path focus.integrations.slime.advantages
+    --custom-pg-loss-reducer-function-path focus.integrations.slime.sum_policy_tokens
+
+The hooks follow Slime's customization interfaces at revision ``18868a79``. Each
+generation builds a :class:`~focus.backends.SlimePolicy` for Slime's SGLang router,
+wraps the sample as a :class:`~focus.integrations.common.Problem`, and collects it with
+a fresh collector, so concurrent prompts keep their own reference answers.
+"""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import Callable
-from typing import Any, Protocol, cast
+from collections.abc import Callable, Mapping
+from copy import copy
+from functools import lru_cache
+from types import MappingProxyType
+from typing import Any, Protocol
 
-from focus.collector import Collector
-from focus.export import CriticSampleFactory, SampleFactory
+from focus.generation.policy import PolicyFormat
+from focus.generation.slime import SlimePolicy
+from focus.harness.packing import regions
 from focus.harness.workspace import Workspace
-from focus.preparation.records import ESTIMATOR_KEY, LANE_KEY
+from focus.integrations.common import (
+    CollectorFor,
+    CriticSink,
+    Problem,
+    collect_records,
+)
+from focus.preparation.records import LANE_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -18,96 +49,228 @@ logger = logging.getLogger(__name__)
 class GenerateHook(Protocol):
     async def __call__(
         self, args: Any, sample: Any, sampling_params: Any = None
-    ) -> list[Any]: ...
-    async def aclose(self) -> None: ...
+    ) -> Any: ...
+
+
+@lru_cache(maxsize=4)
+def _tokenizer(checkpoint: str) -> Any:
+    from transformers import AutoTokenizer
+
+    return AutoTokenizer.from_pretrained(checkpoint)
+
+
+def policy_for(args: Any, *, profile: str | None = None) -> SlimePolicy:
+    """The policy Slime's router serves: ``args.hf_checkpoint`` behind its URL."""
+    from slime.utils.http_utils import post
+
+    checkpoint = args.hf_checkpoint
+    format = PolicyFormat.resolve(
+        checkpoint, tokenizer=_tokenizer(checkpoint), profile=profile
+    )
+    url = f"http://{args.sglang_router_ip}:{args.sglang_router_port}/generate"
+    return SlimePolicy(post, url, model=checkpoint, format=format)
+
+
+def problem_of(sample: Any) -> Problem:
+    """A Slime sample as a :class:`Problem`: its prompt, label, index, and metadata."""
+    return Problem(
+        prompt=sample.prompt,
+        label=getattr(sample, "label", None),
+        id=getattr(sample, "index", None),
+        metadata=MappingProxyType(dict(getattr(sample, "metadata", None) or {})),
+    )
+
+
+def to_sample(
+    record: Mapping[str, Any], source: Any, tokenizer: Any, sample_type: Any
+) -> Any:
+    """One actor record as a Slime ``Sample``, response-aligned.
+
+    The response starts at the first generated token. Later conditioning tokens -- tool
+    results, say -- stay in the response with loss mask zero. ``reward`` carries the
+    FOCUS advantage; every segment of one tree shares the source prompt's
+    ``rollout_id``.
+    """
+    if record["metadata"][LANE_KEY] != "actor":
+        raise ValueError("Only actor records belong in the policy training batch")
+    mask, tokens, logprobs = record["loss_mask"], record["tokens"], record["logprobs"]
+    if not (len(mask) == len(tokens) == len(logprobs)):
+        raise ValueError("Misaligned actor record")
+    if not any(mask):
+        raise ValueError("Expected a trainable segment")
+    start = list(mask).index(True)
+    if start == 0:
+        raise ValueError("An actor segment must follow conditioning context")
+    sample = copy(source)
+    sample.metadata = dict(source.metadata or {})
+    sample.metadata["focus"] = record["metadata"]
+    sample.tokens = list(tokens)
+    sample.response_length = len(mask) - start
+    sample.response = tokenizer.decode(sample.tokens[start:], skip_special_tokens=True)
+    sample.loss_mask = list(map(int, mask[start:]))
+    sample.rollout_log_probs = list(logprobs[start:])
+    sample.reward = float(record["reward"])
+    rollout_id = source.rollout_id if source.rollout_id is not None else source.index
+    if rollout_id is None:
+        raise ValueError(
+            "Slime must assign an index or rollout_id to the source prompt"
+        )
+    sample.rollout_id = rollout_id
+    sample.status = sample_type.Status.COMPLETED
+    return sample
 
 
 def make_generate(
-    collector_factory: Callable[[Any], Collector],
+    collector_for: CollectorFor,
     *,
-    own: bool = True,
-    to_prompt: Callable[[Any], Any] = lambda sample: sample,
-    workspace_factory: Callable[[Any], Workspace] | None = None,
-    sample_factory: SampleFactory[Any] | None = None,
-    critic_sample_factory: CriticSampleFactory[Any] | None = None,
+    profile: str | None = None,
+    critic_sink: CriticSink | None = None,
+    workspace_for: Callable[[Problem], Workspace] | None = None,
     min_abs_advantage: float | None = None,
+    allow_partial: bool = False,
 ) -> GenerateHook:
-    """Build Slime's generation callback from a collector factory.
+    """Slime's custom generate function: collect one prompt's tree with FOCUS.
 
-    The factory builds one :class:`~focus.collector.Collector` per distinct Slime
-    ``args`` object; the hook collects and exports one group per sample with it.
-    Sampling comes from the agent and the search phases; Slime's ``sampling_params``
-    argument is accepted but does not override them.
-
-    ``to_prompt`` extracts the prompt and ``workspace_factory`` creates each prompt's
-    workspace. With ``own=True``, :meth:`aclose` closes the execution services of
-    every collector the hook created, once per distinct service; pass ``False`` when an
-    enclosing context owns them. Model clients and critics stay with the factory's
-    owner. Close the hook after all active calls finish.
-
-    Actor and critic factories customize exported records. ``min_abs_advantage``
-    filters actor edges during export without changing collection or critic targets.
+    Returns the tree's actor segments as Slime ``Sample`` objects and sends its critic
+    records to ``critic_sink``. Sampling comes from the agent and the search phases;
+    Slime's ``sampling_params`` argument is accepted but does not override them.
+    ``profile`` resolves the served model's format. Collector lifecycle is the
+    factory's: each collector is used once, inside ``async with``.
     """
-    cached: tuple[Any, Collector] | None = None
-    creation = asyncio.Lock()
-    owned: list[Collector] = []
 
-    async def generate(
-        args: Any, sample: Any, sampling_params: Any = None
-    ) -> list[Any]:
-        nonlocal cached
-        async with creation:
-            if cached is None or cached[0] is not args:
-                cached = (args, collector_factory(args))
-                if own:
-                    owned.append(cached[1])
-            collector = cached[1]
-        # Another call may replace the cache while this call awaits search.
-        index = getattr(sample, "index", 0)
-        # Each prompt receives its own workspace; tree branches fork that state.
-        workspace = None if workspace_factory is None else workspace_factory(sample)
-        batch = await collector.collect(to_prompt(sample), workspace=workspace)
-        samples = batch.to_records(
-            index,
-            actor_factory=sample_factory,
-            critic_factory=critic_sample_factory,
+    async def generate(args: Any, sample: Any, sampling_params: Any = None) -> Any:
+        from slime.utils.types import Sample
+
+        del sampling_params
+        policy = policy_for(args, profile=profile)
+        problem = problem_of(sample)
+        actor, critic = await collect_records(
+            collector_for(policy, problem),
+            problem,
+            group_index=int(sample.index or 0),
+            workspace_for=workspace_for,
             min_abs_advantage=min_abs_advantage,
+            allow_partial=allow_partial,
         )
-        # Warn when a prompt contributes no samples; include collection failures.
-        logger.log(
-            logging.WARNING if not samples else logging.INFO,
-            (
-                "rollout finished group=%s samples=%d actor=%d critic=%d stats=%s "
-                + "failures=%d"
-            ),
-            index,
-            len(samples),
-            len(batch.actor),
-            len(batch.critic),
-            dict(batch.stats),
-            len(batch.failures),
+        if critic_sink is not None:
+            critic_sink(critic)
+        if not actor:
+            raise ValueError(f"FOCUS collected no actor segments for {problem.id!r}")
+        tokenizer = policy.format.codec.tokenizer
+        return [to_sample(record, sample, tokenizer, Sample) for record in actor]
+
+    return generate
+
+
+def make_evaluate(
+    collector_for: CollectorFor,
+    *,
+    profile: str | None = None,
+    workspace_for: Callable[[Problem], Workspace] | None = None,
+) -> GenerateHook:
+    """Slime's evaluation generate function: one unbranched rollout, scored.
+
+    Runs the collector's agent once from the prompt and returns a ``Sample`` whose
+    reward is the outcome -- for a correctness reward, 0 or 1 -- rather than a signed
+    advantage.
+    """
+
+    async def evaluate(args: Any, sample: Any, sampling_params: Any = None) -> Any:
+        from slime.utils.types import Sample
+
+        del sampling_params
+        policy = policy_for(args, profile=profile)
+        problem = problem_of(sample)
+        collector = collector_for(policy, problem)
+        workspace = None if workspace_for is None else workspace_for(problem)
+        async with collector:
+            endpoint = await collector.agent.run_from(
+                problem.prompt, workspace=workspace
+            )
+        packed = regions(endpoint.turns)
+        if not packed:
+            raise ValueError(f"evaluation generated nothing for {problem.id!r}")
+        last = packed[-1]
+        start = last.trainable.index(True) if any(last.trainable) else len(last.tokens)
+        result = copy(sample)
+        result.tokens = list(last.tokens)
+        result.response_length = len(last.tokens) - start
+        result.response = policy.decode(last.tokens[start:], skip_special_tokens=True)
+        result.loss_mask = list(map(int, last.trainable[start:]))
+        logprobs = last.logprobs or (0.0,) * len(last.tokens)
+        result.rollout_log_probs = list(logprobs[start:])
+        result.reward = float(endpoint.reward_outcome)
+        result.status = (
+            Sample.Status.TRUNCATED if endpoint.truncated else Sample.Status.COMPLETED
         )
-        return samples
+        return result
 
-    async def aclose() -> None:
-        nonlocal cached
-        async with creation:
-            # Collectors built for different args may share one execution service;
-            # close each service once, through a collector that uses it.
-            closing = {id(c.agent.services): c for c in owned}.values()
-            owned.clear()
-            cached = None
-            failures: list[Exception] = []
-            for collector in closing:
-                try:
-                    await collector.aclose()
-                except Exception as exc:
-                    failures.append(exc)
-            if failures:
-                raise ExceptionGroup("Slime collector cleanup failed", failures)
-
-    generate.__dict__["aclose"] = aclose
-    return cast(GenerateHook, generate)
+    return evaluate
 
 
-__all__ = ["ESTIMATOR_KEY", "LANE_KEY", "make_generate"]
+def preserve_advantages(args: Any, samples: list[Any]) -> tuple[list[float], ...]:
+    """Reward post-process hook: keep FOCUS advantages unchanged by group centering."""
+    del args
+    values = [float(sample.reward) for sample in samples]
+    return values, values
+
+
+def advantages(args: Any, rollout_data: dict[str, Any]) -> None:
+    """Advantage hook: broadcast each segment's FOCUS advantage over its tokens.
+
+    Overrides the estimator Slime's argument parser selected. Advantage normalization
+    must stay off; returns are zero because critic targets are exported separately.
+    """
+    import torch
+
+    if getattr(args, "normalize_advantages", False):
+        raise ValueError("Keep FOCUS advantages unnormalized (normalize_advantages)")
+    probabilities = (
+        rollout_data["rollout_log_probs"]
+        if args.use_rollout_logprobs
+        else rollout_data["log_probs"]
+    )
+    rollout_data["advantages"] = [
+        torch.full_like(lp, float(weight))
+        for lp, weight in zip(probabilities, rollout_data["rewards"], strict=True)
+    ]
+    rollout_data["returns"] = [torch.zeros_like(lp) for lp in probabilities]
+
+
+def sum_policy_tokens(
+    total_lengths: Any,
+    response_lengths: Any,
+    loss_masks: list[Any],
+    calculate_per_token_loss: bool = False,
+) -> Callable[[Any], Any]:
+    """Policy-loss reducer hook: sum masked token losses instead of averaging them.
+
+    Each generated token then contributes its segment's advantage once, whatever the
+    batch's total length.
+    """
+    import torch
+
+    del total_lengths, response_lengths
+    if calculate_per_token_loss:
+        raise ValueError("Use the rollout-based batch reduction with FOCUS advantages")
+    mask = torch.cat(loss_masks)
+
+    def reduce(loss: Any) -> Any:
+        if loss.numel() != mask.numel():
+            raise ValueError("Expected unsplit response tokens; use context parallel 1")
+        return (loss * mask).sum()
+
+    return reduce
+
+
+__all__ = [
+    "GenerateHook",
+    "advantages",
+    "make_evaluate",
+    "make_generate",
+    "policy_for",
+    "preserve_advantages",
+    "problem_of",
+    "sum_policy_tokens",
+    "to_sample",
+]
