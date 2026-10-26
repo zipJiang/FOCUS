@@ -6,7 +6,7 @@ layers above it: an estimator pulls core, not the reverse, and where another
 rollout is worth buying is an allocator's own question, asked in
 :mod:`focus.allocation.evidence`.
 
-The runner owns the completion loop; expanders return its fold checkpoints and
+The agent owns the completion loop; expanders return its fold checkpoints and
 endpoint with the search pass that produced them.
 """
 

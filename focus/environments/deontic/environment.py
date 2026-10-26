@@ -3,7 +3,7 @@
 What one case is *run in*, with nothing about datasets, scoring or the CLI -- those are
 the benchmark adapter, which imports this. The split is the seam the benchmark
 already had: two modes drive the same world (one trajectory per case, or a whole tree),
-and both build it here through :func:`build_world` rather than each assembling a runner
+and both build it here through :func:`build_world` rather than each assembling a agent
 of its own.
 
 Three things make this a statute harness rather than a general terminal one, and all
@@ -435,7 +435,7 @@ def render_environment_state(state: DeonticState) -> str:
     )
 
 
-def build_deontic_compactor(cfg: RunConfig) -> Summarize[DeonticState]:
+def build_deontic_context(cfg: RunConfig) -> Summarize[DeonticState]:
     """Production Deontic fold: token-triggered, validated and trusted on resume."""
     return Summarize(
         trigger=PromptTokens(cfg.max_prompt_tokens),
@@ -498,19 +498,19 @@ class RunConfig:
 class World:
     """One case, assembled and ready to run: the world, its scratch, and the ask.
 
-    Three things rather than a runner alone, because a caller has to hand the other two
-    back to whatever drives the rollout -- ``runner.run_from(prompt, workspace=...)``
+    Three things rather than a agent alone, because a caller has to hand the other two
+    back to whatever drives the rollout -- ``agent.run_from(prompt, workspace=...)``
     for one trajectory, ``collector.search(prompt, workspace=...)`` for a tree --
     and assembling them twice is how the two modes would quietly drift apart.
     """
 
-    runner: Agent[DeonticState, ToolTurn]
+    agent: Agent[DeonticState, ToolTurn]
     workspace: Workspace
     prompt: str
 
 
 def build_world(case: Case, cfg: RunConfig) -> World:
-    """Corpus, tools, env, compactor, runner, workspace and user turn, for one case."""
+    """Corpus, tools, env, compactor, agent, workspace and user turn, for one case."""
     corpus = build_corpus(case)
     # Workspace exports storage (or nothing); the corpus tools own the evidence only.
     workspace: Workspace = NullWorkspace() if cfg.no_workspace else InMemoryWorkspace()
@@ -527,14 +527,14 @@ def build_world(case: Case, cfg: RunConfig) -> World:
     )
     if cfg.compaction_failure not in ("raise", "terminal_zero"):
         raise ValueError("Unknown compaction failure policy")
-    runner: Agent[DeonticState, ToolTurn] = Agent(
+    agent: Agent[DeonticState, ToolTurn] = Agent(
         policy=cfg.policy,
         env=env,
         system_prompt=build_system_prompt(cfg.tools),
         # Fold on the token budget, or once the round's tool budget is spent: exactly
         # the composition `build_budget` names, over the `RoundBudget` counters
         # `DeonticState` mixes in and `ToolEnv` charges.
-        context=AppendOnly() if cfg.no_compact else build_deontic_compactor(cfg),
+        context=AppendOnly() if cfg.no_compact else build_deontic_context(cfg),
         max_steps=cfg.max_steps,
         finish_prompt=finish_prompt(case),
         on_compaction_failure=(
@@ -542,7 +542,7 @@ def build_world(case: Case, cfg: RunConfig) -> World:
         ),
     )
     return World(
-        runner=runner,
+        agent=agent,
         workspace=workspace,
         prompt=compose_task(case, corpus, cfg.tools),
     )

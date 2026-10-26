@@ -16,7 +16,7 @@ from focus.environments.browsercomp_plus import (
     BrowserFind,
     BrowserOpen,
     RetrievalArchive,
-    make_runner,
+    make_agent,
 )
 from focus.environments.browsercomp_plus import (
     Case as BrowserCase,
@@ -80,7 +80,7 @@ async def test_deontic_world_executes_tools_and_scores_submission() -> None:
         scorer=lambda answer: float(answer == "100"),
     )
     world = build_deontic_world(case, config)
-    result = await world.runner.run_from(world.prompt, workspace=world.workspace)
+    result = await world.agent.run_from(world.prompt, workspace=world.workspace)
     assert result.done
     assert result.state.answer == "100"
     assert result.reward == 1.0
@@ -126,7 +126,7 @@ async def test_locbench_world_reads_immutable_revision_and_scores(
         max_steps=4,
     )
     world = build_locbench_world(case, repository, config)
-    result = await world.runner.run_from(world.prompt, workspace=world.workspace)
+    result = await world.agent.run_from(world.prompt, workspace=world.workspace)
     assert result.done
     assert result.reward == 1.0
     assert result.state.locations == ("src/target.py",)
@@ -156,7 +156,7 @@ async def test_browsercomp_navigation_and_runner_share_archive() -> None:
     assert opened["lines"][0]["text"].startswith("Alice")
     assert found["matches"][0]["line"] == 0
 
-    runner, _, workspace, prompt, _, schemas = make_runner(
+    agent, _, workspace, prompt, _, schemas = make_agent(
         BrowserCase("query", "Who is the answer?", ("Alice",)),
         policy(
             call("browser.search", query="answer"),
@@ -166,7 +166,7 @@ async def test_browsercomp_navigation_and_runner_share_archive() -> None:
         no_compact=True,
         max_steps=4,
     )
-    result = await runner.run_from(prompt, workspace=workspace)
+    result = await agent.run_from(prompt, workspace=workspace)
     assert result.done
     assert result.state.answer == "Alice"
     assert [schema["function"]["name"] for schema in schemas] == [

@@ -335,7 +335,7 @@ def render_environment_state(state: LocBenchState) -> str:
     )
 
 
-def build_locbench_compactor(config: RunConfig) -> Summarize[LocBenchState]:
+def build_locbench_context(config: RunConfig) -> Summarize[LocBenchState]:
     """Validated, token-triggered and tool-free production compaction."""
     return Summarize(
         trigger=PromptTokens(config.max_prompt_tokens),
@@ -356,7 +356,7 @@ def build_locbench_compactor(config: RunConfig) -> Summarize[LocBenchState]:
 
 @dataclass(frozen=True)
 class World:
-    runner: Agent[LocBenchState, ToolTurn]
+    agent: Agent[LocBenchState, ToolTurn]
     workspace: NullWorkspace
     prompt: str
 
@@ -374,7 +374,7 @@ def build_world(case: Case, repo: Repository, config: RunConfig) -> World:
         fold_horizon=config.max_steps if config.count_folds_in_horizon else None,
     )
     workspace = NullWorkspace()
-    runner = Agent(
+    agent = Agent(
         policy=config.policy,
         env=env,
         system_prompt=(
@@ -391,7 +391,7 @@ def build_world(case: Case, repo: Repository, config: RunConfig) -> World:
             "Rank distinct relevant files early; put the strongest candidates first."
         )
         + LOCALIZATION_GUIDANCE,
-        context=(build_locbench_compactor(config) if config.compact else AppendOnly()),
+        context=(build_locbench_context(config) if config.compact else AppendOnly()),
         max_steps=config.max_steps,
         finish_prompt=(
             "Investigation budget exhausted. Call submit with your ranked locations "
@@ -401,4 +401,4 @@ def build_world(case: Case, repo: Repository, config: RunConfig) -> World:
             "end" if config.compaction_failure == "terminal_zero" else "raise"
         ),
     )
-    return World(runner, workspace, case.task_prompt())
+    return World(agent, workspace, case.task_prompt())

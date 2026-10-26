@@ -8,7 +8,7 @@ from .environment import (
     State,
     grade,
     load_cases,
-    make_runner,
+    make_agent,
 )
 
 __all__ = [
@@ -21,5 +21,5 @@ __all__ = [
     "State",
     "grade",
     "load_cases",
-    "make_runner",
+    "make_agent",
 ]

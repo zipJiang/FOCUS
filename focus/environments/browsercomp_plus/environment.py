@@ -237,7 +237,7 @@ class SearchEnv(ToolEnv[State]):
         return result
 
 
-def make_runner(
+def make_agent(
     case,
     policy: Policy[ToolTurn],
     prompt_limit=14336,
@@ -281,7 +281,7 @@ def make_runner(
 
     if compaction_failure not in ("raise", "terminal_zero"):
         raise ValueError("Unknown compaction failure policy")
-    runner = Agent(
+    agent = Agent(
         policy=policy,
         env=env,
         system_prompt=SYSTEM,
@@ -294,4 +294,4 @@ def make_runner(
         if compaction_failure == "terminal_zero"
         else "raise",
     )
-    return runner, policy, NullWorkspace(), case.question, compactor, env.schemas
+    return agent, policy, NullWorkspace(), case.question, compactor, env.schemas
