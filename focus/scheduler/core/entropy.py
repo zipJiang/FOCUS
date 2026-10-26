@@ -93,14 +93,12 @@ class TokenEntropySession(RankedSession[AnyRollout]):
 
     Needs per-token logprobs: the generator must be asked for them
     (``SamplingParams(logprobs=0)``) or every node scores ``+inf`` and selection
-    degenerates to the id tie-break. ``version`` is the policy tag they were filed
-    under (the policy's :attr:`~focus.generation.policy.Policy.version`).
+    degenerates to the id tie-break.
     """
 
     def __init__(
         self,
         window: int = 8,
-        version: str = "policy",
         tags: Sequence[TurnTag] | None = ("task",),
         *,
         ledger: AllocationLedger[AnyRollout] | None = None,
@@ -109,16 +107,13 @@ class TokenEntropySession(RankedSession[AnyRollout]):
         if window < 1:
             raise ValueError("window must be >= 1")
         self._window = window
-        self._version = version
         self._tags = None if tags is None else frozenset(tags)
 
     def score(self, view: SchedulerView[AnyRollout], node: Node[AnyRollout]) -> float:
         """The node's mean child-edge windowed entropy (``inf`` with none to score)."""
         scores = []
         for child in view.children(node):
-            edge = child.payload.generated_since(
-                node.payload, self._version, tags=self._tags
-            )
+            edge = child.payload.generated_since(node.payload, tags=self._tags)
             entropy = _edge_entropy(edge, self._window)
             if entropy is not None:
                 scores.append(entropy)

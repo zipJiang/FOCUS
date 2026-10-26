@@ -66,11 +66,12 @@ async def test_behavior_logprobs_captured_per_turn_and_aligned() -> None:
     )
 
     for t in result.turns:
-        assert len(t.logprobs["policy"]) == len(t.tokens)  # aligned to the completion
-        assert all(v == -0.1 for v in t.logprobs["policy"])
+        assert t.logprobs is not None
+        assert len(t.logprobs) == len(t.tokens)  # aligned to the completion
+        assert all(v == -0.1 for v in t.logprobs)
     # sequence logprob = sum over generated tokens ("go" + "stop" = 6 of them)
-    assert logprob(result.turns, "policy") == pytest.approx(-0.1 * 6)
-    assert trainable_logprobs(result.turns, "policy") == [-0.1] * 6
+    assert logprob(result.turns) == pytest.approx(-0.1 * 6)
+    assert trainable_logprobs(result.turns) == [-0.1] * 6
 
 
 @pytest.mark.asyncio
@@ -81,7 +82,8 @@ async def test_the_packed_region_zeroes_the_mask_and_keeps_the_completions() -> 
     )
 
     seq = regions(result.turns)[0]
-    column = seq.logprobs["policy"]
+    column = seq.logprobs
+    assert column is not None
     assert len(column) == len(seq.tokens)
     assert all(
         (v == -0.1) == keep for v, keep in zip(column, seq.trainable, strict=True)
@@ -92,8 +94,8 @@ async def test_the_packed_region_zeroes_the_mask_and_keeps_the_completions() -> 
 async def test_logprobs_absent_when_the_backend_returns_none() -> None:
     result = await complete(toy_runner(ScriptedGenerator(["go", "stop"])), "hi")
 
-    assert all(t.logprobs == {} for t in result.turns)  # opt-in: nothing stored
-    assert regions(result.turns)[0].logprobs == {}  # ...and nothing invented for a pack
+    assert all(t.logprobs is None for t in result.turns)  # opt-in: nothing stored
+    assert regions(result.turns)[0].logprobs is None  # ...nothing invented for a pack
     assert trainable_text(result)  # but the tokens/mask are still present
 
 
@@ -105,10 +107,10 @@ async def test_an_empty_completion_is_scored_vacuously_not_left_unscored() -> No
     )
 
     assert result.turns[0].tokens == ()
-    assert result.turns[0].logprobs["policy"] == ()
-    # the strict reading is what an importance ratio uses: it must not raise here
-    assert logprob(result.turns, "policy") == pytest.approx(-0.5 * 4)
-    assert set(regions(result.turns)[0].logprobs) == {"policy"}
+    assert result.turns[0].logprobs == ()
+    # the strict reading is what training uses: it must not raise here
+    assert logprob(result.turns) == pytest.approx(-0.5 * 4)
+    assert regions(result.turns)[0].logprobs is not None
 
 
 @pytest.mark.asyncio
@@ -133,7 +135,7 @@ def _scored(*columns: tuple[float, ...]) -> tuple[Turn[None], ...]:
     prefix: tuple[int, ...] = (0,)
     for column in columns:
         tokens = tuple(range(len(prefix), len(prefix) + len(column)))
-        turns.append(Turn(prefix=prefix, tokens=tokens, logprobs={"policy": column}))
+        turns.append(Turn(prefix=prefix, tokens=tokens, logprobs=column))
         prefix = (*prefix, *tokens)
     return tuple(turns)
 
@@ -141,34 +143,30 @@ def _scored(*columns: tuple[float, ...]) -> tuple[Turn[None], ...]:
 def test_trainable_logprobs_reads_every_turn_in_order() -> None:
     turns = _scored((-0.1, -0.2), (-0.5,))
 
-    assert trainable_logprobs(turns, "policy") == [-0.1, -0.2, -0.5]
-    assert logprob(turns, "policy") == pytest.approx(-0.8)
-    assert trainable_logprobs(turns, "nobody") == []  # the lenient reading
+    assert trainable_logprobs(turns) == [-0.1, -0.2, -0.5]
+    assert logprob(turns) == pytest.approx(-0.8)
+    assert trainable_logprobs((Turn(prefix=(0,), tokens=(1,)),)) == []  # lenient
 
 
-def test_logprob_refuses_a_version_only_some_turns_carry() -> None:
-    """Half a channel would sum to a plausible number missing a whole turn's tokens."""
-    turns = _scored((-0.1, -0.2), (-0.5,))
-    turns[0].logprobs["anchor"] = (-0.3, -0.3)
+def test_logprob_refuses_a_turn_without_logprobs() -> None:
+    """A missing turn would sum to a plausible number short a whole turn's tokens."""
+    turns = (*_scored((-0.1, -0.2)), Turn(prefix=(0, 1, 2), tokens=(3,)))
 
-    with pytest.raises(KeyError, match="anchor"):
-        logprob(turns, "anchor")
-    assert trainable_logprobs(turns, "anchor") == [-0.3, -0.3]  # still lenient
-
-    turns[1].logprobs["anchor"] = (-0.3,)
-    assert logprob(turns, "anchor") == pytest.approx(-0.9)
+    with pytest.raises(ValueError, match="logprobs"):
+        logprob(turns)
+    assert trainable_logprobs(turns) == [-0.1, -0.2]  # still lenient
 
 
-def test_a_pack_carries_only_the_versions_every_one_of_its_turns_has() -> None:
+def test_a_pack_carries_logprobs_only_when_every_turn_has_them() -> None:
     """A fabricated 0.0 over an unscored turn would read as `p = 1` -- certainty."""
-    turns = _scored((-0.1,), (-0.5,))
-    turns[0].logprobs["anchor"] = (-0.3,)
+    scored = _scored((-0.1,), (-0.5,))
+    assert regions(scored)[0].logprobs is not None
 
-    seq = regions(turns)[0]
-    assert set(seq.logprobs) == {"policy"}  # anchor is on one turn only: not the pack's
-
-    turns[1].logprobs["anchor"] = (-0.4,)
-    assert set(regions(turns)[0].logprobs) == {"anchor", "policy"}
+    half: tuple[Turn[None], ...] = (
+        scored[0],
+        Turn(prefix=scored[1].prefix, tokens=scored[1].tokens),
+    )
+    assert regions(half)[0].logprobs is None
 
 
 def test_the_codec_round_trips_the_fake_tokenizer() -> None:

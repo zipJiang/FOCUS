@@ -579,7 +579,7 @@ async def test_a_folds_generations_are_trainable_and_its_transcript_is_masked() 
     # around them are masked out.
     assert decoded == _turn(_store("log", "detail")) + _reply("kept summary")
     assert "grown context" not in decoded  # the transcript observation is not trainable
-    assert all(t.logprobs == {} for t in result.turns)  # backend returned none
+    assert all(t.logprobs is None for t in result.turns)  # backend returned none
 
 
 @pytest.mark.asyncio
@@ -693,9 +693,8 @@ async def test_a_rollout_folds_by_deriving_the_runner_it_is_already_using() -> N
     assert ws.read("author") == "Christie"  # the fold ran the workspace's own tools
     assert [t.tag for t in folded.turns] == ["fold", "fold"]
     assert "kept summary" in folded.messages[-1]["content"]
-    # the derived runner kept the rollout's policy-version tag, so the fold's tokens
-    # are keyed like the task's and a re-scoring pass finds them where it expects.
-    assert all(set(t.logprobs) == {"v7"} for t in folded.turns)
+    # the derived runner kept the rollout's policy label on the fold's turns
+    assert all(t.policy_id == "v7" for t in folded.turns)
 
 
 def test_the_default_trigger_only_fires_past_the_token_budget() -> None:

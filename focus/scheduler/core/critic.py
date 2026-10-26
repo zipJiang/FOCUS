@@ -1,7 +1,7 @@
 """Score search checkpoints with a value model and record the predictions on nodes.
 
 The scheduler calls :class:`NodeScorer` on every chain it attaches. Each prediction is
-written as ``node.critic[version]`` together with the serialized context it scored.
+written as ``node.critic`` together with the serialized context it scored.
 """
 
 from __future__ import annotations
@@ -37,27 +37,21 @@ class ValuePrediction:
     context: str
 
 
-VALUE_CONTEXTS_KEY = "value_contexts"
-
-
 class NodeScorer[P: Payload]:
-    """A reward model, how to serialize a payload for it, and the version to file under.
+    """A value model and how to serialize a payload for it.
 
-    The three things that always travel together when anything scores a node, in one
-    object so both callers share them: the :class:`CriticScheduler` below (scoring an
-    existing tree, after the fact) and the
-    :class:`~focus.scheduler.core.scheduler.Scheduler` itself (scoring what an
-    expansion just produced, before the node reaches the frontier).
+    The :class:`~focus.scheduler.core.scheduler.Scheduler` scores what an expansion
+    just produced, before the node reaches the frontier.
 
-    Scores land in ``node.critic[version]`` and *only* there -- never in
+    Scores land in ``node.critic`` and *only* there -- never in
     ``node.mean_return``, which is backup bookkeeping over the realized return. Keeping
     the learned estimate and the observed return in separate fields is what makes one
     auditable against the other; a scorer that folded into ``mean_return`` would launder
     them together.
 
     ``serialize`` is optional and defaults to :func:`rollout_text`: rollout payloads are
-    the only ones in production, so a value head is ``NodeScorer(model=rm,
-    version=cfg.value_version)`` and nothing more. Pass one for any other payload type.
+    the only ones in production, so a value head is ``NodeScorer(model=rm)`` and
+    nothing more. Pass one for any other payload type.
 
     ``timeout`` bounds the reward-model call in seconds (``None``, the default, waits as
     long as the backend does). It is the scoring half of what
@@ -75,7 +69,6 @@ class NodeScorer[P: Payload]:
         *,
         model: RewardModel,
         serialize: Callable[[P], str] | None = None,
-        version: str,
         timeout: float | None = None,
         services: ExecutionServices | None = None,
     ) -> None:
@@ -85,7 +78,6 @@ class NodeScorer[P: Payload]:
         # rollout payloads are the only ones in production, so their renderer is the
         # default rather than something every call site has to repeat
         self._serialize: Callable[[P], str] = serialize or rollout_text  # type: ignore[assignment]
-        self.version = version
 
     async def score(self, payloads: Sequence[P]) -> list[ValuePrediction]:
         """Score ``payloads`` in one batched call (the order is preserved).
@@ -148,11 +140,10 @@ class NodeScorer[P: Payload]:
     def write(
         self, nodes: Sequence[Node[P]], scores: Sequence[ValuePrediction]
     ) -> None:
-        """File ``scores`` on ``nodes`` under this scorer's version, pairwise.
+        """File ``scores`` on ``nodes``, pairwise.
 
-        The one place a critic score reaches a node, so both callers spell the version
-        key the same way -- and so ``node.mean_return``, the backup's realized-return
-        channel, is visibly not written here.
+        The one place a critic score reaches a node -- and so ``node.mean_return``,
+        the backup's realized-return channel, is visibly not written here.
 
         ``strict``: a short list would otherwise file every score one node early and
         leave the tail silently unscored. It should be unreachable -- :meth:`score`
@@ -160,10 +151,8 @@ class NodeScorer[P: Payload]:
         caller paired a list this scorer did not produce.
         """
         for node, score in zip(nodes, scores, strict=True):
-            node.critic[self.version] = score.score
-            node.metadata.setdefault(VALUE_CONTEXTS_KEY, {})[self.version] = (
-                score.context
-            )
+            node.critic = score.score
+            node.value_context = score.context
 
 
 def rollout_text(rollout: AnyRollout) -> str:

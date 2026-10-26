@@ -84,10 +84,11 @@ class Node[P: Payload]:
     #: (every observation is a whole-episode return, so nodes at different depths stay
     #: comparable) and raw: no ``gamma``, no ``beta_step``.
     mean_return: float = 0.0
-    #: The critic's estimate of the return still *to come* (a suffix), keyed by
-    #: reward-model version and written by a ``CriticScheduler`` -- a different quantity
-    #: from :attr:`mean_return`, not a smoother one.
-    critic: dict[str, float] = field(default_factory=dict)
+    #: The critic's estimate of the return still *to come* (a suffix), or ``None``
+    #: until the node is scored -- a different quantity from :attr:`mean_return`.
+    critic: float | None = None
+    #: The serialized context the critic scored; the input of its training target.
+    value_context: str | None = None
     #: Scheduler-related, extensible per-node metadata.
     metadata: dict[str, Any] = field(default_factory=dict)
 

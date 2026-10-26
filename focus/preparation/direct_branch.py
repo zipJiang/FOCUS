@@ -14,7 +14,6 @@ from focus.preparation.base import (
 )
 from focus.preparation.records import ActorSample, CriticSample
 from focus.reward.config import RewardConfig
-from focus.scheduler.core.critic import VALUE_CONTEXTS_KEY
 from focus.scheduler.core.returns import edge_return
 from focus.scheduler.core.tree import SchedulerView
 
@@ -52,7 +51,7 @@ def direct_branch_values(
                 raise ValueError(f"terminal checkpoint {node.id} has children")
             values[node.id] = DirectBranchValue(0.0, 0.0, None, 0)
             continue
-        prior = node.critic.get(config.value_version)
+        prior = node.critic
         if prior is None or not math.isfinite(prior):
             if strict:
                 raise ValueError(
@@ -149,18 +148,13 @@ def critic_targets(
     training. Trees searched without a value model carry no critic inputs and yield
     no targets; checkpoints whose backup depends on a failed critic score are skipped.
     """
-    if not any(
-        reward_config.value_version in node.metadata.get(VALUE_CONTEXTS_KEY, {})
-        for node in view.nodes()
-    ):
+    if not any(node.value_context is not None for node in view.nodes()):
         return []
     values = direct_branch_values(view, reward_config, strict=False)
     result = []
     for node in view.nodes():
         value = values[node.id]
-        context = node.metadata.get(VALUE_CONTEXTS_KEY, {}).get(
-            reward_config.value_version
-        )
+        context = node.value_context
         # A checkpoint the critic failed to score, or whose backup depends on one,
         # has no target; the rest of a partial collection still trains the critic.
         if (
@@ -175,8 +169,6 @@ def critic_targets(
                 node_id=node.id,
                 context=context,
                 target=value.mean,
-                reward_config_id=reward_config.config_id,
-                value_version=reward_config.value_version,
                 diagnostics=MappingProxyType(
                     {
                         "prior": value.prior,

@@ -21,12 +21,9 @@ Two things force a flush:
 A turn is *in* a pack whatever it holds. A turn with an empty prefix and an empty
 completion -- nothing conditioned on, nothing generated -- still gets a span, and if it
 is alone in its pack that pack has no tokens at all. The alternative, dropping such a
-turn, would make ``spans`` stop indexing the turn log: :func:`reevaluate` fills a
-version through the spans, so a turn no pack mentions is a turn no scorer can ever
-reach, and the strict :func:`~focus.harness.turn.logprob` then raises over a
-log that was fully scored. A zero-token pack costs nothing to carry and nothing reads
-it (:func:`~focus.export.spans_of` keeps only packs that hold tokens), so the
-emptiness stays where it came from instead of turning into a gap.
+turn, would make ``spans`` stop indexing the turn log. A zero-token pack costs nothing
+to carry and nothing reads it (:func:`~focus.export.spans_of` keeps only packs that hold
+tokens), so the emptiness stays where it came from instead of turning into a gap.
 
 The runner produces exactly one such turn, and on purpose: the marker a silent fold
 leaves (:meth:`~focus.harness.runner.Runner._fold`), which is how a fold that
@@ -44,7 +41,7 @@ completion sat inside a re-render.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from focus.generation import TokenId
 from focus.harness.turn import Turn, TurnTag
@@ -62,10 +59,10 @@ class PackedSequence:
     tokens: tuple[TokenId, ...]
     #: Per-token, aligned to :attr:`tokens`: ``True`` where the model generated it.
     trainable: tuple[bool, ...]
-    #: Per-token logprobs keyed by policy version, aligned to :attr:`tokens`. A version
-    #: appears only when *every* packed turn that generated anything carries it -- see
+    #: Behavior logprobs aligned to :attr:`tokens`, with ``0.0`` at masked positions.
+    #: ``None`` unless *every* packed turn that generated anything carries them -- see
     #: ``regions``.
-    logprobs: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    logprobs: tuple[float, ...] | None = None
     #: ``False`` when any packed turn's tokens do not faithfully record what the policy
     #: did -- a re-encode of the model's text, or an action that arrived beside the
     #: tokens rather than in them (see :attr:`Turn.exact`). This *is* the record a
@@ -75,8 +72,7 @@ class PackedSequence:
     #: The tag shared by every turn in this pack -- a pack never mixes task and fold.
     tag: TurnTag = "task"
     #: ``(turn_index, start, end)`` per packed turn: where that turn's completion sits
-    #: inside :attr:`tokens`. A scorer that fills this pack's logprobs writes them back
-    #: to the turns through these offsets (:mod:`focus.harness.rescoring`).
+    #: inside :attr:`tokens`.
     spans: tuple[tuple[int, int, int], ...] = ()
     #: Keep malformed compaction supervision even below an advantage cutoff.
     retain_for_training: bool = False
@@ -86,13 +82,9 @@ class PackedSequence:
     format_id: str = ""
 
 
-def _scored(turn: Turn[object]) -> set[str]:
-    """The versions this turn really carries -- aligned to its completion, or none."""
-    return {
-        version
-        for version, lps in turn.logprobs.items()
-        if len(lps) == len(turn.tokens)
-    }
+def _scored(turn: Turn[object]) -> bool:
+    """Whether this turn carries logprobs aligned to its completion."""
+    return turn.logprobs is not None and len(turn.logprobs) == len(turn.tokens)
 
 
 def regions(turns: Sequence[Turn[object]]) -> tuple[PackedSequence, ...]:
@@ -101,8 +93,8 @@ def regions(turns: Sequence[Turn[object]]) -> tuple[PackedSequence, ...]:
     *The* region notion in this codebase: an edge is a slice of the turn log, and its
     regions are what a trainer, a scorer, or an export pass reads off that slice.
 
-    A version appears in a pack's ``logprobs`` only when **every** turn in that pack
-    that generated anything carries it. Zero-filling an unscored turn would write
+    A pack carries ``logprobs`` only when **every** turn in that pack that generated
+    anything carries them. Zero-filling an unscored turn would write
     ``0.0`` -- a logprob meaning ``p = 1``, i.e. *certain* -- across tokens nothing
     scored, so a half-scored pack would read as fully scored and confidently wrong. A
     turn whose completion is *empty* is not such a turn: it has no tokens to be wrong
@@ -137,15 +129,13 @@ def regions(turns: Sequence[Turn[object]]) -> tuple[PackedSequence, ...]:
         # about, so counting it as "unscored" would drop the pack's logprobs on account
         # of tokens that do not exist -- and one empty generate would silently unscore
         # every other turn packed with it.
-        voters = [_scored(turns[i]) for i, start, end in spans if end > start]
-        shared = set.intersection(*voters) if voters else set()
-        logprobs: dict[str, tuple[float, ...]] = {}
-        for version in sorted(shared):
+        logprobs: tuple[float, ...] | None = None
+        if all(_scored(turns[i]) for i, start, end in spans if end > start):
             column = [0.0] * len(tokens)
             for i, start, end in spans:
                 if end > start:
-                    column[start:end] = turns[i].logprobs[version]
-            logprobs[version] = tuple(column)
+                    column[start:end] = turns[i].logprobs or ()
+            logprobs = tuple(column)
         packs.append(
             PackedSequence(
                 tokens=tokens,

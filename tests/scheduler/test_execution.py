@@ -26,7 +26,6 @@ from focus.scheduler import (
     Scheduler,
 )
 from tests.helpers import (
-    VERSION,
     ScriptedGenerator,
     ToyEnv,
     rollout,
@@ -35,14 +34,14 @@ from tests.helpers import (
 )
 
 
-def fold_marker(version: str = VERSION) -> Turn[None]:
+def fold_marker() -> Turn[None]:
     """The zero-token turn a silent fold leaves -- the whole record of one.
 
     Spelled out rather than assembled inline because the empty behavior column is the
     load-bearing part: a turn that generated nothing is still *scored*, and its
     contribution is zero. The silent fold is this module's subject, so it lives here.
     """
-    return Turn(prefix=(), tokens=(), logprobs={version: ()}, tag="fold")
+    return Turn(prefix=(), tokens=(), logprobs=(), tag="fold")
 
 
 def as_runner(fake: object) -> Runner[None, Any]:
@@ -289,7 +288,7 @@ async def test_legacy_pickle_version_survives_snapshots_and_dataclass_copies(old
 async def test_current_pickle_and_copies_remain_resumable():
     restored = pickle.loads(pickle.dumps(rollout()))
     copied = replace(restored).snapshot().fork()
-    assert copied.checkpoint_version == 2
+    assert copied.checkpoint_version == 3
     assert (await ScriptedRunner("task").run(copied)).done
 
 

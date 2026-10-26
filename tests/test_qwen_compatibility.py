@@ -180,11 +180,11 @@ async def test_qwen_thinking_rewrites_preserve_original_training_tokens(
         probabilities = [
             value
             for p in packs
-            for value, keep in zip(p.logprobs["policy"], p.trainable, strict=True)
+            for value, keep in zip(p.logprobs or (), p.trainable, strict=True)
             if keep
         ]
         assert probabilities == [
-            value for t in state.turns for value in t.logprobs["policy"]
+            value for t in state.turns for value in t.logprobs or ()
         ]
         if feedback == "user":
             assert len(packs) == 2

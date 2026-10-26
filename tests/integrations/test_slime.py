@@ -57,16 +57,13 @@ def _runtime(**fields: Any) -> Runtime:
 
 def _result() -> PreparedBatch:
     """One actor record and one critic record: these tests only count what came back."""
-    span = PackedSequence(
-        tokens=(0, 1), trainable=(False, True), logprobs={"policy": (0.0, -0.1)}
-    )
+    span = PackedSequence(tokens=(0, 1), trainable=(False, True), logprobs=(0.0, -0.1))
     return PreparedBatch(
         actor=(
             ActorSample(
                 node_id=1,
                 spans=(span,),
                 group_id=0,
-                reward_config_id="rc-0",
                 estimator="grpo",
             ),
         ),
@@ -75,8 +72,6 @@ def _result() -> PreparedBatch:
                 node_id=1,
                 context="checkpoint",
                 target=1.0,
-                reward_config_id="rc-0",
-                value_version="v-base",
             ),
         ),
     )

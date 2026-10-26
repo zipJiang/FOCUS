@@ -40,8 +40,8 @@ def training_root_state(
 
         RolloutLedger(reward_config or RewardConfig()).bind(SchedulerView(state))
         state.nodes[0].metadata["test_training_fixture"] = True
-        state.nodes[0].critic["v-base"] = 0.0
-        state.nodes[0].metadata["value_contexts"] = {"v-base": "root context"}
+        state.nodes[0].critic = 0.0
+        state.nodes[0].value_context = "root context"
     return state
 
 
@@ -62,15 +62,15 @@ def stamped_child(
         evidence = state.nodes[0].metadata["rollout_evidence"]
         ledger = RolloutLedger(evidence.reward_config)
         ledger.bind(SchedulerView(state))
-        node.critic["v-base"] = 0.0
-        node.metadata["value_contexts"] = {"v-base": f"checkpoint {node.id}"}
+        node.critic = 0.0
+        node.value_context = f"checkpoint {node.id}"
         ledger.record(state.nodes[parent_id], [node])
     return node
 
 
 def region(reward: float = 0.0, done: bool = False) -> Turn[None]:
     """One task turn under the behavior channel."""
-    return turn([-1.0], reward=reward, done=done, version=VERSION)
+    return turn([-1.0], reward=reward, done=done)
 
 
 __all__ = [

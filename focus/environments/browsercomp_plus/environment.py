@@ -167,7 +167,7 @@ class BrowserRunner(Runner[State, ToolTurn]):
             # fold generations themselves remain free of environment transitions.
             terminal = Turn(
                 prefix=(),
-                logprobs={self.policy.version: ()},
+                logprobs=(),
                 transition=StepResult(next_state=state, done=True, reward_outcome=0.0),
             )
             return replace(rs, state=state, turns=rs.turns + exc.turns + (terminal,))

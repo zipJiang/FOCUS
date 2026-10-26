@@ -80,7 +80,7 @@ async def test_a_rollout_payload_needs_no_serializer_from_either_caller() -> Non
     assert "hi" in rendered
 
     bundled = EchoingReward()
-    scorer: NodeScorer[AnyRollout] = NodeScorer(model=bundled, version="rm-v2")
+    scorer: NodeScorer[AnyRollout] = NodeScorer(model=bundled)
     assert [(p.score, p.context) for p in await scorer.score([payload])] == [
         (float(len(rendered)), rendered)
     ]
@@ -119,7 +119,7 @@ class StepExpander(Expander[Toy]):
 
 
 def _scorer(model: RewardModel) -> NodeScorer[Toy]:
-    return NodeScorer(model=model, serialize=_serialize, version="rm-v1")
+    return NodeScorer(model=model, serialize=_serialize)
 
 
 def test_a_short_score_list_is_refused_rather_than_filed_off_by_one() -> None:
@@ -176,7 +176,7 @@ async def test_a_node_is_scored_before_selection_can_ever_see_it() -> None:
 
         def choose(self, view):
             seen_unscored.extend(
-                n.payload.n for n in view.frontier() if "rm-v1" not in n.critic
+                n.payload.n for n in view.frontier() if n.critic is None
             )
             return super().choose(view)
 
@@ -194,21 +194,21 @@ async def test_a_node_is_scored_before_selection_can_ever_see_it() -> None:
     # the root is the one unscored node -- nothing expanded it into being
     assert seen_unscored == [0]
     scored = [n for n in result.nodes.values() if n.id != 0]
-    assert all(n.critic == {"rm-v1": float(n.payload.n)} for n in scored)
+    assert all(n.critic == float(n.payload.n) for n in scored)
 
 
 @pytest.mark.asyncio
 async def test_scores_land_before_the_backup_runs() -> None:
     """Ordering inside _integrate: a critic-reading Backup must find them there."""
-    seen: list[dict[str, float]] = []
+    seen: list[float | None] = []
 
     class SpySession(FifoSession[Toy]):
         def completed(self, reservation, state, chain) -> None:
-            seen.extend(node.critic.copy() for node in chain)
+            seen.extend(node.critic for node in chain)
 
     await _chain_scheduler(CountingReward(), allocation=SpySession()).run(Toy(0))
 
-    assert seen == [{"rm-v1": 1.0}, {"rm-v1": 2.0}, {"rm-v1": 3.0}]
+    assert seen == [1.0, 2.0, 3.0]
 
 
 @pytest.mark.asyncio
@@ -233,9 +233,7 @@ async def test_a_stalled_reward_server_is_bounded_by_the_scorer_timeout() -> Non
     ``TimeoutError`` does not.
     """
     model = StalledReward()
-    scorer = NodeScorer(
-        model=model, serialize=_serialize, version="rm-v1", timeout=0.01
-    )
+    scorer = NodeScorer(model=model, serialize=_serialize, timeout=0.01)
 
     with pytest.raises(TimeoutError, match=r"scoring exceeded timeout=0\.01s"):
         await scorer.score([Toy(0), Toy(1)])
@@ -247,9 +245,7 @@ async def test_a_stalled_reward_server_is_bounded_by_the_scorer_timeout() -> Non
 async def test_a_scorer_timeout_is_a_scoring_failure_like_any_other() -> None:
     """A timeout reaches both callers through the ``except`` a 503 already reaches:
     the rollouts are kept and counted, only the estimate is missing."""
-    scorer = NodeScorer(
-        model=StalledReward(), serialize=_serialize, version="rm-v1", timeout=0.01
-    )
+    scorer = NodeScorer(model=StalledReward(), serialize=_serialize, timeout=0.01)
     sched = Scheduler(
         expander=ChainExpander(),
         termination=Budget(max_rollouts=1),

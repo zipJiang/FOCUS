@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from focus import (
     DirectBranchTdEstimator,
+    ExecutionServices,
     FifoAllocator,
     InMemoryWorkspace,
     RewardConfig,
@@ -40,7 +43,7 @@ def runtime(*, storage=False, version="snapshot-7"):
         value_model=DemoValue(),
         config=RolloutConfig(
             passes=(SearchPass(FifoAllocator(), budget=2, gating=WidthGating(1)),),
-            reward_config=RewardConfig(value_version="critic-3"),
+            reward_config=RewardConfig(beta_step=0.5),
             max_concurrency=1,
         ),
     )
@@ -51,10 +54,8 @@ async def test_collection_uses_runtime_versions_and_keeps_lanes_separate(estimat
     run = runtime()
     async with run.runner.services:
         batch = await collect_samples("question", run, estimator=estimator)
-    assert batch.behavior_version == "snapshot-7"
     assert batch.reward_config is run.config.reward_config
     assert batch.critic
-    assert all(record.value_version == "critic-3" for record in batch.critic)
     assert bool(batch.actor) == (estimator is not None)
     assert not batch.failures
     samples = to_samples(batch, group_index=12)
@@ -129,3 +130,38 @@ async def test_collection_preserves_failure_statistics_for_the_callers_decision(
         batch = await collect_samples("question", run, estimator=None)
     assert batch.stats["score_failures"] > 0
     assert not batch.actor
+
+
+async def test_two_policy_snapshots_share_services_and_keep_their_own_logprobs():
+    """One-batch asynchronous training collects with the previous snapshot while the
+    next one is published. Both snapshots carry the same model name and label, share
+    one execution service, and each batch exports its own behavior logprobs."""
+    services = ExecutionServices()
+
+    def snapshot(logprob: float) -> Runtime:
+        generator = ScriptedGenerator(["go", "go", "stop"], logprobs=logprob)
+        return Runtime(
+            runner=toy_runner(generator, services=services),
+            value_model=DemoValue(),
+            config=RolloutConfig(
+                passes=(SearchPass(FifoAllocator(), budget=4, gating=WidthGating(2)),),
+                max_concurrency=2,
+            ),
+        )
+
+    old, new = snapshot(-0.25), snapshot(-0.75)
+    assert old.runner.policy.version == new.runner.policy.version
+    async with services:
+        batches = await asyncio.gather(
+            collect_samples("old", old, estimator=DirectBranchTdEstimator()),
+            collect_samples("new", new, estimator=DirectBranchTdEstimator()),
+        )
+    for batch, expected in zip(batches, (-0.25, -0.75), strict=True):
+        actor = [s for s in to_samples(batch, 0) if s["metadata"]["lane"] == "actor"]
+        assert actor
+        assert {
+            lp
+            for sample in actor
+            for lp, keep in zip(sample["logprobs"], sample["loss_mask"], strict=True)
+            if keep
+        } == {expected}

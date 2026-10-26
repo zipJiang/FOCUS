@@ -45,12 +45,11 @@ class TokenEntropyAllocator(Allocator):
     def __init__(
         self,
         window: int = 8,
-        version: str = "policy",
         tags: tuple[TurnTag, ...] | None = ("task",),
     ) -> None:
         if window < 1:
             raise ValueError("window must be >= 1")
-        self.window, self.version = window, version
+        self.window = window
         self.tags = tuple(tags) if tags is not None else None
 
     def build(
@@ -58,4 +57,4 @@ class TokenEntropyAllocator(Allocator):
     ) -> AllocationSession[AnyRollout]:
         from focus.scheduler.core.entropy import TokenEntropySession
 
-        return TokenEntropySession(self.window, self.version, self.tags, ledger=ledger)
+        return TokenEntropySession(self.window, self.tags, ledger=ledger)

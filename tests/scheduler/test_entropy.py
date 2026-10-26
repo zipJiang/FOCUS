@@ -12,7 +12,6 @@ from focus.scheduler import (
     SchedulerView,
     TokenEntropySession,
 )
-from tests.helpers import VERSION
 from tests.helpers import turn as _step
 from tests.trees import root_state
 from tests.trees import search_payload as _rollout
@@ -84,9 +83,9 @@ def test_a_run_that_would_split_into_packs_still_scores_every_turn() -> None:
     """
     first, second = [0.0, 0.0], [-1.0, 0.0]
     turns: tuple[Turn[None], ...] = (
-        Turn(prefix=(1, 2), tokens=(3, 4), logprobs={VERSION: tuple(first)}),
+        Turn(prefix=(1, 2), tokens=(3, 4), logprobs=tuple(first)),
         # prefix drops the generated 4 -> not an extension of turn 1 -> a second pack
-        Turn(prefix=(1, 2, 3, 9), tokens=(7, 8), logprobs={VERSION: tuple(second)}),
+        Turn(prefix=(1, 2, 3, 9), tokens=(7, 8), logprobs=tuple(second)),
     )
     from focus.harness import regions
 
@@ -175,11 +174,6 @@ def test_without_logprobs_selection_is_deterministic_rather_than_broken() -> Non
 
     assert chosen is not None
     assert chosen.id == 0
-
-
-def test_the_edge_ignores_logprobs_filed_under_another_version() -> None:
-    state = _tree(_rollout(), _rollout(_step(LOGPROBS)))
-    assert _score(state, TokenEntropySession(version="other")) == math.inf
 
 
 def test_validation() -> None:

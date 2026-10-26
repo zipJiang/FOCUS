@@ -239,7 +239,6 @@ def turn(
     done: bool = False,
     reward: float = 0.0,
     transition: bool | None = None,
-    version: str = VERSION,
     prefix: tuple[int, ...] | None = None,
 ) -> Turn[None]:
     """One turn: ``masked`` conditioning tokens, then one generated token per logprob.
@@ -253,7 +252,7 @@ def turn(
     return Turn(
         prefix=tuple(range(masked)) if prefix is None else prefix,
         tokens=generated,
-        logprobs={version: tuple(logprobs)} if logprobs else {},
+        logprobs=tuple(logprobs) if logprobs else None,
         transition=(
             StepResult(next_state=None, reward_outcome=reward, done=done)
             if transition
@@ -537,5 +536,4 @@ async def prepared(prompt: Any, runtime: Any, *, estimator: Any = None) -> Any:
         state,
         estimator=estimator if estimator is not None else DirectBranchTdEstimator(),
         reward_config=runtime.config.reward_config,
-        behavior_version=runtime.runner.policy.version,
     )

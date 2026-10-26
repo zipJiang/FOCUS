@@ -31,7 +31,6 @@ def prepare_samples(
     *,
     estimator: AdvantageEstimator | None,
     reward_config: RewardConfig,
-    behavior_version: str,
 ) -> PreparedBatch:
     """Compute one actor recipe and the critic's branch-mean targets.
 
@@ -57,19 +56,13 @@ def prepare_samples(
             raise ValueError(
                 f"edge into node {node.id} is not trainable: inexact generated tokens"
             )
-        turns = node.payload.edge(parent.payload)
-        if any(
-            t.actor and t.policy_id and t.policy_id != behavior_version for t in turns
-        ):
-            raise ValueError("one trainable actor version is supported per preparation")
-        logprob(turns, behavior_version)  # strict even on on-policy edges
+        logprob(node.payload.edge(parent.payload))  # behavior logprobs are required
         if estimator is not None:
             actor.append(
                 ActorSample(
                     node_id=node.id,
                     spans=spans,
                     group_id=parent.id,
-                    reward_config_id=reward_config.config_id,
                     estimator=estimator.name,
                     search_pass=node.metadata.get(PASS_KEY),
                 )
@@ -86,7 +79,6 @@ def prepare_samples(
         actor=tuple(actor),
         critic=tuple(critic),
         reward_config=reward_config,
-        behavior_version=behavior_version,
         stats=MappingProxyType(dict(view.stats)),
         failures=view.failures,
     )

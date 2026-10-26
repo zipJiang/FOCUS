@@ -39,8 +39,7 @@ class Runtime:
     """
 
     runner: Runner[Any, Any]
-    #: Predicts remaining return at checkpoints. Estimates are stored under
-    #: config.reward_config.value_version.
+    #: Predicts remaining return at checkpoints.
     value_model: RewardModel | None = None
     #: Renders a checkpoint for the value model; None uses rollout_text.
     value_serialize: Callable[[AnyRollout], str] | None = None
@@ -61,21 +60,12 @@ def _expander(
 
 
 def _value_head(runtime: Runtime) -> NodeScorer[AnyRollout] | None:
-    """Build this runtime's value head, on the channel the baseline is read from.
-
-    The two halves of a value head that have to agree -- the key it files estimates
-    under and the key
-    :func:`~focus.scheduler.core.returns.value_baseline` looks them up by --
-    are one name, ``reward_config.value_version``, spelled here. Two authored strings
-    would cost nothing at runtime to name differently: every baseline would silently
-    read 0.0, exactly as if no critic had been configured at all.
-    """
+    """Build this runtime's value head, sharing the runner's execution services."""
     if runtime.value_model is None:
         return None
     return NodeScorer(
         model=runtime.value_model,
         serialize=runtime.value_serialize,
-        version=runtime.config.reward_config.value_version,
         timeout=runtime.score_timeout,
         services=runtime.runner.services,
     )
@@ -201,7 +191,7 @@ async def collect_samples(
 ) -> PreparedBatch:
     """Collect a tree and prepare actor and critic samples for a training batch.
 
-    Use the runtime's reward configuration and policy version for both collection
+    Use the runtime's reward configuration for both collection
     and preparation. ``estimator`` remains explicit: choose a training recipe, or
     pass ``None`` to prepare only critic targets. Inspect ``batch.stats`` and
     ``batch.failures`` before training; successful samples from a partial collection
@@ -218,7 +208,6 @@ async def collect_samples(
         tree,
         estimator=estimator,
         reward_config=runtime.config.reward_config,
-        behavior_version=runtime.runner.policy.version,
     )
 
 

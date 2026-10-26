@@ -40,12 +40,10 @@ async def test_store_isolates_full_state_and_tracks_branch_ancestry(store):
     assert loaded.turns == child.turns
     assert regions(loaded.turns) == regions(child.turns)
     loaded.messages[-1]["content"] = "modified"
-    loaded.turns[0].logprobs["new"] = (0.0,)
     assert isinstance(loaded.workspace, InMemoryWorkspace)
     loaded.workspace.write("leak", "bad")
     clean = store.get(child.checkpoint_id)
     assert clean.messages[-1]["content"] != "modified"
-    assert "new" not in clean.turns[0].logprobs
     assert clean.workspace.snapshot() == {}
     branch = await runner.advance(root.fork())
     history = store.list(branch.episode_id, branch.branch_id)

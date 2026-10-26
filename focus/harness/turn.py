@@ -2,7 +2,7 @@
 
 A checkpoint's log is an append-only tuple of :class:`Turn` s. Each one records the
 exact token prefix that was sent to the backend, the completion that came back, the
-version-keyed logprobs over that completion, and -- for a task turn -- the env
+behavior policy's logprobs over that completion, and -- for a task turn -- the env
 transition the action produced. Nothing is ever rewritten: a rollout advances by
 appending one more turn, so the difference between two checkpoints on one line is a
 plain tail slice.
@@ -19,13 +19,10 @@ Tags label task versus summary work for diagnostics. They do not select checkpoi
 Effects record context changes independently; invocation and actor identity determine
 training ownership. Exact generation prefixes survive all live-context edits.
 
-``logprobs`` is version-keyed exactly like
-:attr:`~focus.scheduler.core.tree.Node.critic`: the behavior policy fills its
-own key at generation time, and a scorer (:mod:`focus.harness.rescoring`)
-fills
-another policy's key later. Storing them per *turn* rather than per region is what makes
-an edge exact -- a token's logprob belongs to the generate that produced it, and no
-offset arithmetic is needed to say which tokens a fork added.
+``logprobs`` are the behavior policy's, recorded at generation time. Storing them per
+*turn* rather than per region is what makes an edge exact -- a token's logprob belongs
+to the generate that produced it, and no offset arithmetic is needed to say which
+tokens a fork added.
 """
 
 from __future__ import annotations
@@ -65,11 +62,9 @@ class Turn[S_co]:
     prefix: tuple[TokenId, ...]
     #: What the engine generated. The only trainable span this turn contributes.
     tokens: tuple[TokenId, ...] = ()
-    #: Per-token logprobs over :attr:`tokens`, keyed by policy version. Mutable dict on
-    #: a frozen record (like ``Node.critic``) -- an action's logprobs under a policy are
-    #: branch-independent, so filling one in place is safe across forks sharing this
-    #: turn.
-    logprobs: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    #: The behavior policy's per-token logprobs over :attr:`tokens`, or ``None`` when
+    #: the backend returned none (or a count that does not match the completion).
+    logprobs: tuple[float, ...] | None = None
     #: Whether :attr:`tokens` faithfully record what the policy did. Two falsifiers,
     #: one claim: a backend that re-encoded text it could not perfectly invert, or a
     #: parser whose action arrived beside the tokens (a structured tool-call channel)
@@ -87,6 +82,7 @@ class Turn[S_co]:
     #: Nonempty for malformed attempts, including after the episode penalty cap.
     compaction_issue: str = ""
     invocation_id: str = "root"
+    #: The generating policy's label, for diagnostics; see ``Policy.version``.
     policy_id: str = ""
     format_id: str = ""
     context_version: int = 0
@@ -100,37 +96,36 @@ class Turn[S_co]:
         self.__dict__.setdefault("reward_components", {})
 
 
-def trainable_logprobs(turns: Sequence[Turn[object]], version: str) -> list[float]:
-    """Every generated token's logprob under ``version``, in generation order.
+def trainable_logprobs(turns: Sequence[Turn[object]]) -> list[float]:
+    """Every generated token's behavior logprob, in generation order.
 
     Only the generated positions exist here at all: a turn stores logprobs over its
     completion, so there is no mask to apply and no ``0.0``-at-an-observation to confuse
-    with a real logprob of ``p = 1``.
-
-    Lenient about a turn that lacks ``version`` -- it contributes nothing rather than
-    raising -- because a criterion reading this treats "never scored" as "no evidence".
-    Where a missing channel is a *bug* rather than an absence (an anchor never
-    re-scored), use :func:`logprob`, which says so.
+    with a real logprob of ``p = 1``. Lenient about a turn without logprobs -- it
+    contributes nothing -- because a criterion reading this treats "never scored" as
+    "no evidence". Training reads :func:`logprob`, which refuses one.
     """
-    return [lp for turn in turns if turn.actor for lp in turn.logprobs.get(version, ())]
+    return [lp for turn in turns if turn.actor for lp in turn.logprobs or ()]
 
 
-def logprob(turns: Sequence[Turn[object]], version: str) -> float:
-    """Sequence log-probability under ``version``, strictly.
+def logprob(turns: Sequence[Turn[object]]) -> float:
+    """Sequence log-probability under the behavior policy, strictly.
 
-    Raises :class:`KeyError` if any turn lacks the channel. An importance ratio built
-    from a silently-absent anchor would read as ``exp(0) = 1`` -- "the two policies
-    agree exactly" -- which is the one wrong answer that looks reasonable.
+    Raises :class:`ValueError` if an actor turn has no logprobs, or logprobs that are
+    misaligned or non-finite: a trainer's importance ratio against the behavior policy
+    needs every generated token's probability.
     """
     total = 0.0
     for turn in turns:
         if not turn.actor:
             continue
-        if version not in turn.logprobs:
-            raise KeyError(f"turn has no logprobs for version {version!r}")
-        values = turn.logprobs[version]
-        if len(values) != len(turn.tokens) or any(not math.isfinite(v) for v in values):
-            raise ValueError("actor logprobs must be aligned and finite")
+        values = turn.logprobs
+        if (
+            values is None
+            or len(values) != len(turn.tokens)
+            or any(not math.isfinite(v) for v in values)
+        ):
+            raise ValueError("actor logprobs must be present, aligned, and finite")
         total += sum(values)
     return total
 

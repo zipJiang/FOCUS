@@ -11,8 +11,7 @@ from focus.allocation.evidence import RolloutLedger, evidence_of
 from focus.preparation.records import ActorSample
 from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerView
-from focus.scheduler.core.critic import VALUE_CONTEXTS_KEY
-from tests.helpers import VERSION, DemoValue, turn
+from tests.helpers import DemoValue, turn
 from tests.trees import search_payload, stamped_child
 from tests.trees import training_root_state as root_state
 
@@ -27,8 +26,8 @@ def setup(config=None):
 
 
 def score(node, value):
-    node.critic["v-base"] = value
-    node.metadata[VALUE_CONTEXTS_KEY] = {"v-base": f"checkpoint {node.id}"}
+    node.critic = value
+    node.value_context = f"checkpoint {node.id}"
 
 
 def slot(node):
@@ -36,7 +35,6 @@ def slot(node):
         node_id=node.id,
         group_id=node.parent_id,
         spans=(),
-        reward_config_id="rc-0",
         estimator="direct_branch_td",
     )
 
@@ -58,7 +56,6 @@ def test_refined_terminal_weights_and_critic_contexts():
         state,
         estimator=DirectBranchTdEstimator(),
         reward_config=config,
-        behavior_version=VERSION,
     )
     assert [x.weight for x in batch.actor] == pytest.approx([-1.4 / 3, 1 - 1.4 / 3])
     # the critic regresses on the branch mean; terminals have no remaining value
@@ -70,7 +67,6 @@ def test_refined_terminal_weights_and_critic_contexts():
         restored,
         estimator=DirectBranchTdEstimator(),
         reward_config=config,
-        behavior_version=VERSION,
     )
     assert batch == again
     assert pickle.loads(pickle.dumps(batch)) == batch
@@ -145,9 +141,9 @@ def test_duration_discount_and_fold_only_turns():
 def test_missing_and_nonfinite_prior_rejected(prior):
     state, view, _ledger, config = setup()
     n = stamped_child(state, 0, search_payload(turn([-1.0], done=True)))
-    view.root.critic.clear()
+    view.root.critic = None
     if prior is not None:
-        view.root.critic["v-base"] = prior
+        view.root.critic = prior
     with pytest.raises(ValueError, match="finite network value"):
         assign(view, config, n)
 
@@ -159,9 +155,7 @@ def test_incomplete_suffixes_are_not_evidence():
     ledger.record(view.root, [unfinished])
     assert not ledger.observations
     # the critic target still backs up through the unfinished branch's prior
-    critic = prepare_samples(
-        state, estimator=None, reward_config=config, behavior_version=VERSION
-    ).critic
+    critic = prepare_samples(state, estimator=None, reward_config=config).critic
     assert [r.node_id for r in critic] == [0]
     assert critic[0].target == pytest.approx(0.3)
 
@@ -173,13 +167,10 @@ def test_evidence_config_and_legacy_rejection():
             state,
             estimator=None,
             reward_config=RewardConfig(gamma=0.5),
-            behavior_version=VERSION,
         )
     view.root.metadata.pop("rollout_evidence")
     with pytest.raises(ValueError, match="analysis-only"):
-        prepare_samples(
-            state, estimator=None, reward_config=config, behavior_version=VERSION
-        )
+        prepare_samples(state, estimator=None, reward_config=config)
 
 
 def test_grpo_allows_linear_folds_but_rejects_internal_branching():
@@ -217,7 +208,7 @@ async def test_critic_export_reuses_exact_custom_scoring_inputs():
         seen.append(context)
         return context
 
-    scorer = NodeScorer(model=DemoValue(), version="v-base", serialize=serialize)
+    scorer = NodeScorer(model=DemoValue(), serialize=serialize)
     nodes = [view.root, leaf]
     scores = await scorer.score([n.payload for n in nodes])
     scorer.write(nodes, scores)
@@ -225,7 +216,6 @@ async def test_critic_export_reuses_exact_custom_scoring_inputs():
         state,
         estimator=DirectBranchTdEstimator(),
         reward_config=config,
-        behavior_version=VERSION,
     )
     # the terminal leaf has no target; the root's is the context it was scored on
     assert [r.context for r in batch.critic] == seen[:1]
@@ -238,14 +228,11 @@ def test_inexact_generation_still_provides_checkpoint_critic_supervision():
     state, _view, _ledger, config = setup()
     generated = replace(turn([-1.0], reward=1, done=True), exact=False)
     stamped_child(state, 0, search_payload(generated))
-    batch = prepare_samples(
-        state, estimator=None, reward_config=config, behavior_version=VERSION
-    )
+    batch = prepare_samples(state, estimator=None, reward_config=config)
     assert [r.node_id for r in batch.critic] == [0]
     with pytest.raises(ValueError, match="inexact"):
         prepare_samples(
             state,
             estimator=DirectBranchTdEstimator(),
             reward_config=config,
-            behavior_version=VERSION,
         )

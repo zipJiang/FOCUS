@@ -42,6 +42,7 @@ class InferenceExecutor(Protocol):
 
 
 def policy_key(policy: Policy[Any]) -> str:
+    """The name a remote coordinator routes a policy's requests by."""
     return f"{policy.model}:{policy.version}:{policy.format.name}"
 
 
@@ -53,12 +54,19 @@ class LocalInferenceExecutor:
         self._closed = False
 
     def bind(self, policy: Policy[Any]) -> str:
-        key = policy_key(policy)
-        existing = self.policies.get(key)
-        if existing is not None and existing is not policy:
-            raise ValueError(
-                f"different policies registered under the same identity: {key}"
-            )
+        """Register ``policy`` and return the key its requests carry.
+
+        Policies are told apart by object identity: two snapshots of one model with the
+        same label (one collecting while the other's successor is being trained) get
+        distinct keys rather than colliding.
+        """
+        name = policy_key(policy)
+        key, suffix = name, 1
+        while (existing := self.policies.get(key)) is not None:
+            if existing is policy:
+                return key
+            suffix += 1
+            key = f"{name}#{suffix}"
         self.policies[key] = policy
         return key
 

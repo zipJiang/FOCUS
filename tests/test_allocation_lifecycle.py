@@ -325,7 +325,7 @@ def test_configuration_creates_isolated_sessions(allocator) -> None:
     views = [SchedulerView(root_state(rollout())) for _ in range(2)]
     sessions = []
     for view in views:
-        view.root.critic[config.value_version] = 0.5
+        view.root.critic = 0.5
         sessions.append(allocator.build(view, RolloutLedger(config)))
     first, second = sessions
     assert first is not None

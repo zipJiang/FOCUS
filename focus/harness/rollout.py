@@ -40,10 +40,13 @@ from focus.harness.env import StepResult
 from focus.harness.turn import (
     Turn,
     TurnTag,
-    logprob,
     trainable_logprobs,
 )
 from focus.harness.workspace import Workspace
+
+#: Schema of persisted checkpoints. Schema 3 stores one behavior logprob column per
+#: turn; older checkpoints cannot be continued.
+CHECKPOINT_SCHEMA = 3
 
 #: The tag every task turn carries, and the default filter for anything asking about the
 #: *work* rather than about the folds that punctuated it.
@@ -99,7 +102,7 @@ class RolloutState[S]:
     #: for a metric ("what fraction were forced?") or a filter over training data.
     truncated: bool = False
     #: Persisted across pickle and dataclass copies. Version 0 is analysis-only.
-    checkpoint_version: int = field(default=2, kw_only=True)
+    checkpoint_version: int = field(default=CHECKPOINT_SCHEMA, kw_only=True)
     checkpoint_at: int = 0
     context_version: int = 0
     effects: tuple[Effect, ...] = ()
@@ -262,43 +265,18 @@ class RolloutState[S]:
     def generated_since(
         self,
         parent: RolloutState[S],
-        version: str,
         *,
         tags: Collection[TurnTag] | None = TASK,
     ) -> list[float]:
-        """Logprobs of every token generated after ``parent``, in order.
+        """Behavior logprobs of every token generated after ``parent``, in order.
 
         ``tags`` restricts the edge to turns of those
         :attr:`~focus.harness.turn.Turn.tag` s (``None`` means every turn). A
         criterion about the *task* work reads ``("task",)`` so the tokens of an agentic
         fold -- a summary written under a different prompt -- do not stand in for
-        uncertainty about the task.
-
-        Silent about an unscored turn (no ``version`` key yields nothing), because a
-        criterion reading this treats "never scored" as "no evidence". Where a missing
-        channel is a *bug* rather than an absence -- an anchor never re-scored, say --
-        use :meth:`edge_logprob`, which says so.
+        uncertainty about the task. A turn without logprobs contributes nothing.
         """
-        return trainable_logprobs(_tagged(self.edge(parent), tags), version)
-
-    def edge_logprob(
-        self,
-        parent: RolloutState[S],
-        version: str,
-        *,
-        tags: Collection[TurnTag] | None = None,
-    ) -> float:
-        """This edge's sequence log-probability under ``version``, strictly.
-
-        Raises if any turn on the edge was never scored under ``version``, like
-        :func:`~focus.harness.turn.logprob`: an importance ratio built from a
-        silently-absent anchor channel would read as ``exp(0) = 1``, i.e. "the two
-        policies agree exactly" -- the one wrong answer that looks reasonable.
-
-        Defaults to *every* turn, unlike :meth:`generated_since`: an importance
-        correction is over the whole edge the policy produced, folds included.
-        """
-        return logprob(_tagged(self.edge(parent), tags), version)
+        return trainable_logprobs(_tagged(self.edge(parent), tags))
 
     @property
     def owner(self) -> Owner:
@@ -307,10 +285,10 @@ class RolloutState[S]:
 
     def check_continuation(self) -> None:
         """Reject legacy continuation while allowing historical analysis."""
-        if self.checkpoint_version != 2 or "forkable" in self.__dict__:
+        if self.checkpoint_version != CHECKPOINT_SCHEMA or "forkable" in self.__dict__:
             raise ValueError(
                 "Legacy rollout checkpoints are analysis-only; generate fresh "
-                "schema-2 rollouts before replay or continuation."
+                f"schema-{CHECKPOINT_SCHEMA} rollouts before replay or continuation."
             )
 
     def snapshot(self) -> RolloutState[S]:

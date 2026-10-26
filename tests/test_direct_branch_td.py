@@ -7,7 +7,7 @@ import pytest
 from focus import DirectBranchTdEstimator, prepare_samples
 from focus.preparation.direct_branch import direct_branch_values
 from focus.reward.config import RewardConfig
-from tests.helpers import VERSION, turn
+from tests.helpers import turn
 from tests.test_preparation_estimators import score, setup
 from tests.trees import search_payload, stamped_child
 
@@ -51,9 +51,7 @@ def test_critic_mean_is_not_actor_posterior_and_tree_is_unchanged():
     state, _view, config, b = example(kappa=1)
     before = pickle.dumps(state)
     estimator = DirectBranchTdEstimator()
-    batch = prepare_samples(
-        state, estimator=estimator, reward_config=config, behavior_version=VERSION
-    )
+    batch = prepare_samples(state, estimator=estimator, reward_config=config)
     assert pickle.dumps(state) == before
     assert estimator.name == "direct_branch_td"
     targets = {r.node_id: r for r in batch.critic}
@@ -85,7 +83,6 @@ def test_bootstrap_leaf_without_target_and_fold_duration_discount():
         state,
         estimator=DirectBranchTdEstimator(),
         reward_config=config,
-        behavior_version=VERSION,
     )
     assert [r.node_id for r in batch.critic] == [0]
     assert batch.actor[0].diagnostics["duration"] == 2
@@ -95,7 +92,7 @@ def test_bootstrap_leaf_without_target_and_fold_duration_discount():
 def test_missing_or_nonfinite_successor_prior_rejected(prior):
     state, view, _, config = setup()
     child = stamped_child(state, 0, search_payload(turn([-1.0])))
-    child.critic.clear()
+    child.critic = None
     if prior is not None:
         score(child, prior)
     with pytest.raises(ValueError, match="finite network value"):

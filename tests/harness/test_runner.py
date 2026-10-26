@@ -18,7 +18,6 @@ from focus.generation import (
 from focus.generation.parsing import HermesToolCallParser, TextActionParser
 from focus.generation.policy import Policy
 from focus.harness import (
-    TASK,
     Compaction,
     CompactionResult,
     Compactor,
@@ -688,7 +687,7 @@ def test_the_edge_is_the_tail_past_the_parents_log() -> None:
     child = rollout(shared, added)
 
     assert child.edge(parent) == (added,)
-    assert child.generated_since(parent, "policy") == [-3.0]
+    assert child.generated_since(parent) == [-3.0]
     assert parent.edge(parent) == ()
 
 
@@ -706,46 +705,21 @@ def test_an_edge_against_a_non_prefix_checkpoint_is_refused() -> None:
         rollout(turn([-1.0])).edge(child)
 
 
-def test_generated_since_is_silent_about_an_unscored_channel() -> None:
+def test_generated_since_is_silent_about_an_unscored_turn() -> None:
     parent = rollout()
     child = rollout(turn([-1.0], masked=4))  # 4 conditioning tokens, 1 generated
 
-    assert child.generated_since(parent, "policy") == [-1.0]
-    assert child.generated_since(parent, "other") == []
-
-
-def test_edge_logprob_sums_the_edge_and_refuses_an_unscored_channel() -> None:
-    """A missing anchor channel must not read as `exp(0) = 1`, i.e. "policies agree"."""
-    first = turn([-1.0])
-    parent = rollout(first)
-    child = rollout(first, turn([-2.0, -0.5]))
-
-    assert child.edge_logprob(parent, "policy") == pytest.approx(-2.5)
-    with pytest.raises(KeyError, match="anchor"):
-        child.edge_logprob(parent, "anchor")
-    assert child.generated_since(parent, "anchor") == []  # the lenient reading
-
-
-def test_edge_logprob_refuses_an_edge_only_half_scored() -> None:
-    """A scored turn beside an unscored one is no scored edge: the sum would short."""
-    scored, unscored = turn([-1.0]), turn()
-    child = rollout(scored, unscored)
-
-    with pytest.raises(KeyError, match="anchor"):
-        child.edge_logprob(rollout(), "anchor")
-    with pytest.raises(KeyError, match="policy"):
-        child.edge_logprob(rollout(), "policy")  # the second turn carries nothing
+    assert child.generated_since(parent) == [-1.0]
+    assert rollout(turn()).generated_since(parent) == []
 
 
 def test_the_edge_filters_by_tag_and_counts_folds_by_default() -> None:
-    """`generated_since` is about task work; `edge_logprob` is about the whole edge."""
+    """`generated_since` is about task work unless asked for every turn."""
     parent = rollout()
     child = rollout(turn([-1.0]), turn([-2.0], tag="fold"))
 
-    assert child.generated_since(parent, "policy") == [-1.0]  # task only, by default
-    assert child.generated_since(parent, "policy", tags=None) == [-1.0, -2.0]
-    assert child.edge_logprob(parent, "policy") == pytest.approx(-3.0)
-    assert child.edge_logprob(parent, "policy", tags=TASK) == pytest.approx(-1.0)
+    assert child.generated_since(parent) == [-1.0]  # task only, by default
+    assert child.generated_since(parent, tags=None) == [-1.0, -2.0]
 
 
 def test_done_and_rewards_read_the_transitions_not_the_last_turn() -> None:

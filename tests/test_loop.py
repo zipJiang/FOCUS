@@ -47,11 +47,10 @@ from focus.harness import (
     Workspace,
 )
 from focus.integrations.slime import to_samples
-from focus.loop import Runtime, _budget, _value_head
+from focus.loop import Runtime, _budget
 from focus.preparation.records import PreparedBatch
 from focus.protocols import Summary
 from focus.reward import RewardModel, RewardResult
-from focus.reward.config import RewardConfig
 from focus.scheduler import (
     PASS_KEY,
     SchedulerState,
@@ -223,17 +222,6 @@ async def test_a_prompt_that_is_neither_text_nor_a_checkpoint_is_refused() -> No
         )
 
 
-@pytest.mark.asyncio
-async def test_the_reward_configuration_is_stamped_on_every_record() -> None:
-    runtime = _runtime(reward_config=RewardConfig(beta_step=0.25, config_id="rc-9"))
-
-    result = await prepared("solve it", runtime, estimator=DirectBranchTdEstimator())
-
-    every = result.actor
-    assert every
-    assert all(r.reward_config_id == "rc-9" for r in every)
-
-
 # -- A/B symmetry --------------------------------------------------------------------
 
 
@@ -266,8 +254,8 @@ async def test_exported_spans_keep_their_mask_aligned_to_their_tokens() -> None:
     assert spans
     for span in spans:
         assert len(span.trainable) == len(span.tokens)
-        # every column a pack carries is aligned to the pack, whichever version it is
-        assert all(len(column) == len(span.tokens) for column in span.logprobs.values())
+        # the behavior column, when present, is aligned to the pack
+        assert span.logprobs is None or len(span.logprobs) == len(span.tokens)
 
 
 @pytest.mark.asyncio
@@ -638,7 +626,6 @@ async def test_run_rollout_is_run_search_and_then_an_export() -> None:
             state,
             estimator=DirectBranchTdEstimator(),
             reward_config=piecewise.config.reward_config,
-            behavior_version=piecewise.runner.policy.version,
         ).actor
         == whole.actor
     )
@@ -647,7 +634,6 @@ async def test_run_rollout_is_run_search_and_then_an_export() -> None:
             state,
             estimator=DirectBranchTdEstimator(),
             reward_config=piecewise.config.reward_config,
-            behavior_version=piecewise.runner.policy.version,
         ).critic
         == whole.critic
     )
@@ -676,7 +662,6 @@ async def test_search_can_run_inexact_models_but_preparation_refuses_them() -> N
             state,
             estimator=DirectBranchTdEstimator(),
             reward_config=runtime.config.reward_config,
-            behavior_version=runtime.runner.policy.version,
         )
 
 
@@ -707,14 +692,8 @@ async def test_a_single_trajectory_on_an_untrainable_policy_is_untouched() -> No
 
 
 @pytest.mark.asyncio
-async def test_scoring_a_searched_tree_keeps_the_runner_s_own_channel() -> None:
-    """``score_search`` reads the behavior version off the runtime, not off a default.
-
-    It is the one thing the export cannot see in the tree, and the one a by-hand
-    ``build_result`` forgets: a result stamped ``"policy"`` for a runner that filed
-    under ``pi-7`` hands the trainer an empty logprob column beside a claim that the
-    channel is filled.
-    """
+async def test_a_labelled_policy_s_logprobs_reach_the_trainer() -> None:
+    """A policy's label is a diagnostic; its logprobs are the behavior column."""
     runtime = _runtime(runner=_runner(version="pi-7"))
     state = await run_search("solve it", runtime)
 
@@ -722,13 +701,11 @@ async def test_scoring_a_searched_tree_keeps_the_runner_s_own_channel() -> None:
         state,
         estimator=DirectBranchTdEstimator(),
         reward_config=runtime.config.reward_config,
-        behavior_version=runtime.runner.policy.version,
     )
 
-    assert result.behavior_version == "pi-7"
     assert result.actor
-    assert all(all(span.logprobs["pi-7"] for span in r.spans) for r in result.actor)
-    # and the column a trainer reads is that one, filled rather than empty
+    assert all(all(span.logprobs for span in r.spans) for r in result.actor)
+    assert {span.policy_id for r in result.actor for span in r.spans} == {"pi-7"}
     samples = to_samples(result, 0)
     assert samples
     assert all(
@@ -750,13 +727,11 @@ async def test_one_tree_scores_under_two_estimators_without_searching_twice() ->
         state,
         estimator=DirectBranchTdEstimator(),
         reward_config=runtime.config.reward_config,
-        behavior_version=runtime.runner.policy.version,
     )
     grpo = prepare_samples(
         state,
         estimator=FixedWeight(),
         reward_config=runtime.config.reward_config,
-        behavior_version=runtime.runner.policy.version,
     )
 
     assert [r.node_id for r in gae.actor] == [r.node_id for r in grpo.actor]
@@ -803,13 +778,11 @@ async def test_a_settled_tree_ships_even_though_its_lock_does_not() -> None:
             restored,
             estimator=DirectBranchTdEstimator(),
             reward_config=runtime.config.reward_config,
-            behavior_version=runtime.runner.policy.version,
         ).actor
         == prepare_samples(
             state,
             estimator=DirectBranchTdEstimator(),
             reward_config=runtime.config.reward_config,
-            behavior_version=runtime.runner.policy.version,
         ).actor
     )
     assert (
@@ -817,13 +790,11 @@ async def test_a_settled_tree_ships_even_though_its_lock_does_not() -> None:
             restored,
             estimator=DirectBranchTdEstimator(),
             reward_config=runtime.config.reward_config,
-            behavior_version=runtime.runner.policy.version,
         ).critic
         == prepare_samples(
             state,
             estimator=DirectBranchTdEstimator(),
             reward_config=runtime.config.reward_config,
-            behavior_version=runtime.runner.policy.version,
         ).critic
     )
 
@@ -897,8 +868,8 @@ async def test_every_node_the_search_makes_carries_a_baseline() -> None:
     state = await run_search("solve it", _value_runtime(LengthReward()))
 
     assert len(state.nodes) > 1
-    assert all("v-base" in node.critic for node in state.nodes.values())
-    assert state.nodes[state.root_id].critic["v-base"] > 0.0
+    assert all(node.critic is not None for node in state.nodes.values())
+    assert (state.nodes[state.root_id].critic or 0.0) > 0.0
 
 
 @pytest.mark.asyncio
@@ -939,24 +910,6 @@ async def test_network_prior_changes_td_through_the_refined_values() -> None:
         assert record.weight == pytest.approx(
             d["edge_reward"] + d["successor_value"] - d["parent_value"]
         )
-
-
-def test_the_value_head_is_built_on_the_channel_the_baseline_reads() -> None:
-    """There is no second name to get wrong.
-
-    Estimates filed under a key the baseline never reads are indistinguishable from no
-    critic at all -- every advantage silently reads a 0.0 baseline -- so the channel is
-    not authored beside the model at all: the loop spells ``value_version`` once, here.
-    """
-    runtime = _value_runtime(
-        LengthReward(), reward_config=RewardConfig(value_version="v-other")
-    )
-
-    head = _value_head(runtime)
-
-    assert head is not None
-    assert head.version == "v-other"
-    assert _value_head(_runtime(value_model=None)) is None  # no model, no head
 
 
 @pytest.mark.asyncio
@@ -1000,8 +953,7 @@ async def test_the_run_stamps_and_reads_the_runner_s_own_behavior_channel() -> N
 
     assert result.actor
     # and the logprobs are there, not an empty column beside a claim that they are
-    assert result.behavior_version == "pi-7"  # what `to_samples` reads the column by
-    assert all(all(span.logprobs["pi-7"] for span in r.spans) for r in result.actor)
+    assert all(all(span.logprobs for span in r.spans) for r in result.actor)
 
 
 @pytest.mark.asyncio

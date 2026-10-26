@@ -324,7 +324,7 @@ class LocBenchRunner(Runner[LocBenchState, ToolTurn]):
             )
             terminal = Turn(
                 prefix=(),
-                logprobs={self.policy.version: ()},
+                logprobs=(),
                 transition=StepResult(
                     next_state=state,
                     done=True,

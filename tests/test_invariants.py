@@ -44,12 +44,9 @@ from focus.preparation.records import spans_of
 from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerState, SchedulerView
 from tests.estimators import FixedWeight, RootReturn
-from tests.helpers import VERSION, rollout, turn
+from tests.helpers import rollout, turn
 from tests.trees import stamped_child
 from tests.trees import training_root_state as root_state
-
-#: A second logprob channel, written by the random logs alongside the behavior one.
-ANCHOR = "anchor"
 
 #: One test item per seed, ``CASES`` random logs inside each -- ~200 cases per
 #: invariant, at a fraction of the per-item cost of parametrizing 200 times.
@@ -101,38 +98,28 @@ def _random_prefix(
     return (next(marker), *(rng.randint(*_FILLER) for _ in range(rng.randint(0, 3))))
 
 
-def _random_columns(
-    rng: random.Random,
-    width: int,
-    versions: Sequence[str],
-    p_misaligned: float,
-) -> dict[str, tuple[float, ...]]:
-    """Per-version logprobs over a completion of ``width`` tokens -- often partial.
+def _random_column(
+    rng: random.Random, width: int, p_misaligned: float
+) -> tuple[float, ...] | None:
+    """Behavior logprobs over a completion of ``width`` tokens -- sometimes absent.
 
-    A version is missing from one turn in four, because partial coverage is the normal
-    state of a log: the behavior policy fills its own key at generation and a scorer
-    fills another one later, over a different subset of the turns.
-
+    Missing from one turn in four, as when a backend was asked for none.
     ``p_misaligned`` emits a column that does *not* line up with the completion, which
     only a defensive reader can survive: ``regions`` must refuse to count such a turn as
     scored rather than packing a ragged row.
     """
-    columns: dict[str, tuple[float, ...]] = {}
-    for version in versions:
-        if rng.random() < 0.25:
-            continue
-        length = width
-        if rng.random() < p_misaligned:
-            length = width + 1 if width == 0 else width - 1
-        columns[version] = tuple(round(-rng.random(), 4) for _ in range(length))
-    return columns
+    if rng.random() < 0.25:
+        return None
+    length = width
+    if rng.random() < p_misaligned:
+        length = width + 1 if width == 0 else width - 1
+    return tuple(round(-rng.random(), 4) for _ in range(length))
 
 
 def _random_log(
     rng: random.Random,
     *,
     max_turns: int = 6,
-    versions: Sequence[str] = (VERSION, ANCHOR),
     p_chain: float = 0.65,
     p_misaligned: float = 0.0,
     terminal: bool = False,
@@ -167,7 +154,7 @@ def _random_log(
             Turn(
                 prefix=prefix,
                 tokens=tokens,
-                logprobs=_random_columns(rng, len(tokens), versions, p_misaligned),
+                logprobs=_random_column(rng, len(tokens), p_misaligned),
                 exact=rng.random() < 0.9,
                 transition=None
                 if tag == "fold"
@@ -318,15 +305,15 @@ def test_a_pack_breaks_exactly_where_the_prefix_or_the_tag_breaks(seed: int) -> 
 
 
 @pytest.mark.parametrize("seed", SEEDS)
-def test_a_pack_carries_a_version_iff_every_generating_turn_in_it_did(
+def test_a_pack_carries_logprobs_iff_every_generating_turn_in_it_did(
     seed: int,
 ) -> None:
     """Zero-filling an unscored turn would read as ``p = 1``: confidently wrong.
 
-    So a version survives into a pack only when every turn that generated anything
-    carries it *aligned to its completion*, and the column is then exactly those turns'
-    own logprobs at their own positions. A turn with an empty completion has no column
-    to contribute and no vote: counting it would let one empty generate unscore
+    So a pack carries a column only when every turn that generated anything carries
+    one *aligned to its completion*, and the column is then exactly those turns' own
+    logprobs at their own positions. A turn with an empty completion has no column to
+    contribute and no vote: counting it would let one empty generate unscore
     everything packed with it.
     """
     rng = random.Random(seed)
@@ -334,24 +321,25 @@ def test_a_pack_carries_a_version_iff_every_generating_turn_in_it_did(
     for case in range(CASES):
         turns = _random_log(rng, p_misaligned=0.2)
         for seq in regions(turns):
-            voters = [
-                {v for v, lps in turns[i].logprobs.items() if len(lps) == end - start}
+            expected = all(
+                turns[i].logprobs is not None
+                and len(turns[i].logprobs or ()) == end - start
                 for i, start, end in seq.spans
                 if end > start
-            ]
-            expected = set.intersection(*voters) if voters else set()
-            assert set(seq.logprobs) == expected, case
-            kept += bool(expected)
+            )
+            assert (seq.logprobs is not None) == expected, case
+            kept += expected
             dropped += not expected
 
-            for version, column in seq.logprobs.items():
+            if seq.logprobs is not None:
+                column = seq.logprobs
                 assert len(column) == len(seq.tokens), case
                 flat = [column[i] for i, keep in enumerate(seq.trainable) if keep]
                 assert flat == [
                     lp
                     for i, start, end in seq.spans
                     if end > start
-                    for lp in turns[i].logprobs[version]
+                    for lp in turns[i].logprobs or ()
                 ], case
                 # the masked positions carry 0.0 -- a value no reader counts
                 assert all(
@@ -386,48 +374,16 @@ def test_the_edge_is_the_tail_slice_and_its_logprobs_are_the_edges(seed: int) ->
         parent, child, edge = _cut(rng, _random_log(rng))
 
         assert child.edge(parent) == edge, case
-        for version in (VERSION, ANCHOR):
-            assert child.generated_since(parent, version, tags=None) == [
-                lp for t in edge for lp in t.logprobs.get(version, ())
-            ], case
-            assert child.generated_since(parent, version) == [
-                lp
-                for t in edge
-                if t.tag == "task"
-                for lp in t.logprobs.get(version, ())
-            ], case
+        assert child.generated_since(parent, tags=None) == [
+            lp for t in edge for lp in t.logprobs or ()
+        ], case
+        assert child.generated_since(parent) == [
+            lp for t in edge if t.tag == "task" for lp in t.logprobs or ()
+        ], case
         assert child.tagged(None) == child.turns, case
         assert child.tagged(["fold"]) == tuple(
             t for t in child.turns if t.tag == "fold"
         ), case
-
-
-@pytest.mark.parametrize("seed", SEEDS)
-def test_edge_logprob_is_strict_where_generated_since_is_lenient(seed: int) -> None:
-    """The two readings agree on a fully scored edge, and diverge by *raising*.
-
-    An importance ratio built from a silently-absent anchor channel reads as
-    ``exp(0) = 1`` -- "the two policies agree exactly" -- which is the one wrong answer
-    that looks reasonable. So the strict reader raises where the lenient one returns a
-    short list, and where nothing is missing they are the same number.
-    """
-    rng = random.Random(seed)
-    strict = lenient = 0
-    for case in range(CASES):
-        parent, child, edge = _cut(rng, _random_log(rng))
-
-        for version in (VERSION, ANCHOR):
-            if all(version in t.logprobs for t in edge):
-                assert child.edge_logprob(parent, version) == pytest.approx(
-                    sum(child.generated_since(parent, version, tags=None))
-                ), case
-                strict += 1
-            else:
-                with pytest.raises(KeyError, match=version):
-                    child.edge_logprob(parent, version)
-                lenient += 1
-    assert strict, "no edge was ever fully scored"
-    assert lenient, "no edge ever had a missing channel"
 
 
 @pytest.mark.parametrize("seed", SEEDS)
@@ -507,14 +463,13 @@ def test_the_turn_readers_are_the_per_turn_concatenation_and_sum(seed: int) -> N
     for case in range(CASES):
         turns = _random_log(rng)
 
-        for version in (VERSION, ANCHOR):
-            flat = trainable_logprobs(turns, version)
-            assert flat == [lp for t in turns for lp in t.logprobs.get(version, ())]
-            if all(version in t.logprobs for t in turns):
-                assert logprob(turns, version) == pytest.approx(sum(flat)), case
-            else:
-                with pytest.raises(KeyError, match=version):
-                    logprob(turns, version)
+        flat = trainable_logprobs(turns)
+        assert flat == [lp for t in turns for lp in t.logprobs or ()]
+        if all(t.logprobs is not None for t in turns):
+            assert logprob(turns) == pytest.approx(sum(flat)), case
+        else:
+            with pytest.raises(ValueError, match="logprobs"):
+                logprob(turns)
 
 
 # -- 4. export -----------------------------------------------------------------------
@@ -530,10 +485,7 @@ def _random_tree(rng: random.Random, config=None) -> SchedulerState[RolloutState
         replace(
             t,
             exact=True,
-            logprobs={
-                **t.logprobs,
-                VERSION: t.logprobs.get(VERSION, (-0.5,) * len(t.tokens)),
-            },
+            logprobs=(-0.5,) * len(t.tokens) if t.logprobs is None else t.logprobs,
         )
         for t in _random_log(rng, max_turns=2)
     )
@@ -547,10 +499,9 @@ def _random_tree(rng: random.Random, config=None) -> SchedulerState[RolloutState
                 replace(
                     t,
                     exact=True,
-                    logprobs={
-                        **t.logprobs,
-                        VERSION: t.logprobs.get(VERSION, (-0.5,) * len(t.tokens)),
-                    },
+                    logprobs=(
+                        (-0.5,) * len(t.tokens) if t.logprobs is None else t.logprobs
+                    ),
                 )
                 for t in _random_log(rng, max_turns=3, terminal=rng.random() < 0.75)
             )
@@ -616,7 +567,8 @@ def _refined(
     node = state.nodes[node_id]
     if node.payload.done:
         return 0.0, None
-    prior = node.critic["v-base"]
+    prior = node.critic
+    assert prior is not None
     if not node.children:
         return prior, None
     backups = []
@@ -673,7 +625,6 @@ def test_a_record_is_the_regions_of_its_edge_and_the_return_over_it(
             view._state,
             estimator=estimator,
             reward_config=config,
-            behavior_version=VERSION,
         )
 
         expected = sorted(_exportable_ids(state))
@@ -699,7 +650,7 @@ def test_a_record_is_the_regions_of_its_edge_and_the_return_over_it(
             node = state.nodes[critic.node_id]
             _, branch_mean = _refined(state, node.id, config)
             assert critic.target == pytest.approx(branch_mean), case
-            assert critic.context == node.metadata["value_contexts"]["v-base"]
+            assert critic.context == node.value_context
 
         for record in result.actor:
             assert record.group_id == state.nodes[record.node_id].parent_id, case
@@ -741,7 +692,6 @@ def test_flattening_gives_one_sample_per_span_that_says_where_it_sits(
             state,
             estimator=RootReturn(),
             reward_config=RewardConfig(),
-            behavior_version=VERSION,
         )
 
         samples = to_samples(result, group_index=3)

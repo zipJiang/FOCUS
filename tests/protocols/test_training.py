@@ -8,7 +8,7 @@ from tests.helpers import rollout
 
 
 def test_helper_turns_are_never_trainable():
-    actor: Turn[None] = Turn(prefix=(1,), tokens=(2,), logprobs={"policy": (-0.2,)})
+    actor: Turn[None] = Turn(prefix=(1,), tokens=(2,), logprobs=(-0.2,))
     helper: Turn[None] = Turn(
         prefix=(1, 2),
         tokens=(3,),
@@ -18,7 +18,7 @@ def test_helper_turns_are_never_trainable():
         exact=False,
     )
     rs = rollout(actor, helper)
-    assert logprob(rs.turns, "policy") == pytest.approx(-0.2)
+    assert logprob(rs.turns) == pytest.approx(-0.2)
     assert not any(regions(rs.turns)[1].trainable)
 
 
@@ -30,8 +30,8 @@ def test_completion_likelihoods_are_never_fabricated(values):
         finite_logprobs(values, 1)
 
 
-@pytest.mark.parametrize("columns", [{}, {"policy": ()}, {"policy": (float("nan"),)}])
+@pytest.mark.parametrize("columns", [None, (), (float("nan"),)])
 def test_actor_likelihoods_are_strict(columns):
     turn: Turn[None] = Turn(prefix=(1,), tokens=(2,), logprobs=columns)
     with pytest.raises((KeyError, ValueError), match="logprobs"):
-        logprob([turn], "policy")
+        logprob([turn])

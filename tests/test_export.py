@@ -27,7 +27,7 @@ from focus.preparation.records import (
 from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerView
 from tests.estimators import FixedWeight, RootReturn
-from tests.helpers import VERSION, rollout, turn
+from tests.helpers import rollout, turn
 from tests.trees import stamped_child
 from tests.trees import training_root_state as root_state
 
@@ -51,7 +51,7 @@ def test_edge_spans_are_the_regions_of_the_edge_and_carry_their_tags() -> None:
     spans = edge_spans(child, parent)
 
     assert [s.tag for s in spans] == ["fold", "task"]  # the shared turn is not on it
-    assert [s.logprobs[VERSION] for s in spans] == [(-2.0,), (-3.0,)]
+    assert [s.logprobs for s in spans] == [(-2.0,), (-3.0,)]
 
 
 def test_the_critic_target_counts_task_transitions_only() -> None:
@@ -67,7 +67,6 @@ def test_the_critic_target_counts_task_transitions_only() -> None:
         view._state,
         estimator=None,
         reward_config=RewardConfig(gamma=0.5),
-        behavior_version="policy",
     )
 
     # only the terminal task turn is on the edge: the parent's 0.5 and the fold are
@@ -86,7 +85,6 @@ def test_an_estimator_fills_actor_records_over_the_same_spans() -> None:
         view._state,
         estimator=RootReturn(),
         reward_config=RewardConfig(),
-        behavior_version=VERSION,
     )
 
     assert [r.node_id for r in result.actor] == [child.id]
@@ -120,7 +118,6 @@ def test_an_estimators_diagnostics_are_frozen_on_the_way_out() -> None:
         view._state,
         estimator=leaky,
         reward_config=RewardConfig(),
-        behavior_version="policy",
     )
 
     leaky.shared_dict["advantage"] = 99.0
@@ -141,7 +138,6 @@ def test_an_unnamed_estimator_is_labelled_by_its_class() -> None:
         view._state,
         estimator=Unnamed(),
         reward_config=RewardConfig(),
-        behavior_version="policy",
     )
     assert {r.estimator for r in result.actor} == {"Unnamed"}
 
@@ -154,13 +150,11 @@ def test_repreparing_an_estimator_creates_independent_records() -> None:
         view._state,
         estimator=estimator,
         reward_config=RewardConfig(),
-        behavior_version="policy",
     )
     second = prepare_samples(
         view._state,
         estimator=estimator,
         reward_config=RewardConfig(),
-        behavior_version="policy",
     )
     assert [r.node_id for r in first.actor] == [child.id]
     assert first.actor == second.actor
@@ -180,7 +174,6 @@ def test_a_record_reports_the_trainable_size_of_the_whole_edge() -> None:
         view._state,
         estimator=RootReturn(),
         reward_config=RewardConfig(),
-        behavior_version=VERSION,
     )
     record = result.actor[0]
 
@@ -200,9 +193,7 @@ def test_the_result_carries_the_search_stats_and_its_failures() -> None:
     state.stats["rollouts"] = 3.0
     state.record_failure(1, RuntimeError("dead endpoint"))
 
-    result = prepare_samples(
-        state, estimator=None, reward_config=RewardConfig(), behavior_version="policy"
-    )
+    result = prepare_samples(state, estimator=None, reward_config=RewardConfig())
 
     assert result.stats["rollouts"] == 3.0
     assert result.stats["failures"] == 1.0
@@ -220,7 +211,7 @@ def _span(n: int = 3, *, tag: TurnTag = "task") -> PackedSequence:
     return PackedSequence(
         tokens=tuple(range(n)),
         trainable=tuple(i % 2 == 1 for i in range(n)),
-        logprobs={VERSION: tuple(-0.1 * i for i in range(n))},
+        logprobs=tuple(-0.1 * i for i in range(n)),
         tag=tag,
     )
 
@@ -233,7 +224,6 @@ def _result() -> PreparedBatch:
                 node_id=1,
                 spans=(_span(), _span(2)),
                 group_id=0,
-                reward_config_id="rc-0",
                 estimator="direct_branch_td",
                 weight=-1.5,
                 diagnostics={"advantage": -1.5, "baseline": 0.25},
@@ -243,7 +233,6 @@ def _result() -> PreparedBatch:
                 node_id=5,
                 spans=(_span(),),
                 group_id=7,
-                reward_config_id="rc-0",
                 estimator="test_custom",
                 weight=0.4,
                 diagnostics={"advantage": 0.4, "confidence": 1.0},
@@ -253,7 +242,6 @@ def _result() -> PreparedBatch:
                 node_id=6,
                 spans=(_span(),),
                 group_id=7,
-                reward_config_id="rc-0",
                 estimator="test_custom",
                 weight=-0.4,
                 diagnostics={"advantage": -0.4, "confidence": 1.0},
@@ -265,8 +253,6 @@ def _result() -> PreparedBatch:
                 node_id=3,
                 context="critic context",
                 target=0.25,
-                reward_config_id="rc-0",
-                value_version="v-base",
             ),
         ),
     )
@@ -350,7 +336,6 @@ def test_a_spans_tag_reaches_the_trainer_sample() -> None:
                 group_id=0,
                 spans=(_span(), _span(2, tag="fold")),
                 estimator="test_fixed",
-                reward_config_id="rc-0",
             ),
         )
     )
@@ -501,7 +486,6 @@ def test_a_result_survives_the_trip_back_from_a_worker() -> None:
             state,
             estimator=None,
             reward_config=RewardConfig(),
-            behavior_version="policy",
         ),
     ):
         restored = pickle.loads(pickle.dumps(result))
@@ -527,7 +511,6 @@ def test_every_exported_sample_is_strict_json() -> None:
         state,
         estimator=RootReturn(),
         reward_config=RewardConfig(),
-        behavior_version="policy",
     )
 
     for sample in to_samples(result, 0):
@@ -546,14 +529,12 @@ def test_a_non_finite_scalar_is_refused_rather_than_exported() -> None:
             view._state,
             estimator=FixedWeight(float("inf")),
             reward_config=RewardConfig(),
-            behavior_version="policy",
         )
     with pytest.raises(ValueError, match="'test_fixed'"):
         prepare_samples(
             view._state,
             estimator=FixedWeight(float("nan")),
             reward_config=RewardConfig(),
-            behavior_version="policy",
         )
 
 
@@ -582,7 +563,6 @@ def test_a_non_finite_diagnostic_is_refused_too() -> None:
             state,
             estimator=Unexplainable(),
             reward_config=RewardConfig(),
-            behavior_version="policy",
         )
 
 
@@ -597,7 +577,6 @@ def test_an_actor_record_ships_with_its_diagnostics() -> None:
         state,
         estimator=RootReturn(),
         reward_config=RewardConfig(),
-        behavior_version="policy",
     )
 
     restored = pickle.loads(pickle.dumps(result))
@@ -624,7 +603,6 @@ def test_the_edge_report_names_every_tag_an_edge_actually_carries() -> None:
                 group_id=0,
                 spans=(_span(tag="task"), _span(tag="fold")),
                 estimator="test_fixed",
-                reward_config_id="rc-0",
             ),
         ),
     )
@@ -645,7 +623,6 @@ def test_the_edge_report_survives_a_record_with_no_spans() -> None:
                 group_id=0,
                 spans=(),
                 estimator="test_fixed",
-                reward_config_id="rc-0",
             ),
         ),
     )
@@ -679,10 +656,10 @@ def _searched_tree():
         search_pass=1,
     )
     for node in state.nodes.values():
-        node.critic.clear()
-        node.metadata.pop("value_contexts", None)
-    state.nodes[0].critic["value"] = 0.25
-    first.critic["value"] = 0.75
+        node.critic = None
+        node.value_context = None
+    state.nodes[0].critic = 0.25
+    first.critic = 0.75
     return SchedulerView(state)
 
 
@@ -698,7 +675,6 @@ def test_the_tree_report_prints_the_search_and_joins_the_weights_onto_it() -> No
         view._state,
         estimator=RootReturn(),
         reward_config=RewardConfig(),
-        behavior_version="policy",
     )
 
     assert format_tree(view, result) == "\n".join(
@@ -706,10 +682,10 @@ def test_the_tree_report_prints_the_search_and_joins_the_weights_onto_it() -> No
             "node   0  parent=  -  --  reward= 0.000  critic[value=+0.250]",
             (
                 "  node   1  parent=  0  -d  reward= 1.000  critic[value=+0.750]  "
-                + "test_root_return=+1.0000"
+                + "test_root_return=+0.7500"
             ),
             "  node   2  parent=  0  --  reward= 0.250",
-            "    node   3  parent=  2  -d  reward= 0.750  test_root_return=+0.7500",
+            "    node   3  parent=  2  -d  reward= 0.750  test_root_return=+0.5000",
         ]
     )
 
@@ -780,7 +756,6 @@ def test_compaction_shaping_enters_actor_and_critic_without_discount_step():
         view._state,
         estimator=RootReturn(),
         reward_config=config,
-        behavior_version=VERSION,
     )
     assert result.actor[0].weight == pytest.approx(0.98)
     assert result.critic[0].target == pytest.approx(0.98)

@@ -59,7 +59,7 @@ class Summary(ContextProtocol):
         marker: Turn[Any] = Turn(
             prefix=(),
             tokens=(),
-            logprobs={runner.policy.version: ()},
+            logprobs=(),
             tag="fold",
             actor=runner.actor,
             invocation_id=rs.invocation_id,

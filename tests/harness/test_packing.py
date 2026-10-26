@@ -59,8 +59,8 @@ class RewritingTokenizer(FakeChatTokenizer):
 
 def test_regions_merge_on_a_cache_hit() -> None:
     hit: tuple[Turn[None], ...] = (
-        Turn(prefix=(1, 2), tokens=(3,), logprobs={"policy": (-0.1,)}),
-        Turn(prefix=(1, 2, 3, 4), tokens=(5,), logprobs={"policy": (-0.2,)}),
+        Turn(prefix=(1, 2), tokens=(3,), logprobs=(-0.1,)),
+        Turn(prefix=(1, 2, 3, 4), tokens=(5,), logprobs=(-0.2,)),
     )
 
     packed = regions(hit)
@@ -70,7 +70,7 @@ def test_regions_merge_on_a_cache_hit() -> None:
     assert packed[0].trainable == (False, False, True, False, True)
     assert packed[0].exact
     assert packed[0].tag == "task"
-    assert packed[0].logprobs["policy"] == (0.0, 0.0, -0.1, 0.0, -0.2)
+    assert packed[0].logprobs == (0.0, 0.0, -0.1, 0.0, -0.2)
 
 
 def test_regions_split_on_a_miss_and_restate_the_prefix_masked() -> None:
@@ -123,35 +123,33 @@ def test_a_pack_never_mixes_task_and_fold_turns() -> None:
 def test_a_version_missing_from_one_turn_is_missing_from_the_pack() -> None:
     """Padding it with 0.0 would claim `p = 1` over tokens nothing scored."""
     partial: tuple[Turn[None], ...] = (
-        Turn(prefix=(1,), tokens=(2,), logprobs={"policy": (-1.0,)}),
+        Turn(prefix=(1,), tokens=(2,), logprobs=(-1.0,)),
         Turn(prefix=(1, 2), tokens=(3,)),
     )
 
-    assert regions(partial)[0].logprobs == {}
+    assert regions(partial)[0].logprobs is None
 
 
 def test_a_misaligned_logprob_column_is_not_packed() -> None:
     """A backend that returned the wrong count is an absence, not a shifted column."""
-    bad: tuple[Turn[None], ...] = (
-        Turn(prefix=(1,), tokens=(2, 3), logprobs={"policy": (-1.0,)}),
-    )
+    bad: tuple[Turn[None], ...] = (Turn(prefix=(1,), tokens=(2, 3), logprobs=(-1.0,)),)
 
-    assert regions(bad)[0].logprobs == {}
+    assert regions(bad)[0].logprobs is None
 
 
 def test_a_turn_that_generated_nothing_does_not_unscore_the_pack() -> None:
     """An empty completion carries no column, so it cannot be the missing one."""
     turns: tuple[Turn[None], ...] = (
-        Turn(prefix=(1, 2), tokens=(3, 4), logprobs={"policy": (-0.1, -0.2)}),
+        Turn(prefix=(1, 2), tokens=(3, 4), logprobs=(-0.1, -0.2)),
         Turn(prefix=(1, 2, 3, 4, 5), tokens=()),  # the backend returned nothing
-        Turn(prefix=(1, 2, 3, 4, 5, 6), tokens=(7,), logprobs={"policy": (-0.3,)}),
+        Turn(prefix=(1, 2, 3, 4, 5, 6), tokens=(7,), logprobs=(-0.3,)),
     )
 
     packed = regions(turns)
 
     assert len(packed) == 1
     assert packed[0].tokens == (1, 2, 3, 4, 5, 6, 7)
-    assert packed[0].logprobs["policy"] == (0.0, 0.0, -0.1, -0.2, 0.0, 0.0, -0.3)
+    assert packed[0].logprobs == (0.0, 0.0, -0.1, -0.2, 0.0, 0.0, -0.3)
 
 
 def test_a_turn_whose_prefix_is_exactly_the_pack_adds_no_masked_delta() -> None:
@@ -163,8 +161,8 @@ def test_a_turn_whose_prefix_is_exactly_the_pack_adds_no_masked_delta() -> None:
     to start exactly where the first ended rather than one position either side of it.
     """
     turns: tuple[Turn[None], ...] = (
-        Turn(prefix=(1, 2), tokens=(3,), logprobs={"policy": (-0.1,)}),
-        Turn(prefix=(1, 2, 3), tokens=(4,), logprobs={"policy": (-0.2,)}),
+        Turn(prefix=(1, 2), tokens=(3,), logprobs=(-0.1,)),
+        Turn(prefix=(1, 2, 3), tokens=(4,), logprobs=(-0.2,)),
     )
 
     packed = regions(turns)
@@ -173,7 +171,7 @@ def test_a_turn_whose_prefix_is_exactly_the_pack_adds_no_masked_delta() -> None:
     assert packed[0].tokens == (1, 2, 3, 4)
     assert packed[0].trainable == (False, False, True, True)
     assert packed[0].spans == ((0, 2, 3), (1, 3, 4))
-    assert packed[0].logprobs["policy"] == (0.0, 0.0, -0.1, -0.2)
+    assert packed[0].logprobs == (0.0, 0.0, -0.1, -0.2)
 
 
 def test_a_prefix_shorter_than_the_pack_is_a_miss_even_where_it_agrees() -> None:

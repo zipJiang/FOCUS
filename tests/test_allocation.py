@@ -235,9 +235,6 @@ def test_the_shared_selection_refuses_a_node_that_cannot_be_forked() -> None:
     assert collection.session.score(view, done) == -math.inf
 
 
-VALUE = RewardConfig().value_version
-
-
 def _stats(*values: float) -> RunningStats:
     return RunningStats.of(values)
 
@@ -441,7 +438,7 @@ def _child(state: SchedulerState[Any], value: float | None) -> Any:
     """A forkable child whose critic says `value` -- or says nothing at all."""
     node = stamped_child(state, 0, rollout(region(reward=0.0)))
     if value is not None:
-        node.critic[VALUE] = value
+        node.critic = value
     return node
 
 
@@ -551,7 +548,7 @@ def test_refinement_refuses_a_pass_when_nothing_filled_the_value_channel() -> No
 
     assert ValueRefinement().build(view, RolloutLedger(RewardConfig(), {})) is None
 
-    state.nodes[0].critic[VALUE] = 0.25
+    state.nodes[0].critic = 0.25
     assert ValueRefinement().build(view, RolloutLedger(RewardConfig(), {}))
 
 
@@ -645,7 +642,7 @@ def test_birth_samples_alone_let_the_first_pass_discriminate() -> None:
     for value in (1.0, 0.0):
         chain = _chain(state, 0.0, 1.0)  # a first-pass rollout: a fork, then its finish
         ledger.record(state.nodes[0], chain)
-        chain[0].critic[VALUE] = value
+        chain[0].critic = value
         forks.append(chain[0])
     state.regate(ConcurrencyGating(4))
     calibrated, adrift = forks

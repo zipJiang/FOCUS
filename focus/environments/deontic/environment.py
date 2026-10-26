@@ -380,7 +380,7 @@ class DeonticRunner(Runner[DeonticState, ToolTurn]):
             # task context. A token-free task transition records the terminal outcome.
             terminal = Turn(
                 prefix=(),
-                logprobs={self.policy.version: ()},
+                logprobs=(),
                 transition=StepResult(
                     next_state=state,
                     done=True,

@@ -21,7 +21,7 @@ class RootReturn(AdvantageEstimator):
     def assign(self, records, *, view, reward_config):
         for record in records:
             node = view.node(record.node_id)
-            baseline = value_baseline(view.root, reward_config)
+            baseline = value_baseline(view.root)
             record.weight = (
                 reward_config.configured_return(
                     node.payload.turns, len(view.root.payload.turns)

@@ -539,12 +539,10 @@ class Runner[S, A]:
         learn about parsers to avoid training on one.
 
         Logprobs are opt-in and length-checked: a backend asked for none, or one that
-        returned a count that does not match the completion, stores ``{}`` rather than a
-        misaligned column. A completion that came back *empty* is the one case where an
-        empty column is the right answer rather than an absence -- it is scored, and its
-        contribution is zero -- and recording it as unscored is what would make
-        :meth:`~...rollout.RolloutState.edge_logprob` raise over a turn that generated
-        nothing.
+        returned a count that does not match the completion, stores ``None`` rather
+        than a misaligned column. A completion that came back *empty* is the one case
+        where an empty column is the right answer rather than an absence -- it is
+        scored, and its contribution is zero.
         """
         tokens = tuple(result.tokens)
         lps = tuple(result.logprobs or ())
@@ -554,7 +552,7 @@ class Runner[S, A]:
                 tuple(result.prefix_tokens) or cond,
             ),
             tokens=tokens,
-            logprobs={self._policy.version: lps} if len(lps) == len(tokens) else {},
+            logprobs=lps if len(lps) == len(tokens) else None,
             exact=self._policy.is_exact(result),
             sampling_params=sampling_params,
             tag="task",

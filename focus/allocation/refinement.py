@@ -97,9 +97,7 @@ class ResidualWorth(NodeWorth):
     ) -> float:
         del view  # everything this worth reads is on the node and its counts
         stats = counts.returns
-        e2, outcome_var = self.model.posterior(
-            value_baseline(node, self.reward_config), stats, self.kappa
-        )
+        e2, outcome_var = self.model.posterior(value_baseline(node), stats, self.kappa)
         return retraining_gain(e2, outcome_var, counts.n_eff, self.kappa)
 
 
@@ -140,14 +138,10 @@ class ValueRefinement(Allocator):
         needs the value head, which reaches a pass but not a ``collect``.
         """
         reward_config = ledger.reward_config
-        if not any(reward_config.value_version in node.critic for node in view.nodes()):
+        if not any(node.critic is not None for node in view.nodes()):
             logger.info(
-                (
-                    "value_refinement skipped: no node carries a critic "
-                    + "estimate "
-                    + "under version=%r, so every residual would be the raw return"
-                ),
-                reward_config.value_version,
+                "value_refinement skipped: no node carries a critic estimate, "
+                + "so every residual would be the raw return"
             )
             return None
         return ScoredSession(ResidualWorth(reward_config, self.model), ledger)

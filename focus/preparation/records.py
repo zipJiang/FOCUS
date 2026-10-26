@@ -54,7 +54,6 @@ class ActorSample:
     spans: tuple[PackedSequence, ...]
     #: The node the edge leaves -- the fork this record belongs to for sibling grouping.
     group_id: int
-    reward_config_id: str
     #: Which registered estimator owns this record.
     estimator: str
     #: The actor weight :math:`w` -- written by ``assign``, used as-is.
@@ -99,8 +98,6 @@ class CriticSample:
     node_id: int
     context: str
     target: float
-    reward_config_id: str
-    value_version: str
     diagnostics: Mapping[str, float] = field(default_factory=dict)
 
     def __getstate__(self) -> dict[str, Any]:
@@ -131,11 +128,6 @@ class PreparedBatch:
     actor: tuple[ActorSample, ...] = ()
     critic: tuple[CriticSample, ...] = ()
     reward_config: RewardConfig | None = None
-    #: The logprob channel the runner filed these edges' generations under. A record's
-    #: spans carry *every* version they were scored in, so this is what says which
-    #: column is the behavior one -- the question :func:`to_samples` has to answer, and
-    #: a property of the run rather than of any one span.
-    behavior_version: str = "policy"
     #: The scheduler's running counters at export -- ``rollouts``, ``nodes``, ``turns``,
     #: ``failures``, ``score_failures`` (see :mod:`...scheduler.core.tree`). A frozen
     #: copy: the tree may keep growing, this is what the export saw.
@@ -173,10 +165,8 @@ def spans_of(turns: Sequence[Turn[object]], /) -> tuple[PackedSequence, ...]:
 
     A :class:`~focus.harness.packing.PackedSequence` already *is* the
     trainer's
-    view of a region -- ids, loss mask, version-keyed logprobs -- so a record carries
-    the packs themselves rather than a projection of them, and which logprob column a
-    trainer reads is decided once, at :func:`to_samples`, from the behavior version the
-    result was built under.
+    view of a region -- ids, loss mask, behavior logprobs -- so a record carries
+    the packs themselves rather than a projection of them.
 
     Token-less packs are dropped: a fold that generated nothing leaves a marker turn
     that packs to no tokens, and it is a fact about the log, not a training sample.

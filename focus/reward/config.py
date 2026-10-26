@@ -24,8 +24,6 @@ class RewardConfig:
     batch, which is what makes an estimate collected before a decision and one collected
     after it commensurable.
 
-    ``value_version`` names the channel the critic's estimates are stored under.
-
     Keyword-only: the fields are a bag of
     independent knobs in no meaningful order, so a positional caller is writing down an
     order that is not part of the design -- and reordering two floats would then change
@@ -38,9 +36,6 @@ class RewardConfig:
     value_prior_strength: float = 1.0
     #: What one unit of shaping reward is worth against one unit of outcome reward.
     beta_step: float = 1.0
-    value_version: str = "v-base"
-    #: Identifies this configuration in every record derived under it.
-    config_id: str = "rc-0"
     component_weights: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

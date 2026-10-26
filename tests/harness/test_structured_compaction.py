@@ -71,9 +71,7 @@ async def test_retry_keeps_original_context_and_exact_failed_generations():
     assert all(
         t.exact and t.transition is None and t.tag == "fold" for t in result.turns
     )
-    assert failed.logprobs[request.runner.policy.version] == (-0.25,) * len(
-        failed.tokens
-    )
+    assert failed.logprobs == (-0.25,) * len(failed.tokens)
     retry_prompt = request.runner.policy.decode(gen.prefixes[-1])
     assert "original evidence" in retry_prompt
     assert "unfinished" not in retry_prompt

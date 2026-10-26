@@ -36,8 +36,7 @@ class SampleFactory[T](Protocol):
     Generic in what it returns, so ``to_samples(result, i, sample_factory=MySample)``
     is a ``list[MySample]`` rather than a ``list[Any]`` a trainer then has to cast.
 
-    ``span`` is the packed region itself, and ``logprobs`` is the behavior column
-    already selected out of it (:attr:`PreparedBatch.behavior_version`).
+    ``span`` is the packed region itself, and ``logprobs`` its behavior column.
     """
 
     def __call__(
@@ -73,7 +72,6 @@ def _record_samples[T](
     make: SampleFactory[T],
     record: ActorSample,
     *,
-    version: str,
     reward: float,
     lane: Lane,
     group_index: int,
@@ -91,7 +89,7 @@ def _record_samples[T](
     edge_tokens = record.edge_tokens
     span_count = len(record.spans)
     for index, span in enumerate(record.spans):
-        values = span.logprobs.get(version, ())
+        values = span.logprobs or ()
         if any(span.trainable) and (
             len(values) != len(span.tokens)
             or len(span.trainable) != len(span.tokens)
@@ -103,9 +101,7 @@ def _record_samples[T](
             raise ValueError("actor export requires aligned finite behavior logprobs")
         yield make(
             span=span,
-            # Selected here rather than at packing: a pack carries every version it was
-            # scored in, and which one is *behavior* is the run's fact, not the span's.
-            logprobs=span.logprobs.get(version, ()),
+            logprobs=values,
             reward=reward,
             lane=lane,
             group_index=group_index,
@@ -193,7 +189,6 @@ def to_samples(
         raise ValueError("mixed custom exports require sample_factory")
     make: SampleFactory[Any] = sample_factory or _dict_sample
     make_critic: CriticSampleFactory[Any] = critic_sample_factory or _critic_dict
-    version = result.behavior_version
     samples: list[Any] = []
 
     for actor in actors:
@@ -202,7 +197,6 @@ def to_samples(
             _record_samples(
                 make,
                 actor,
-                version=version,
                 reward=reward,
                 lane="actor",
                 group_index=group_index,
@@ -219,8 +213,6 @@ def to_samples(
             target=critic.target,
             group_index=group_index,
             node_id=critic.node_id,
-            value_version=critic.value_version,
-            reward_config_id=critic.reward_config_id,
             diagnostics=dict(critic.diagnostics),
         )
         for critic in result.critic
@@ -289,9 +281,9 @@ def format_tree(
     nothing there and its whole shape here.
 
     Each line is ``node <id>  parent=<id>  <flags>  reward=<payload reward>`` followed
-    by the node's critic estimates (``critic[<version>=<estimate>]``, one entry per
-    reward-model channel that scored it) if it has any. ``flags`` is two characters,
-    ``f`` for forkable and ``d`` for done, a dash where the node is neither.
+    by the node's critic estimate (``value=<estimate>``) if it has one. ``flags`` is
+    two characters, ``f`` for forkable and ``d`` for done, a dash where the node is
+    neither.
 
     Pass ``result`` to join each estimator's actor weight onto the node it was written
     for. A node with no weights is one no estimator scored -- the root, an interior node
@@ -318,9 +310,7 @@ def format_tree(
             "d" if node.payload.done else "-"
         )
         parent = "-" if node.parent_id is None else str(node.parent_id)
-        critic = " ".join(
-            f"{version}={value:+.3f}" for version, value in sorted(node.critic.items())
-        )
+        critic = "" if node.critic is None else f"value={node.critic:+.3f}"
         lines.append(
             (
                 (
@@ -376,8 +366,7 @@ def format_edges(result: PreparedBatch) -> str:
             f"tokens={edge.edge_tokens:>4}  " + "  ".join(scored.get(edge.node_id, ()))
         )
     lines.extend(
-        f"value {checkpoint.node_id:>3}  target={checkpoint.target:>6.3f}  "
-        f"version={checkpoint.value_version}"
+        f"value {checkpoint.node_id:>3}  target={checkpoint.target:>6.3f}"
         for checkpoint in sorted(result.critic, key=lambda r: r.node_id)
     )
     return "\n".join(lines)

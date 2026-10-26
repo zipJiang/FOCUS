@@ -7,13 +7,13 @@ from focus.reward.config import RewardConfig
 from focus.scheduler.core.tree import Node, SchedulerView
 
 
-def value_baseline(node: Node[AnyRollout], config: RewardConfig) -> float:
-    """:math:`V_{\\mathrm{base}}(h)` -- the critic's estimate under the value channel.
+def value_baseline(node: Node[AnyRollout]) -> float:
+    """:math:`V_{\\mathrm{base}}(h)` -- the critic's estimate at this node.
 
     Absent means zero, not "skip this node": an advantage against a missing baseline is
     just the raw return, which is a coarser but honest estimate rather than a hole.
     """
-    return node.critic.get(config.value_version, 0.0)
+    return 0.0 if node.critic is None else node.critic
 
 
 def edge_return(

@@ -61,7 +61,6 @@ async def test_empty_configuration_returns_only_the_initialized_root() -> None:
             state,
             estimator=estimator,
             reward_config=runtime.config.reward_config,
-            behavior_version=runtime.runner.policy.version,
         )
         assert not batch.actor
         assert not batch.critic
@@ -121,19 +120,16 @@ async def test_one_tree_prepares_independent_recipes_without_mutating_search() -
         state,
         estimator=DirectBranchTdEstimator(),
         reward_config=runtime.config.reward_config,
-        behavior_version=runtime.runner.policy.version,
     )
     grpo = prepare_samples(
         state,
         estimator=FixedWeight(),
         reward_config=runtime.config.reward_config,
-        behavior_version=runtime.runner.policy.version,
     )
     critic = prepare_samples(
         state,
         estimator=None,
         reward_config=runtime.config.reward_config,
-        behavior_version=runtime.runner.policy.version,
     )
     assert pickle.dumps(state) == before
     assert gae.actor
@@ -147,7 +143,6 @@ async def test_one_tree_prepares_independent_recipes_without_mutating_search() -
         prepare_samples(
             state,
             reward_config=runtime.config.reward_config,  # type: ignore[call-arg]
-            behavior_version=runtime.runner.policy.version,
         )
 
 

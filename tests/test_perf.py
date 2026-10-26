@@ -62,7 +62,7 @@ def _log(count: int) -> tuple[Turn[None], ...]:
             Turn(
                 prefix=prefix,
                 tokens=tokens,
-                logprobs={"policy": (-0.5,) * GENERATED},
+                logprobs=(-0.5,) * GENERATED,
                 transition=StepResult(
                     next_state=None,
                     reward_outcome=1.0,
@@ -100,7 +100,6 @@ def test_building_a_result_over_a_full_tree_stays_sub_quadratic() -> None:
         view._state,
         estimator=None,
         reward_config=RewardConfig(),
-        behavior_version="policy",
     )
     # The re-scoring pass's shape: every node's whole log packed, not just its edge.
     for node in view.nodes():
