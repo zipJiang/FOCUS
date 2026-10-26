@@ -112,11 +112,13 @@ class SchedulerState[P: Payload]:
     nodes: dict[int, Node[P]]
     root_id: int
     gating: GatingPolicy
-    frontier: dict[int, None] = field(default_factory=dict)
+    #: Selectable node ids, each mapped to the order it became selectable.
+    frontier: dict[int, int] = field(default_factory=dict)
     stats: dict[str, float] = field(default_factory=dict)
     failures: list[tuple[int, str]] = field(default_factory=list)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _next_id: int = 1
+    _arrivals: int = 0
 
     @classmethod
     def root(cls, payload: P, *, gating: GatingPolicy) -> SchedulerState[P]:
@@ -146,7 +148,8 @@ class SchedulerState[P: Payload]:
         """Recompute one node's frontier membership (idempotent, order-preserving)."""
         if self.selectable(self.nodes[node_id]):
             if node_id not in self.frontier:
-                self.frontier[node_id] = None
+                self.frontier[node_id] = self._arrivals
+                self._arrivals += 1
         else:
             self.frontier.pop(node_id, None)
 
@@ -217,12 +220,21 @@ class SchedulerState[P: Payload]:
         """
         return max(self.terminals(), key=lambda n: n.payload.reward, default=None)
 
+    def describe(self, batch: Any = None) -> str:
+        """The tree, one node per line, with any actor weights from ``batch`` joined.
+
+        See :func:`~focus.export.format_tree` for the line format.
+        """
+        from focus.export import format_tree
+
+        return format_tree(SchedulerView(self), batch)  # type: ignore[arg-type]
+
     def __getstate__(self) -> dict[str, Any]:
         """Pickle everything but the lock, which is minted fresh on the way back in.
 
         An untouched ``asyncio.Lock`` happens to pickle and a contended one does not,
         which made "can I save this tree?" depend on whether anything had ever waited
-        on it. The same shape as :meth:`~focus.export.PreparedBatch.
+        on it. The same shape as :meth:`~focus.export.Batch.
         __getstate__`: a field that is a property of the *live* object is dropped from
         the wire format and rebuilt on arrival.
 
@@ -231,7 +243,7 @@ class SchedulerState[P: Payload]:
         a way to share a running search: the restored lock is a different lock, so two
         processes holding halves of one tree would guard nothing, and the in-flight
         expansions that lock exists for do not cross the boundary either. Which is why
-        :func:`~focus.loop.run_search` hands back a tree that is already done
+        :meth:`~focus.collector.Collector.search` hands back a tree that is already done
         searching.
         """
         return {key: value for key, value in self.__dict__.items() if key != "lock"}
@@ -285,6 +297,10 @@ class SchedulerView[P: Payload]:
     def frontier(self) -> list[Node[P]]:
         """The selectable (forkable, live, free gate slot) nodes, in insertion order."""
         return [self._state.nodes[i] for i in self._state.frontier]
+
+    def arrival(self, node: Node[P]) -> int:
+        """When ``node`` last became selectable, as a position in arrival order."""
+        return self._state.frontier[node.id]
 
     def node(self, node_id: int) -> Node[P] | None:
         """One node by id, or ``None`` -- how a policy walks toward the root."""

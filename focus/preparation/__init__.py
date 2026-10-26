@@ -4,7 +4,7 @@ from .base import Advantage, Edge, Estimator
 from .direct_branch import DirectBranchTd
 from .grpo import Grpo
 from .prepare import critic_targets, prepare_samples
-from .records import ActorSample, CriticSample, PreparedBatch
+from .records import ActorSample, Batch, CriticSample
 
 __all__ = [
     "ActorSample",
@@ -14,7 +14,7 @@ __all__ = [
     "Edge",
     "Estimator",
     "Grpo",
-    "PreparedBatch",
+    "Batch",
     "critic_targets",
     "prepare_samples",
 ]

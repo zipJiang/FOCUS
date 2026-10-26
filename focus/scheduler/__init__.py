@@ -43,7 +43,6 @@ from focus.scheduler.core.allocation import (
     RankedSession,
     Reservation,
 )
-from focus.scheduler.core.entropy import TokenEntropySession
 
 __all__ = [
     "PASS_KEY",
@@ -52,7 +51,6 @@ __all__ = [
     "Reservation",
     "FifoSession",
     "RankedSession",
-    "TokenEntropySession",
     "Budget",
     "ConcurrencyGating",
     "Expander",

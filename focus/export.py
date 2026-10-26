@@ -12,9 +12,9 @@ from focus.preparation.records import (
     ESTIMATOR_KEY,
     LANE_KEY,
     ActorSample,
+    Batch,
     CriticSample,
     Lane,
-    PreparedBatch,
 )
 from focus.scheduler.core.tree import SchedulerView
 
@@ -115,7 +115,7 @@ def _record_samples[T](
 
 @overload
 def to_samples(
-    result: PreparedBatch,
+    result: Batch,
     group_index: int,
     *,
     sample_factory: None = None,
@@ -126,7 +126,7 @@ def to_samples(
 
 @overload
 def to_samples[T](
-    result: PreparedBatch,
+    result: Batch,
     group_index: int,
     *,
     sample_factory: SampleFactory[T] | None = None,
@@ -136,7 +136,7 @@ def to_samples[T](
 
 
 def to_samples(
-    result: PreparedBatch,
+    result: Batch,
     group_index: int,
     *,
     sample_factory: SampleFactory[Any] | None = None,
@@ -269,9 +269,7 @@ def _dict_sample(
 # -- reading a run: the two human-facing renderings -----------------------------------
 
 
-def format_tree(
-    view: SchedulerView[AnyRollout], result: PreparedBatch | None = None
-) -> str:
+def format_tree(view: SchedulerView[AnyRollout], result: Batch | None = None) -> str:
     """One line per node of the search tree, indented by depth.
 
     The other half of :func:`format_edges`, and the half that shows what the *search*
@@ -345,7 +343,7 @@ def _tag_of(spans: Sequence[PackedSequence]) -> str:
     return "+".join(tags) if tags else "-"
 
 
-def format_edges(result: PreparedBatch) -> str:
+def format_edges(result: Batch) -> str:
     """Show actor edges with diagnostics, followed by checkpoint value targets."""
     scored: dict[int, list[str]] = {}
     for record in result.actor:
@@ -376,10 +374,10 @@ __all__ = [
     "ESTIMATOR_KEY",
     "LANE_KEY",
     "ActorSample",
+    "Batch",
     "CriticSample",
     "CriticSampleFactory",
     "Lane",
-    "PreparedBatch",
     "SampleFactory",
     "format_edges",
     "format_tree",

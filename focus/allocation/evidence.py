@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import math
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from focus.harness import AnyRollout
 from focus.scheduler.core.allocation import (
     AllocationLedger,
     Observations,
-    RankedSession,
 )
 from focus.scheduler.core.tree import Node, SchedulerView
 from focus.values import RewardConfig
@@ -95,37 +93,10 @@ class RolloutLedger(AllocationLedger[AnyRollout]):
             self.counts(node).returns.add(value)
 
 
-class NodeWorth(ABC):
-    """Expected benefit of another purchase. Nonpositive gain declines the purchase."""
-
-    def __init__(self, reward_config: RewardConfig) -> None:
-        self.reward_config = reward_config
-
-    @abstractmethod
-    def worth(
-        self,
-        view: SchedulerView[AnyRollout],
-        node: Node[AnyRollout],
-        counts: Observations,
-    ) -> float: ...
-
-
-class ScoredSession(RankedSession[AnyRollout]):
-    def __init__(self, worth: NodeWorth, ledger: RolloutLedger) -> None:
-        if worth.reward_config != ledger.reward_config:
-            raise ValueError(
-                "worth and evidence must use the same reward configuration"
-            )
-        super().__init__(ledger)
-        self.worth = worth
-
-    def score(self, view: SchedulerView[AnyRollout], node: Node[AnyRollout]) -> float:
-        if not node.payload.forkable or node.payload.done:
-            return -math.inf
-        return self.worth.worth(view, node, self.ledger.counts(node))
-
-    def eligible(self, score: float) -> bool:
-        return math.isfinite(score) and score > 0.0
-
-
-__all__ = ["NodeWorth", "Observations", "RolloutLedger", "ScoredSession"]
+__all__ = [
+    "EVIDENCE_KEY",
+    "Observations",
+    "RolloutEvidence",
+    "RolloutLedger",
+    "evidence_of",
+]

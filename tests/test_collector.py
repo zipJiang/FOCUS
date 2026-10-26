@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Any
@@ -11,26 +11,20 @@ from typing import Any
 import pytest
 
 from focus import (
-    AllocationSession,
-    Allocator,
-    ConcurrencyGating,
+    Collector,
     DirectBranchTd,
-    FifoAllocator,
-    SearchPass,
-    WidthGating,
-    prepare_samples,
-    run_search,
+    ErrorReduction,
+    Fifo,
+    NodeInfo,
+    Phase,
+    Priority,
+    Search,
 )
-from focus.allocation import (
-    NodeWorth,
-    Observations,
-    RolloutLedger,
-    ScoredSession,
-    ValueRefinement,
-)
+from focus.allocation import Observations
 from focus.codec import ChatCodec
-from focus.config import RolloutConfig
+from focus.collector import _budget
 from focus.critic import Critic
+from focus.export import to_samples
 from focus.generation import (
     GenerateResult,
     Policy,
@@ -47,16 +41,17 @@ from focus.harness import (
     StepResult,
     Workspace,
 )
-from focus.integrations.slime import to_samples
-from focus.loop import Runtime, _budget
-from focus.preparation.records import PreparedBatch
+from focus.preparation import prepare_samples
+from focus.preparation.records import Batch
 from focus.protocols import Summary
 from focus.scheduler import (
     PASS_KEY,
     SchedulerState,
     SchedulerView,
+    WidthGating,
 )
 from focus.scheduler.core.tree import STAT_FAILURES, STAT_TURNS
+from focus.values import RewardConfig
 from tests.estimators import FixedWeight
 from tests.helpers import (
     DeadReward,
@@ -133,7 +128,7 @@ def _runner(
     version: str = "policy",
     **kwargs: Any,
 ) -> Runner[CountState, str]:
-    """The folding toy runner every runtime here drives.
+    """The folding toy runner every collector here drives.
 
     ``generator`` is a parameter rather than a fixture because what a *backend* does --
     answer, fail, stall -- is the one thing a robustness test varies about the runner.
@@ -157,43 +152,45 @@ def _runner(
     )
 
 
-#: What a runtime *holds* -- plus the bound on the endpoint it holds -- rather than what
-#: it is configured with: the only kwargs below that are not `RolloutConfig` knobs.
-LIVE_FIELDS = frozenset({"runner", "critic"})
+_CONSTANT = object()
 
 
-def _runtime(**kwargs) -> Runtime:
-    """A runtime around the fake runner, with this file's small search budgets.
+def _collector(
+    *,
+    runner: Runner[Any, Any] | None = None,
+    critic: Any = _CONSTANT,
+    passes: tuple[Phase, ...] | None = None,
+    max_concurrency: int = 1,
+    reward_config: RewardConfig | None = None,
+) -> Collector:
+    """A collector around the fake runner, with this file's small search budgets."""
+    phases = (
+        passes
+        if passes is not None
+        else (
+            Phase(Fifo(), 12, max_children=2),
+            Phase(Fifo(), 48, max_pending=4),
+            Phase(Fifo(), 8, max_pending=4),
+        )
+    )
+    return Collector(
+        runner or _runner(),
+        critic=ConstantReward(0.0) if critic is _CONSTANT else critic,
+        search=Search(phases, max_concurrency=max_concurrency),
+        reward=reward_config,
+    )
 
-    Keyword arguments are routed by what they are: a live object goes on the
-    `Runtime`, everything else onto its `RolloutConfig`.
-    """
-    defaults: dict[str, Any] = {
-        "passes": (
-            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-            SearchPass(FifoAllocator(), budget=48, gating=ConcurrencyGating(4)),
-            SearchPass(FifoAllocator(), budget=8, gating=ConcurrencyGating(4)),
-        ),
-        "max_concurrency": 1,
-    }
-    defaults.update({k: v for k, v in kwargs.items() if k not in LIVE_FIELDS})
-    live = {k: v for k, v in kwargs.items() if k in LIVE_FIELDS}
-    live.setdefault("critic", ConstantReward(0.0))
-    runner = live.pop("runner", None) or _runner()
-    return Runtime(runner=runner, config=RolloutConfig(**defaults), **live)
 
-
-def test_search_has_no_implicit_passes() -> None:
-    assert RolloutConfig().passes == ()
-    assert not hasattr(DirectBranchTd(), "build")
-    assert not hasattr(FifoAllocator(), "assign")
+def test_search_has_no_implicit_phases() -> None:
+    assert Search(()).phases == ()
+    assert not hasattr(Fifo(), "advantages")
 
 
 @pytest.mark.asyncio
 async def test_one_call_runs_every_pass_and_returns_training_records() -> None:
-    result = await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    result = await prepared("solve it", _collector(), estimator=DirectBranchTd())
 
-    assert isinstance(result, PreparedBatch)
+    assert isinstance(result, Batch)
     assert result.reward_config is not None
     assert len(result) > 0
     assert result.critic
@@ -216,7 +213,7 @@ async def test_a_prompt_that_is_neither_text_nor_a_checkpoint_is_refused() -> No
 
     with pytest.raises(TypeError, match="prompt must be"):
         await prepared(
-            TrainerSample("solve it"), _runtime(), estimator=DirectBranchTd()
+            TrainerSample("solve it"), _collector(), estimator=DirectBranchTd()
         )
 
 
@@ -230,7 +227,7 @@ async def test_later_pass_edges_are_actor_data() -> None:
     A later-pass edge is drawn under the same generative law as a first-pass edge, so
     nothing about how it was scheduled disqualifies it from training the actor.
     """
-    result = await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    result = await prepared("solve it", _collector(), estimator=DirectBranchTd())
 
     assert result.actor
     pass_ids = {r.search_pass for r in result.actor}
@@ -245,7 +242,7 @@ async def test_later_pass_edges_are_actor_data() -> None:
 
 @pytest.mark.asyncio
 async def test_exported_spans_keep_their_mask_aligned_to_their_tokens() -> None:
-    result = await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    result = await prepared("solve it", _collector(), estimator=DirectBranchTd())
 
     records = result.actor
     spans = [span for r in records for span in r.spans]
@@ -258,7 +255,7 @@ async def test_exported_spans_keep_their_mask_aligned_to_their_tokens() -> None:
 
 @pytest.mark.asyncio
 async def test_a_fold_and_a_leaf_on_one_chain_score_comparably() -> None:
-    result = await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    result = await prepared("solve it", _collector(), estimator=DirectBranchTd())
 
     weights = [abs(r.weight) for r in result.actor if r.estimator == "direct_branch_td"]
     assert len(weights) > 2
@@ -267,7 +264,7 @@ async def test_a_fold_and_a_leaf_on_one_chain_score_comparably() -> None:
 
 @pytest.mark.asyncio
 async def test_one_expansion_grows_a_line_of_branch_points() -> None:
-    state = await run_search("solve it", _runtime())
+    state = await _collector().search("solve it")
 
     interior = [n for n in state.nodes.values() if n.children and n.id != state.root_id]
     assert interior
@@ -279,34 +276,37 @@ async def test_one_expansion_grows_a_line_of_branch_points() -> None:
 
 @pytest.mark.asyncio
 async def test_fifo_records_birth_evidence_for_the_next_pass() -> None:
-    class Capture(FifoAllocator):
-        def build(self, view, ledger):
-            self.observations = ledger.observations
-            return None
+    class Capture(Priority):
+        def __init__(self) -> None:
+            self.observations: dict[int, Observations] = {}
+
+        def __call__(self, node: NodeInfo) -> None:
+            self.observations[node.id] = node.observations
 
     capture = Capture()
-    runtime = _runtime(
+    collector = _collector(
         passes=(
-            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-            SearchPass(capture, budget=1, gating=ConcurrencyGating(4)),
+            Phase(Fifo(), 12, max_children=2),
+            Phase(capture, 1, max_pending=4),
         )
     )
-    state = await run_search("solve it", runtime)
+    state = await collector.search("solve it")
     created = [n for n in state.nodes.values() if n.parent_id is not None]
     assert created
-    assert set(capture.observations) == set(state.nodes)
-    assert (
-        sum(c.m_done for c in capture.observations.values()) == state.stats["rollouts"]
-    )
+    live = {n.id for n in state.nodes.values() if n.payload.forkable}
+    assert live
+    assert set(capture.observations) == live
     for node in created:
+        if node.id not in capture.observations:
+            continue
         counts = capture.observations[node.id]
         assert counts.returns.n == 1 + counts.m_done
         assert counts.m_pending == 0
 
 
-def _unfolding_runtime(**kwargs) -> Runtime:
-    """A runtime whose rollouts never fold, so the only branch points on a line are the
-    ones the strategy itself decided to keep."""
+def _unfolding_collector(**kwargs) -> Collector:
+    """A collector whose rollouts never fold, so the only branch points on a line are
+    the ones the strategy itself decided to keep."""
     runner: Runner[CountState, str] = Runner(
         policy=Policy(
             format=PolicyFormat(
@@ -321,28 +321,21 @@ def _unfolding_runtime(**kwargs) -> Runtime:
         system_prompt="sys",
         max_steps=4,
     )
-    defaults: dict[str, Any] = {
-        "passes": (SearchPass(FifoAllocator(), budget=4, gating=WidthGating(1)),),
-        "max_concurrency": 1,
-    }
-    defaults.update(kwargs)
-    return Runtime(runner=runner, config=RolloutConfig(**defaults))
+    passes = kwargs.get("passes", (Phase(Fifo(), 4, max_children=1),))
+    return Collector(runner, search=Search(passes, max_concurrency=1))
 
 
 @pytest.mark.asyncio
 async def test_the_runtime_picks_which_checkpoints_become_branch_points() -> None:
     """Without compaction the tree contains a root and completed trajectories."""
-    folded = await run_search("solve it", _unfolding_runtime())
+    folded = await _unfolding_collector().search("solve it")
     assert len(folded.nodes) == 2  # root + the one terminal: no fold, no branch point
 
 
 @pytest.mark.asyncio
 async def test_a_node_ends_with_as_many_children_as_its_width() -> None:
-    state = await run_search(
-        "solve it",
-        _runtime(
-            passes=(SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),)
-        ),
+    state = await _collector(passes=(Phase(Fifo(), 12, max_children=2),)).search(
+        "solve it"
     )
 
     branched = [n for n in state.nodes.values() if len(n.children) > 1]
@@ -361,10 +354,10 @@ async def test_the_weight_an_estimator_wrote_is_the_one_that_goes_on_the_wire() 
     """
     result = await prepared(
         "solve it",
-        _runtime(
+        _collector(
             passes=(
-                SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-                SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+                Phase(Fifo(), 12, max_children=2),
+                Phase(Fifo(), 4, max_pending=4),
             )
         ),
         estimator=DirectBranchTd(),
@@ -381,9 +374,7 @@ async def test_the_weight_an_estimator_wrote_is_the_one_that_goes_on_the_wire() 
 async def test_a_constant_weight_reaches_every_slot_untouched() -> None:
     result = await prepared(
         "solve it",
-        _runtime(
-            passes=(SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),)
-        ),
+        _collector(passes=(Phase(Fifo(), 12, max_children=2),)),
         estimator=FixedWeight(0.5),
     )
 
@@ -395,7 +386,7 @@ async def test_a_constant_weight_reaches_every_slot_untouched() -> None:
 
 @pytest.mark.asyncio
 async def test_the_estimator_weight_is_the_exported_reward() -> None:
-    result = await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    result = await prepared("solve it", _collector(), estimator=DirectBranchTd())
 
     by_node = {(r.estimator, r.node_id): r for r in result.actor}
     checked = 0
@@ -417,7 +408,7 @@ async def test_the_estimator_weight_is_the_exported_reward() -> None:
 
 @pytest.mark.asyncio
 async def test_no_exported_span_is_empty() -> None:
-    result = await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    result = await prepared("solve it", _collector(), estimator=DirectBranchTd())
 
     records = result.actor
     assert records
@@ -428,7 +419,7 @@ async def test_no_exported_span_is_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_the_advantage_estimator_reaches_the_exported_weight() -> None:
-    result = await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    result = await prepared("solve it", _collector(), estimator=DirectBranchTd())
 
     advantages = [r for r in result.actor if r.estimator == "direct_branch_td"]
     assert advantages
@@ -438,8 +429,8 @@ async def test_the_advantage_estimator_reaches_the_exported_weight() -> None:
 
 @pytest.mark.asyncio
 async def test_every_expansion_records_which_pass_produced_it() -> None:
-    runtime = _runtime()
-    state = await run_search("solve it", runtime)
+    collector = _collector()
+    state = await collector.search("solve it")
 
     created = [n for n in state.nodes.values() if n.id != state.root_id]
     assert created
@@ -448,15 +439,13 @@ async def test_every_expansion_records_which_pass_produced_it() -> None:
 
 @pytest.mark.asyncio
 async def test_one_scheduler_pass_per_weighter_that_asks_for_evidence() -> None:
-    result = await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    result = await prepared("solve it", _collector(), estimator=DirectBranchTd())
     passes = {r.search_pass for r in result.actor}
     assert passes == {0, 1, 2}
 
     quiet = await prepared(
         "solve it",
-        _runtime(
-            passes=(SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),)
-        ),
+        _collector(passes=(Phase(Fifo(), 12, max_children=2),)),
         estimator=FixedWeight(),
     )
     assert {r.search_pass for r in quiet.actor} == {0}
@@ -466,17 +455,17 @@ async def test_one_scheduler_pass_per_weighter_that_asks_for_evidence() -> None:
 
 @pytest.mark.asyncio
 async def test_each_pass_gets_its_own_budget_on_the_shared_tree() -> None:
-    runtime = _runtime(
+    collector = _collector(
         passes=(
-            SearchPass(FifoAllocator(), budget=6, gating=WidthGating(2)),
-            SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
-            SearchPass(FifoAllocator(), budget=2, gating=ConcurrencyGating(4)),
+            Phase(Fifo(), 6, max_children=2),
+            Phase(Fifo(), 4, max_pending=4),
+            Phase(Fifo(), 2, max_pending=4),
         )
     )
 
-    result = await prepared("solve it", runtime, estimator=DirectBranchTd())
+    result = await prepared("solve it", collector, estimator=DirectBranchTd())
 
-    slack = runtime.config.max_concurrency * runtime.runner.max_steps
+    slack = collector.search_config.max_concurrency * collector.agent.max_steps
     turns = {0: 6, 1: 4, 2: 2}
     spent: dict[int | None, int] = {}
     for record in result.actor:
@@ -487,37 +476,25 @@ async def test_each_pass_gets_its_own_budget_on_the_shared_tree() -> None:
     assert spent.get(1, 0) >= 1
 
 
-class _UnitWorth(NodeWorth):
-    """Any forkable node is worth buying -- a scored pass without a selection recipe."""
+class _CollectSpy(Priority):
+    """Buy anything; keep what each checkpoint's evidence looked like on first sight.
 
-    def worth(self, view: SchedulerView[Any], node: Any, counts: Observations) -> float:
-        del view, node, counts
-        return 1.0
-
-
-class _CollectSpy(Allocator):
-    """A scored allocator that keeps what it was built against, and what it bought.
-
-    The fold-back between passes is the loop's, so the only place its effect shows is
-    the next pass's ``build`` -- which is exactly what this records. ``bought`` keeps
-    the live counts by reference: they are what the pass fills as its rollouts return.
+    Equal scores go to the lowest id, so the root is the first checkpoint every spy
+    sees. ``live`` keeps the evidence objects by reference: the phase fills them as its
+    rollouts return.
     """
 
     name = "spy"
 
     def __init__(self) -> None:
-        self.seen: list[dict[int, Observations]] = []
-        self.bought: list[Mapping[int, Observations]] = []
+        self.seen: dict[int, Observations] = {}
+        self.live: dict[int, Observations] = {}
 
-    def build(
-        self,
-        view: SchedulerView[Any],
-        ledger: RolloutLedger,
-    ) -> AllocationSession[Any]:
-        del view
-        self.seen.append(deepcopy(ledger.observations))
-        self.bought.append(ledger.observations)
-        return ScoredSession(_UnitWorth(ledger.reward_config), ledger)
+    def __call__(self, node: NodeInfo) -> float:
+        if node.id not in self.seen:
+            self.seen[node.id] = deepcopy(node.observations)
+            self.live[node.id] = node.observations
+        return 1.0
 
 
 @pytest.mark.asyncio
@@ -533,53 +510,47 @@ async def test_a_later_pass_starts_from_what_an_earlier_one_bought() -> None:
 
     await prepared(
         "solve it",
-        _runtime(
+        _collector(
             passes=(
-                SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-                SearchPass(_CollectSpy(), budget=8, gating=ConcurrencyGating(4)),
-                SearchPass(spy, budget=8, gating=ConcurrencyGating(4)),
+                Phase(Fifo(), 12, max_children=2),
+                Phase(_CollectSpy(), 8, max_pending=4),
+                Phase(spy, 8, max_pending=4),
             )
         ),
         estimator=DirectBranchTd(),
     )
 
-    assert spy.seen
-    assert sum(counts.m_done for counts in spy.seen[0].values()) > 0
+    assert spy.seen[0].m_done > 0
 
 
 @pytest.mark.asyncio
 async def test_passes_share_one_ledger_without_copying_totals() -> None:
     first, second, third = (_CollectSpy() for _ in range(3))
-    runtime = _runtime(
+    collector = _collector(
         passes=(
-            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-            *(
-                SearchPass(a, budget=8, gating=ConcurrencyGating(4))
-                for a in (first, second, third)
-            ),
+            Phase(Fifo(), 12, max_children=2),
+            *(Phase(a, 8, max_pending=4) for a in (first, second, third)),
         )
     )
-    await run_search("solve it", runtime)
-    assert first.bought[0] is second.bought[0] is third.bought[0]
-    totals = [sum(c.m_done for c in a.seen[0].values()) for a in (first, second, third)]
+    await collector.search("solve it")
+    assert first.live[0] is second.live[0] is third.live[0]
+    totals = [spy.seen[0].m_done for spy in (first, second, third)]
     assert 0 < totals[0] < totals[1] < totals[2]
-    assert sum(c.m_done for c in third.bought[0].values()) > totals[2]
+    assert third.live[0].m_done > totals[2]
 
 
 @pytest.mark.asyncio
 async def test_search_and_preparation_log_their_own_work(caplog) -> None:
     caplog.set_level(logging.INFO)
-    await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    await prepared("solve it", _collector(), estimator=DirectBranchTd())
     passes = [
         r.getMessage()
         for r in caplog.records
         if r.getMessage().startswith("search finished")
     ]
     assert len(passes) == 3
-    assert all(
-        "allocator=" in m and "spent=" in m and "turn_budget=" in m for m in passes
-    )
-    assert any("allocator=fifo" in m for m in passes)
+    assert all("priority=" in m and "spent=" in m and "budget=" in m for m in passes)
+    assert any("priority=fifo" in m for m in passes)
     batches = [
         r.getMessage()
         for r in caplog.records
@@ -592,7 +563,7 @@ async def test_search_and_preparation_log_their_own_work(caplog) -> None:
 @pytest.mark.asyncio
 async def test_the_result_reports_what_the_search_cost() -> None:
     """Enough to log throughput or alert on a dead endpoint without the tree."""
-    result = await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    result = await prepared("solve it", _collector(), estimator=DirectBranchTd())
 
     assert result.stats["rollouts"] > 0
     assert result.stats["nodes"] > 0
@@ -613,17 +584,17 @@ async def test_run_rollout_is_run_search_and_then_an_export() -> None:
     two estimators on one tree, or re-scoring a tree from disk -- and it is only worth
     anything if the by-hand path lands on the same records the one-call path does.
     """
-    whole = await prepared("solve it", _runtime(), estimator=DirectBranchTd())
+    whole = await prepared("solve it", _collector(), estimator=DirectBranchTd())
 
-    # a fresh runtime, so the scripted generator starts where the other one did
-    piecewise = _runtime()
-    state = await run_search("solve it", piecewise)
+    # a fresh collector, so the scripted generator starts where the other one did
+    piecewise = _collector()
+    state = await piecewise.search("solve it")
 
     assert (
         prepare_samples(
             state,
             estimator=DirectBranchTd(),
-            reward_config=piecewise.config.reward_config,
+            reward_config=piecewise.reward,
         ).actor
         == whole.actor
     )
@@ -631,7 +602,7 @@ async def test_run_rollout_is_run_search_and_then_an_export() -> None:
         prepare_samples(
             state,
             estimator=DirectBranchTd(),
-            reward_config=piecewise.config.reward_config,
+            reward_config=piecewise.reward,
         ).critic
         == whole.critic
     )
@@ -644,22 +615,22 @@ class _InexactGenerator(InexactBridge, CyclingGenerator):
     """The hosted chat bridge's claim over a cycling script -- see `InexactBridge`."""
 
 
-def _untrainable_runtime(**kwargs: Any) -> Runtime:
+def _untrainable_collector(**kwargs: Any) -> Collector:
     generator = _InexactGenerator(["go", "stop"])
-    return _runtime(runner=_runner(generator=generator), **kwargs)
+    return _collector(runner=_runner(generator=generator), **kwargs)
 
 
 @pytest.mark.asyncio
 async def test_search_can_run_inexact_models_but_preparation_refuses_them() -> None:
     generator = _InexactGenerator(["go", "stop-good"])
-    runtime = _runtime(runner=_runner(generator=generator))
-    state = await run_search("solve it", runtime)
+    collector = _collector(runner=_runner(generator=generator))
+    state = await collector.search("solve it")
     assert generator.calls > 0
     with pytest.raises(ValueError, match="not trainable"):
         prepare_samples(
             state,
             estimator=DirectBranchTd(),
-            reward_config=runtime.config.reward_config,
+            reward_config=collector.reward,
         )
 
 
@@ -670,9 +641,9 @@ async def test_an_eval_only_tree_on_an_untrainable_policy_runs() -> None:
     Authored emptiness, not the default: ``weighters=None`` resolves to the shipped
     pair, so an unconfigured search *is* a training search by that rule.
     """
-    runtime = _untrainable_runtime()
+    collector = _untrainable_collector()
 
-    state = await run_search("solve it", runtime)
+    state = await collector.search("solve it")
 
     assert state.stats["turns"] > 0
 
@@ -692,13 +663,13 @@ async def test_a_single_trajectory_on_an_untrainable_policy_is_untouched() -> No
 @pytest.mark.asyncio
 async def test_a_labelled_policy_s_logprobs_reach_the_trainer() -> None:
     """A policy's label is a diagnostic; its logprobs are the behavior column."""
-    runtime = _runtime(runner=_runner(version="pi-7"))
-    state = await run_search("solve it", runtime)
+    collector = _collector(runner=_runner(version="pi-7"))
+    state = await collector.search("solve it")
 
     result = prepare_samples(
         state,
         estimator=DirectBranchTd(),
-        reward_config=runtime.config.reward_config,
+        reward_config=collector.reward,
     )
 
     assert result.actor
@@ -716,20 +687,18 @@ async def test_a_labelled_policy_s_logprobs_reach_the_trainer() -> None:
 @pytest.mark.asyncio
 async def test_one_tree_scores_under_two_estimators_without_searching_twice() -> None:
     """The documented use: search with no weighters, then export once per recipe."""
-    runtime = _runtime(
-        passes=(SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),)
-    )
-    state = await run_search("solve it", runtime)
+    collector = _collector(passes=(Phase(Fifo(), 12, max_children=2),))
+    state = await collector.search("solve it")
 
     gae = prepare_samples(
         state,
         estimator=DirectBranchTd(),
-        reward_config=runtime.config.reward_config,
+        reward_config=collector.reward,
     )
     grpo = prepare_samples(
         state,
         estimator=FixedWeight(),
-        reward_config=runtime.config.reward_config,
+        reward_config=collector.reward,
     )
 
     assert [r.node_id for r in gae.actor] == [r.node_id for r in grpo.actor]
@@ -750,8 +719,8 @@ async def test_a_settled_tree_ships_even_though_its_lock_does_not() -> None:
     """
     import pickle
 
-    runtime = _runtime(max_concurrency=4)
-    state = await run_search("solve it", runtime)
+    collector = _collector(max_concurrency=4)
+    state = await collector.search("solve it")
 
     async def waiter() -> None:
         async with state.lock:
@@ -775,24 +744,24 @@ async def test_a_settled_tree_ships_even_though_its_lock_does_not() -> None:
         prepare_samples(
             restored,
             estimator=DirectBranchTd(),
-            reward_config=runtime.config.reward_config,
+            reward_config=collector.reward,
         ).actor
         == prepare_samples(
             state,
             estimator=DirectBranchTd(),
-            reward_config=runtime.config.reward_config,
+            reward_config=collector.reward,
         ).actor
     )
     assert (
         prepare_samples(
             restored,
             estimator=DirectBranchTd(),
-            reward_config=runtime.config.reward_config,
+            reward_config=collector.reward,
         ).critic
         == prepare_samples(
             state,
             estimator=DirectBranchTd(),
-            reward_config=runtime.config.reward_config,
+            reward_config=collector.reward,
         ).critic
     )
 
@@ -805,20 +774,20 @@ async def test_one_value_head_is_built_for_the_whole_call(monkeypatch) -> None:
     exactly the seam a per-pass ``version`` or a per-pass timeout would drift through
     tomorrow.
     """
-    import focus.loop as loop_module
+    import focus.collector as collector_module
 
     built: list[Any] = []
-    real = loop_module._value_head
+    real = collector_module.NodeScorer  # type: ignore[attr-defined]
 
-    def counting(runtime: Runtime) -> Any:
-        head = real(runtime)
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        head: Any = real(*args, **kwargs)
         built.append(head)
         return head
 
-    monkeypatch.setattr(loop_module, "_value_head", counting)
+    monkeypatch.setattr(collector_module, "NodeScorer", counting)
 
     result = await prepared(
-        "solve it", _value_runtime(LengthReward()), estimator=DirectBranchTd()
+        "solve it", _value_collector(LengthReward()), estimator=DirectBranchTd()
     )
 
     assert result.actor
@@ -849,16 +818,16 @@ def ConstantReward(value: float) -> Critic:
     return Critic.constant(value)
 
 
-def _value_runtime(critic: Critic, **kwargs: Any) -> Runtime:
-    """A runtime with a value head."""
-    return _runtime(critic=critic, **kwargs)
+def _value_collector(critic: Critic, **kwargs: Any) -> Collector:
+    """A collector with a value head."""
+    return _collector(critic=critic, **kwargs)
 
 
 @pytest.mark.asyncio
 async def test_every_node_the_search_makes_carries_a_baseline() -> None:
     """Including the root, which no expansion produces and every first edge is read
     against."""
-    state = await run_search("solve it", _value_runtime(LengthReward()))
+    state = await _value_collector(LengthReward()).search("solve it")
 
     assert len(state.nodes) > 1
     assert all(node.critic is not None for node in state.nodes.values())
@@ -872,7 +841,7 @@ async def test_later_passes_score_what_they_add_too() -> None:
     model = LengthReward()
 
     result = await prepared(
-        "solve it", _value_runtime(model), estimator=DirectBranchTd()
+        "solve it", _value_collector(model), estimator=DirectBranchTd()
     )
 
     assert result.stats["nodes"] > 0
@@ -885,12 +854,12 @@ async def test_later_passes_score_what_they_add_too() -> None:
 async def test_network_prior_changes_td_through_the_refined_values() -> None:
     base = await prepared(
         "solve it",
-        _runtime(critic=ConstantReward(0.0)),
+        _collector(critic=ConstantReward(0.0)),
         estimator=DirectBranchTd(),
     )
     shifted = await prepared(
         "solve it",
-        _runtime(critic=ConstantReward(0.5)),
+        _collector(critic=ConstantReward(0.5)),
         estimator=DirectBranchTd(),
     )
     assert any(
@@ -917,10 +886,10 @@ async def test_the_value_head_carries_the_runtime_s_bound_on_its_reward_server()
     scoring failure) and nothing else.
     """
     model = StalledReward(timeout=0.01)
-    runtime = _value_runtime(model)
+    collector = _value_collector(model)
 
     result = await asyncio.wait_for(
-        prepared("solve it", runtime, estimator=FixedWeight()), timeout=30
+        prepared("solve it", collector, estimator=FixedWeight()), timeout=30
     )
 
     assert result.actor  # exported, on raw returns
@@ -934,15 +903,15 @@ async def test_the_run_stamps_and_reads_the_runner_s_own_behavior_channel() -> N
     """The export reads a turn's logprobs from the channel the *runner* wrote them to.
 
     One name, and it is the runner's, so a runner filing under ``pi-7`` is exported
-    under ``pi-7``. Two authored strings -- a ``behavior_version`` on the runtime beside
-    ``Policy.version`` -- would raise nothing when they disagreed: every span
+    under ``pi-7``. Two authored strings -- a ``behavior_version`` on the collector
+    beside ``Policy.version`` -- would raise nothing when they disagreed: every span
     would come out with its tokens, its mask and an *empty* logprob list, stamped with a
     provenance claiming the channel it was missing.
     """
-    runtime = _runtime()
-    runtime.runner = _runner(version="pi-7")
+    collector = _collector()
+    collector.agent = _runner(version="pi-7")
 
-    result = await prepared("solve it", runtime, estimator=DirectBranchTd())
+    result = await prepared("solve it", collector, estimator=DirectBranchTd())
 
     assert result.actor
     # and the logprobs are there, not an empty column beside a claim that they are
@@ -956,7 +925,7 @@ async def test_a_dead_value_head_costs_the_baseline_not_the_run(caplog) -> None:
     caplog.set_level(logging.WARNING)
 
     result = await prepared(
-        "solve it", _value_runtime(DeadReward()), estimator=FixedWeight()
+        "solve it", _value_collector(DeadReward()), estimator=FixedWeight()
     )
 
     assert result.actor  # still exported, on raw returns
@@ -982,7 +951,7 @@ async def test_a_value_head_that_miscounts_its_batch_costs_the_baseline_not_the_
     caplog.set_level(logging.WARNING)
 
     result = await prepared(
-        "solve it", _value_runtime(ShortBatchReward()), estimator=FixedWeight()
+        "solve it", _value_collector(ShortBatchReward()), estimator=FixedWeight()
     )
 
     assert result.actor
@@ -1008,16 +977,16 @@ async def test_a_stalled_backend_costs_expansions_not_the_whole_prompt(caplog) -
     """
     caplog.set_level(logging.WARNING)
     gen = StalledGenerator()
-    runtime = _runtime(
+    collector = _collector(
         runner=_runner(generator=gen, generate_timeout=0.01),
         passes=(
-            SearchPass(FifoAllocator(), budget=4, gating=WidthGating(2)),
-            SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+            Phase(Fifo(), 4, max_children=2),
+            Phase(Fifo(), 4, max_pending=4),
         ),
     )
 
     result = await asyncio.wait_for(
-        prepared("solve it", runtime, estimator=FixedWeight()), timeout=30
+        prepared("solve it", collector, estimator=FixedWeight()), timeout=30
     )
 
     assert not result.actor
@@ -1067,21 +1036,21 @@ async def test_cancelling_a_rollout_stops_it_rather_than_failing_its_expansions(
     budget ran out, which is the opposite of what a deadline asked for.
     """
     gen = SlowGenerator()
-    runtime = _runtime(runner=_runner(generator=gen), max_concurrency=2)
+    collector = _collector(runner=_runner(generator=gen), max_concurrency=2)
 
     with pytest.raises(TimeoutError):
-        await asyncio.wait_for(prepared("solve it", runtime), timeout=0.05)
+        await asyncio.wait_for(prepared("solve it", collector), timeout=0.05)
 
     assert gen.cancelled > 0
     assert gen.inflight == 0  # nothing is left running behind the cancelled call
 
 
-class BrokenAllocator(Allocator):
-    """An allocator with a bug in the half that reads the tree."""
+class BrokenPriority(Priority):
+    """A priority with a bug in the half that reads the tree."""
 
     name = "broken"
 
-    def build(self, *args: Any, **kwargs: Any) -> AllocationSession[Any]:
+    def __call__(self, node: NodeInfo) -> float:
         raise ValueError("estimator bug")
 
 
@@ -1094,15 +1063,15 @@ async def test_allocator_errors_propagate_after_the_first_pass() -> None:
     the worse one -- the same bug fires on every prompt of every step, so the run would
     train on quietly unscored batches for as long as nobody read the log.
     """
-    runtime = _runtime(
+    collector = _collector(
         passes=(
-            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-            SearchPass(BrokenAllocator(), budget=1, gating=ConcurrencyGating(4)),
+            Phase(Fifo(), 12, max_children=2),
+            Phase(BrokenPriority(), 1, max_pending=4),
         )
     )
 
     with pytest.raises(ValueError, match="estimator bug"):
-        await prepared("solve it", runtime, estimator=DirectBranchTd())
+        await prepared("solve it", collector, estimator=DirectBranchTd())
 
 
 class StaggeredGenerator(CyclingGenerator):
@@ -1133,19 +1102,19 @@ async def test_a_search_pass_keeps_the_rollouts_that_were_still_in_flight() -> N
     is hit, and nothing is left reserved behind them.
     """
     gen = StaggeredGenerator(["go", "stop-good", "go", "stop-bad"])
-    runtime = _runtime(
+    collector = _collector(
         runner=_runner(generator=gen),
         max_concurrency=3,
-        passes=(SearchPass(FifoAllocator(), budget=1, gating=WidthGating(4)),),
+        passes=(Phase(Fifo(), 1, max_children=4),),
     )
 
-    state = await run_search("solve it", runtime)
+    state = await collector.search("solve it")
 
     assert state.stats["rollouts"] == 3.0  # all three landed; none was thrown away
     assert state.stats["failures"] == 0.0
     assert len(state.nodes[state.root_id].children) == 3
     assert state.stats["turns"] > 1.0  # the drain overshoots the cap...
-    assert state.stats["turns"] <= 1 + 3 * runtime.runner.max_steps  # ...but not past
+    assert state.stats["turns"] <= 1 + 3 * collector.agent.max_steps  # ...but not past
     root = state.nodes[state.root_id]
     assert root.gate.available(root)  # every reservation came back
 
@@ -1196,58 +1165,61 @@ def test_a_pass_budget_is_not_eaten_by_an_earlier_pass_s_failures() -> None:
 @pytest.mark.asyncio
 async def test_a_pure_allocator_grows_the_tree_and_claims_no_export_slot() -> None:
     """It spends real budget, and every exported record still carries a weighter's
-    name -- which is the whole point of the `Allocator`/`Estimator` split."""
-    runtime = _value_runtime(
+    name -- which is the whole point of the priority/estimator split."""
+    collector = _value_collector(
         ConstantReward(0.0),
         passes=(
-            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-            SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
-            SearchPass(ValueRefinement(), budget=8, gating=ConcurrencyGating(4)),
+            Phase(Fifo(), 12, max_children=2),
+            Phase(Fifo(), 4, max_pending=4),
+            Phase(ErrorReduction(), 8, max_pending=4),
         ),
     )
     without = await prepared(
         "solve it",
-        _value_runtime(
+        _value_collector(
             ConstantReward(0.0),
             passes=(
-                SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-                SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
+                Phase(Fifo(), 12, max_children=2),
+                Phase(Fifo(), 4, max_pending=4),
             ),
         ),
         estimator=DirectBranchTd(),
     )
 
-    result = await prepared("solve it", runtime, estimator=DirectBranchTd())
+    result = await prepared("solve it", collector, estimator=DirectBranchTd())
 
     assert {record.estimator for record in result.actor} == {"direct_branch_td"}
     assert result.stats["rollouts"] > without.stats["rollouts"]
 
 
-@pytest.mark.asyncio
-async def test_refinement_sits_out_a_run_with_no_value_head() -> None:
-    runtime = _runtime(
-        critic=None,
-        passes=(
-            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-            SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
-            SearchPass(ValueRefinement(), budget=8, gating=ConcurrencyGating(4)),
-        ),
-    )
-    without = await prepared(
-        "solve it",
-        _runtime(
+def test_error_reduction_without_a_critic_is_refused_before_any_generation() -> None:
+    with pytest.raises(ValueError, match="critic"):
+        _collector(
+            critic=None,
             passes=(
-                SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-                SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
-            )
+                Phase(Fifo(), 12, max_children=2),
+                Phase(ErrorReduction(), 8, max_pending=4),
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_refinement_sits_out_a_run_whose_critic_failed_everywhere() -> None:
+    collector = _collector(
+        critic=DeadReward(),
+        passes=(
+            Phase(Fifo(), 12, max_children=2),
+            Phase(ErrorReduction(), 8, max_pending=4),
         ),
-        estimator=FixedWeight(),
     )
+    without = await _collector(
+        critic=DeadReward(), passes=(Phase(Fifo(), 12, max_children=2),)
+    ).search("solve it")
 
-    result = await prepared("solve it", runtime, estimator=FixedWeight())
+    state = await collector.search("solve it")
 
-    assert result.stats["rollouts"] == without.stats["rollouts"]
+    assert state.stats["rollouts"] == without.stats["rollouts"]
 
 
-def test_passes_are_authored_as_a_tuple() -> None:
-    assert RolloutConfig(passes=()).passes == ()
+def test_phases_are_authored_as_a_tuple() -> None:
+    assert Search([]).phases == ()

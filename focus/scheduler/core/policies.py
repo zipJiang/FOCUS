@@ -65,7 +65,7 @@ class Budget[P: Payload](Termination[P]):
     ``max_rollouts`` (exact whatever the runner does) or a finite ``max_steps``.
 
     The overshoot is *carried*, not compounded: the next pass's cap is computed from
-    what the tree has already spent (:func:`~focus.loop._budget`), so a pass
+    what the tree has already spent (:func:`~focus.collector._budget`), so a pass
     that ran 3 turns over hands the next one a baseline 3 higher and still gets its own
     full share -- the overshoot is paid once, by the whole run's total, never by the
     following pass's evidence.

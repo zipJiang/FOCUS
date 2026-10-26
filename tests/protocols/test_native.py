@@ -2,7 +2,11 @@
 
 import pytest
 
-from focus import OpenAIChatPolicy, OpenAIResponsesPolicy, Runner
+from focus import (
+    OpenAIChatPolicy,
+    OpenAIResponsesPolicy,
+    Runner,
+)
 from focus.generation import NativeToolCall
 from tests.generation.test_openai_chat import (
     _Completions,

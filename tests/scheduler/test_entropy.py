@@ -5,13 +5,12 @@ from typing import Any
 
 import pytest
 
-from focus import TokenEntropyAllocator
+from focus import TokenEntropy
+from focus.allocation import RolloutLedger
 from focus.harness import RolloutState, Turn
-from focus.scheduler import (
-    SchedulerState,
-    SchedulerView,
-    TokenEntropySession,
-)
+from focus.scheduler import SchedulerState, SchedulerView
+from focus.search import _PrioritySession
+from focus.values import RewardConfig
 from tests.helpers import turn as _step
 from tests.trees import root_state
 from tests.trees import search_payload as _rollout
@@ -26,7 +25,11 @@ def _tree(
     return state
 
 
-def _score(state: SchedulerState[Any], policy: TokenEntropySession) -> float:
+def TokenEntropySession(window: int = 8, tags: Any = ("task",)) -> _PrioritySession:
+    return _PrioritySession(TokenEntropy(window, tags), RolloutLedger(RewardConfig()))
+
+
+def _score(state: SchedulerState[Any], policy: _PrioritySession) -> float:
     return policy.score(SchedulerView(state), state.nodes[0])
 
 
@@ -179,6 +182,6 @@ def test_without_logprobs_selection_is_deterministic_rather_than_broken() -> Non
 def test_validation() -> None:
     with pytest.raises(ValueError, match="window"):
         TokenEntropySession(window=0)
-    assert TokenEntropyAllocator(window=16).name == "windowed_token_entropy"
-    # it reads node.critic-free channels only: no backup or scorer requirement
-    assert not TokenEntropySession().requires_scorer
+    assert TokenEntropy(window=16).name == "token_entropy"
+    # it reads generated logprobs only: no critic requirement
+    assert not TokenEntropy().requires_critic

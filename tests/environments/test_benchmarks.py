@@ -9,7 +9,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from focus import ChatCodec, Policy, PolicyFormat, QwenXMLToolCallParser
+from focus import (
+    ChatCodec,
+    Policy,
+    PolicyFormat,
+    QwenXMLToolCallParser,
+)
 from focus.environments.browsercomp_plus import (
     BrowserFind,
     BrowserOpen,

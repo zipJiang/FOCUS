@@ -8,30 +8,26 @@ from typing import Any
 
 import pytest
 
-from focus import (
-    ConcurrencyGating,
-)
+from focus import ErrorReduction, NodeInfo, Priority
 from focus.allocation import (
     BetaBernoulli,
     CalibrationModel,
     Gaussian,
-    NodeWorth,
     Observations,
-    ResidualWorth,
     RolloutLedger,
-    ScoredSession,
-    ValueRefinement,
     retraining_gain,
 )
 from focus.harness import RolloutState
 from focus.scheduler import (
     Budget,
+    ConcurrencyGating,
     Expander,
     FifoSession,
     Scheduler,
     SchedulerState,
     SchedulerView,
 )
+from focus.search import _PrioritySession as ScoredSession
 from focus.statistics import RunningStats
 from focus.values import RewardConfig
 from tests.trees import region, root_state, stamp, stamped_child
@@ -43,9 +39,7 @@ def test_a_session_updates_the_search_owned_counts() -> None:
     state, view = _root()
     run = {state.root_id: Observations(m_done=3)}
 
-    bundle = ScoredSession(
-        _UnitWorth(RewardConfig()), RolloutLedger(RewardConfig(), run)
-    )
+    bundle = ScoredSession(_Unit(), RolloutLedger(RewardConfig(), run))
 
     assert bundle is not None
     assert run[state.root_id].m_done == 3  # what it starts from
@@ -62,11 +56,10 @@ def _root():
     return state, SchedulerView(state)
 
 
-class _UnitWorth(NodeWorth):
+class _Unit(Priority):
     """Any forkable node is worth buying -- isolates reservation from a score recipe."""
 
-    def worth(self, view, node, counts: Observations) -> float:
-        del view, node, counts
+    def __call__(self, node: NodeInfo) -> float:
         return 1.0
 
 
@@ -94,9 +87,7 @@ class _Collection:
 
 def _collection() -> _Collection:
     ledger = RolloutLedger(RewardConfig())
-    return _Collection(
-        ledger.observations, ScoredSession(_UnitWorth(ledger.reward_config), ledger)
-    )
+    return _Collection(ledger.observations, ScoredSession(_Unit(), ledger))
 
 
 def _collected() -> tuple[SchedulerState[Any], _Collection]:
@@ -150,9 +141,7 @@ def test_an_earlier_pass_observation_counts_for_the_advantage_statistic_too() ->
     run = {}
     run[0] = _measured(2.0, 0.5, 4)
 
-    bundle = ScoredSession(
-        _UnitWorth(RewardConfig()), RolloutLedger(RewardConfig(), run)
-    )
+    bundle = ScoredSession(_Unit(), RolloutLedger(RewardConfig(), run))
 
     assert bundle is not None
     seeded = run[0]
@@ -164,9 +153,7 @@ def test_an_earlier_pass_observation_counts_for_the_advantage_statistic_too() ->
 def test_allocation_uses_the_search_owned_ledger() -> None:
     _, view = _root()
     observations = {0: _measured(2.0, 0.5, 4)}
-    allocation = ScoredSession(
-        _UnitWorth(RewardConfig()), RolloutLedger(RewardConfig(), observations)
-    )
+    allocation = ScoredSession(_Unit(), RolloutLedger(RewardConfig(), observations))
     chosen = allocation.select(view)
     assert chosen is not None
     assert observations[chosen.node.id].m_pending == 1
@@ -230,9 +217,9 @@ def test_unfinished_purchases_settle_without_return_evidence() -> None:
 def test_the_shared_selection_refuses_a_node_that_cannot_be_forked() -> None:
     state, view = _root()
     done = stamped_child(state, 0, rollout(region(reward=1.0, done=True)))
-    collection = _collection()
 
-    assert collection.session.score(view, done) == -math.inf
+    assert not view.selectable(done)
+    assert done not in view.frontier()
 
 
 def _stats(*values: float) -> RunningStats:
@@ -442,8 +429,20 @@ def _child(state: SchedulerState[Any], value: float | None) -> Any:
     return node
 
 
-def _refinement(model: CalibrationModel | None = None) -> ResidualWorth:
-    return ResidualWorth(RewardConfig(), model or BetaBernoulli())
+class _Gain:
+    """The error-reduction priority read as a number, with a refusal reading 0.0."""
+
+    def __init__(self, model: CalibrationModel | None) -> None:
+        self.priority = ErrorReduction(model)
+        self.reward_config = RewardConfig()
+
+    def worth(self, view, node, counts: Observations) -> float:
+        value = self.priority(NodeInfo(node, view, self.reward_config, counts, 0))
+        return 0.0 if value is None else value
+
+
+def _refinement(model: CalibrationModel | None = None) -> _Gain:
+    return _Gain(model)
 
 
 def test_a_node_with_nothing_left_to_learn_scores_zero_and_is_refused() -> None:
@@ -456,12 +455,12 @@ def test_a_node_with_nothing_left_to_learn_scores_zero_and_is_refused() -> None:
     silent = _child(state, None)
     settled = _child(state, 1.0)
     worth = _refinement()
-    selection = ScoredSession(worth, RolloutLedger(worth.reward_config))
 
     assert worth.worth(view, unmeasured, _ledger()) == pytest.approx(0.0, abs=1e-15)
     assert worth.worth(view, silent, _ledger()) == 0.0
     assert worth.worth(view, settled, _ledger(1.0, 1.0, 1.0)) == 0.0
-    assert not selection.eligible(0.0)
+    info = NodeInfo(settled, view, RewardConfig(), _ledger(1.0, 1.0, 1.0), 0)
+    assert ErrorReduction()(info) is None  # refused, not ranked last
 
 
 def test_evidence_against_the_critic_outbids_evidence_for_it() -> None:
@@ -497,7 +496,7 @@ def test_two_lucky_wins_no_longer_dominate_the_frontier() -> None:
 
 def test_purchases_in_flight_count_as_evidence_that_has_not_landed() -> None:
     """`n_eff` is the ledger plus `m_pending`, which is both halves of one fact: the
-    derivation's `n`, and `ScoredSession`'s promise that a node cannot win the
+    derivation's `n`, and the session's promise that a node cannot win the
     whole budget before its first rollout returns."""
     state, view = _root()
     adrift = _child(state, 0.0)
@@ -520,11 +519,9 @@ def test_carried_returns_let_refinement_discriminate_on_its_first_selection() ->
     state.regate(ConcurrencyGating(4))
     run = {calibrated.id: _measured(1.0, 0.1, 6), adrift.id: _measured(1.0, 0.1, 6)}
 
-    bundle = ValueRefinement().build(view, RolloutLedger(RewardConfig(), run))
+    bundle = ScoredSession(ErrorReduction(), RolloutLedger(RewardConfig(), run))
 
-    assert bundle is not None
-    assert isinstance(bundle, ScoredSession)
-    assert bundle.score(view, calibrated) == 0.0
+    assert math.isnan(bundle.score(view, calibrated))  # refused
     assert bundle.score(view, adrift) > 0.0
 
 
@@ -542,22 +539,12 @@ def test_the_gaussian_model_ranks_a_drifted_node_over_a_calibrated_one() -> None
     assert calibrated < drifted
 
 
-def test_refinement_refuses_a_pass_when_nothing_filled_the_value_channel() -> None:
-    state, view = _root()
-    stamped_child(state, 0, rollout(region(reward=5.0, done=True)))
-
-    assert ValueRefinement().build(view, RolloutLedger(RewardConfig(), {})) is None
-
-    state.nodes[0].critic = 0.25
-    assert ValueRefinement().build(view, RolloutLedger(RewardConfig(), {}))
-
-
 def test_refinement_takes_its_model_by_config_or_already_built() -> None:
     """A caller passes a built model or nothing."""
     built = Gaussian(v_prior=0.5)
 
-    assert isinstance(ValueRefinement().model, BetaBernoulli)
-    assert ValueRefinement(model=built).model is built
+    assert isinstance(ErrorReduction().calibration, BetaBernoulli)
+    assert ErrorReduction(calibration=built).calibration is built
 
 
 def test_refinement_refuses_a_prior_strength_it_cannot_divide_by() -> None:
@@ -647,10 +634,10 @@ def test_birth_samples_alone_let_the_first_pass_discriminate() -> None:
     state.regate(ConcurrencyGating(4))
     calibrated, adrift = forks
 
-    bundle = ValueRefinement().build(view, RolloutLedger(RewardConfig(), observations))
+    bundle = ScoredSession(
+        ErrorReduction(), RolloutLedger(RewardConfig(), observations)
+    )
 
-    assert bundle is not None
     assert all(counts.m_done == 0 for counts in observations.values())
-    assert isinstance(bundle, ScoredSession)
-    assert bundle.score(view, calibrated) == 0.0
+    assert math.isnan(bundle.score(view, calibrated))  # refused
     assert bundle.score(view, adrift) > 0.0

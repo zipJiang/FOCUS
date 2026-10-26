@@ -22,12 +22,10 @@ import time
 
 import pytest
 
-from focus import (
-    prepare_samples,
-)
 from focus.harness import RolloutState, StepResult, Turn
 from focus.harness.packing import regions
 from focus.harness.workspace import NullWorkspace
+from focus.preparation import prepare_samples
 from focus.scheduler import SchedulerView
 from focus.values import RewardConfig
 from tests.trees import stamped_child

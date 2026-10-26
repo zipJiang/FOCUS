@@ -11,11 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from focus import (
-    WidthGating,
-)
 from focus.harness import RolloutState, Turn
-from focus.scheduler import PASS_KEY, Node, SchedulerState
+from focus.scheduler import PASS_KEY, Node, SchedulerState, WidthGating
 from tests.helpers import VERSION, turn
 
 

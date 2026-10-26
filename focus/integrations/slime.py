@@ -5,14 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import replace
 from typing import Any, Protocol, cast
 
-from focus.config import RolloutConfig, RolloutSpec
-from focus.export import CriticSampleFactory, SampleFactory, to_samples
+from focus.collector import Collector
+from focus.export import CriticSampleFactory, SampleFactory
 from focus.harness.workspace import Workspace
-from focus.loop import Runtime, collect_samples
-from focus.preparation import Estimator
 from focus.preparation.records import ESTIMATOR_KEY, LANE_KEY
 
 logger = logging.getLogger(__name__)
@@ -26,38 +23,33 @@ class GenerateHook(Protocol):
 
 
 def make_generate(
-    spec: RolloutSpec,
-    runtime_factory: Callable[[Any], Runtime],
+    collector_factory: Callable[[Any], Collector],
     *,
-    estimator: Estimator | None,
-    own_services: bool = True,
+    own: bool = True,
     to_prompt: Callable[[Any], Any] = lambda sample: sample,
     workspace_factory: Callable[[Any], Workspace] | None = None,
     sample_factory: SampleFactory[Any] | None = None,
     critic_sample_factory: CriticSampleFactory[Any] | None = None,
     min_abs_advantage: float | None = None,
 ) -> GenerateHook:
-    """Build Slime's generation callback from a runtime factory.
+    """Build Slime's generation callback from a collector factory.
 
-    The factory supplies the runner, model clients, execution services, and optional
-    scorers. The hook applies spec.config to a new Runtime record, then collects and
-    exports one group per sample. It preserves the factory's collaborators.
+    The factory builds one :class:`~focus.collector.Collector` per distinct Slime
+    ``args`` object; the hook collects and exports one group per sample with it.
+    Sampling comes from the agent and the search phases; Slime's ``sampling_params``
+    argument is accepted but does not override them.
 
-    to_prompt extracts the prompt; workspace_factory creates each prompt's workspace.
-    Sampling comes from Runner and RolloutConfig.proposal. Slime's sampling_params
-    argument is accepted by the callback but does not override those settings.
+    ``to_prompt`` extracts the prompt and ``workspace_factory`` creates each prompt's
+    workspace. With ``own=True``, :meth:`aclose` closes every collector the hook
+    created; pass ``False`` when an enclosing context owns their services and clients.
+    Close the hook after all active calls finish.
 
-    With own_services=True, aclose closes the execution services returned by the
-    factory’s runner. Use False when an enclosing context owns shared services.
-    Model-client lifetime follows the executor's own_clients setting. Close the
-    hook after all active calls finish.
-
-    Actor and critic factories customize exported records. min_abs_advantage filters
-    actor edges during export without changing collection or critic targets.
+    Actor and critic factories customize exported records. ``min_abs_advantage``
+    filters actor edges during export without changing collection or critic targets.
     """
-    cached: tuple[Any, Runtime] | None = None
+    cached: tuple[Any, Collector] | None = None
     creation = asyncio.Lock()
-    owned: list[Runtime] = []
+    owned: list[Collector] = []
 
     async def generate(
         args: Any, sample: Any, sampling_params: Any = None
@@ -65,22 +57,18 @@ def make_generate(
         nonlocal cached
         async with creation:
             if cached is None or cached[0] is not args:
-                runtime = runtime_factory(args)
-                cached = (args, replace(runtime, config=spec.config))
+                cached = (args, collector_factory(args))
                 owned.append(cached[1])
-            runtime = cached[1]
+            collector = cached[1]
         # Another call may replace the cache while this call awaits search.
         index = getattr(sample, "index", 0)
         # Each prompt receives its own workspace; tree branches fork that state.
         workspace = None if workspace_factory is None else workspace_factory(sample)
-        result = await collect_samples(
-            to_prompt(sample), runtime, estimator=estimator, workspace=workspace
-        )
-        samples = to_samples(
-            result,
-            group_index=index,
-            sample_factory=sample_factory,
-            critic_sample_factory=critic_sample_factory,
+        batch = await collector.collect(to_prompt(sample), workspace=workspace)
+        samples = batch.to_records(
+            index,
+            actor_factory=sample_factory,
+            critic_factory=critic_sample_factory,
             min_abs_advantage=min_abs_advantage,
         )
         # Warn when a prompt contributes no samples; include collection failures.
@@ -92,44 +80,34 @@ def make_generate(
             ),
             index,
             len(samples),
-            len(result.actor),
-            len(result.critic),
-            dict(result.stats),
-            len(result.failures),
+            len(batch.actor),
+            len(batch.critic),
+            dict(batch.stats),
+            len(batch.failures),
         )
         return samples
 
     async def aclose() -> None:
         nonlocal cached
         async with creation:
-            services = (
-                {
-                    id(runtime.runner.services): runtime.runner.services
-                    for runtime in owned
-                }
-                if own_services
-                else {}
-            )
+            collectors = list({id(c): c for c in owned}.values()) if own else []
             owned.clear()
             cached = None
             failures: list[Exception] = []
-            for service in services.values():
+            closed: set[int] = set()
+            for collector in collectors:
+                # Collectors built for different args may share one execution service.
+                shared = id(collector.agent.services) in closed
+                closed.add(id(collector.agent.services))
                 try:
-                    await service.aclose()
+                    await collector.aclose(services=not shared)
                 except Exception as exc:
                     failures.append(exc)
             if failures:
-                raise ExceptionGroup("Slime service cleanup failed", failures)
+                raise ExceptionGroup("Slime collector cleanup failed", failures)
 
     generate.__dict__["aclose"] = aclose
     return cast(GenerateHook, generate)
 
 
-__all__ = [
-    "ESTIMATOR_KEY",
-    "LANE_KEY",
-    "RolloutConfig",
-    "RolloutSpec",
-    "make_generate",
-    "to_samples",
-]
+__all__ = ["ESTIMATOR_KEY", "LANE_KEY", "make_generate"]

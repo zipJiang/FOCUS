@@ -4,7 +4,10 @@ import pickle
 
 import pytest
 
-from focus import DirectBranchTd, prepare_samples
+from focus import (
+    DirectBranchTd,
+)
+from focus.preparation import prepare_samples
 from focus.values import RewardConfig, tree_values
 from tests.helpers import turn
 from tests.test_preparation_estimators import score, setup

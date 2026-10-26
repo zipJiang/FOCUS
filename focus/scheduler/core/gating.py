@@ -22,19 +22,19 @@ if TYPE_CHECKING:
 class Gate:
     """Reserve/release branch slots for one node: a non-blocking semaphore over it.
 
-    A capacity and an in-flight count, and that is the whole of it -- which is why it is
-    a class rather than an interface with one implementation behind it. What *varies*
-    between policies is the two numbers a :class:`GatingPolicy` mints it with: the
-    capacity, and whether the children a node already has count against it.
+    Two optional caps and an in-flight count: ``max_children`` bounds a node's total
+    branches (children plus in-flight), ``max_pending`` only its in-flight ones.
 
     ``Node[Any]``: gating reads a node's ``children`` and nothing else, so the payload
     type is irrelevant -- and ``Node`` is invariant in it (``payload`` is a mutable
     field), so ``Any`` rather than ``object`` is what a concrete tree's node satisfies.
     """
 
-    def __init__(self, capacity: int, *, count_children: bool) -> None:
-        self._capacity = capacity
-        self._count_children = count_children
+    def __init__(
+        self, *, max_children: int | None = None, max_pending: int | None = None
+    ) -> None:
+        self._max_children = max_children
+        self._max_pending = max_pending
         self._in_use = 0
 
     @property
@@ -43,8 +43,12 @@ class Gate:
 
     def available(self, node: Node[Any]) -> bool:
         """Whether a branch may launch from ``node`` right now."""
-        used = self._in_use + (len(node.children) if self._count_children else 0)
-        return used < self._capacity
+        if self._max_pending is not None and self._in_use >= self._max_pending:
+            return False
+        return (
+            self._max_children is None
+            or self._in_use + len(node.children) < self._max_children
+        )
 
     def reserve(self) -> None:
         """Claim a slot (on launch)."""
@@ -69,7 +73,7 @@ class WidthGating(GatingPolicy):
         self._width = max(1, width)
 
     def gate(self, node: Node[Any]) -> Gate:
-        return Gate(self._width, count_children=True)
+        return Gate(max_children=self._width)
 
 
 class ConcurrencyGating(GatingPolicy):
@@ -79,7 +83,7 @@ class ConcurrencyGating(GatingPolicy):
         self._limit = max(1, limit)
 
     def gate(self, node: Node[Any]) -> Gate:
-        return Gate(self._limit, count_children=False)
+        return Gate(max_pending=self._limit)
 
 
 __all__ = ["ConcurrencyGating", "Gate", "GatingPolicy", "WidthGating"]

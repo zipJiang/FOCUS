@@ -9,16 +9,17 @@ from typing import Any
 import pytest
 
 from focus import (
-    ConcurrencyGating,
-    FifoAllocator,
+    ErrorReduction,
+    Fifo,
+    Phase,
     RewardConfig,
-    RolloutLedger,
-    TokenEntropyAllocator,
+    TokenEntropy,
 )
-from focus.allocation import ValueRefinement
+from focus.allocation import RolloutLedger
 from focus.scheduler import (
     AllocationSession,
     Budget,
+    ConcurrencyGating,
     Expander,
     FifoSession,
     Node,
@@ -29,6 +30,7 @@ from focus.scheduler import (
     SchedulerView,
     edge_return,
 )
+from focus.search import _PrioritySession
 from tests.helpers import rollout, turn
 from tests.scheduler.fakes import Toy
 from tests.trees import root_state, stamp
@@ -318,7 +320,7 @@ def test_ranked_scan_does_not_copy_frontier_and_scores_each_node_once() -> None:
 
 @pytest.mark.parametrize(
     "allocator",
-    [FifoAllocator(), TokenEntropyAllocator(), ValueRefinement()],
+    [Fifo(), TokenEntropy(), ErrorReduction()],
 )
 def test_configuration_creates_isolated_sessions(allocator) -> None:
     config = RewardConfig()
@@ -326,7 +328,7 @@ def test_configuration_creates_isolated_sessions(allocator) -> None:
     sessions = []
     for view in views:
         view.root.critic = 0.5
-        sessions.append(allocator.build(view, RolloutLedger(config)))
+        sessions.append(_PrioritySession(allocator, RolloutLedger(config)))
     first, second = sessions
     assert first is not None
     assert second is not None
@@ -452,33 +454,17 @@ def test_invalid_checkpoint_boundaries_do_not_partially_record_evidence() -> Non
 async def test_concurrent_searches_share_configuration_without_sharing_evidence() -> (
     None
 ):
-    from focus import SearchPass, run_search
-    from tests.test_loop import _runtime
+    from focus.allocation.evidence import EVIDENCE_KEY
+    from tests.test_collector import _collector
 
-    class TrackedFifo(FifoAllocator):
-        def __init__(self):
-            self.sessions = []
-
-        def build(self, view, ledger):
-            session = super().build(view, ledger)
-            self.sessions.append(session)
-            return session
-
-    allocator = TrackedFifo()
-    runtime = _runtime(passes=(SearchPass(allocator, 4, ConcurrencyGating(2)),))
-    states = await asyncio.gather(
-        run_search("first", runtime), run_search("second", runtime)
-    )
-    assert len(allocator.sessions) == 2
-    first, second = allocator.sessions
-    assert first.ledger is not second.ledger
-    assert first.ledger.observations is not second.ledger.observations
-    for session in allocator.sessions:
-        state = next(
-            state for state in states if state.nodes[0] is session.ledger._root
-        )
-        _assert_settled(state, session)
+    collector = _collector(passes=(Phase(Fifo(), 4, max_pending=2),))
+    states = await asyncio.gather(collector.search("first"), collector.search("second"))
+    first, second = (state.nodes[0].metadata[EVIDENCE_KEY] for state in states)
+    assert first.observations is not second.observations
+    for state, evidence in zip(states, (first, second), strict=True):
+        assert all(n.gate.in_use == 0 for n in state.nodes.values())
+        assert all(c.m_pending == 0 for c in evidence.observations.values())
         assert (
-            sum(c.m_done for c in session.ledger.observations.values())
+            sum(c.m_done for c in evidence.observations.values())
             == state.stats["rollouts"]
         )

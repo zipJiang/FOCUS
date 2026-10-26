@@ -20,7 +20,7 @@ from focus.scheduler.core.allocation import (
 from focus.scheduler.core.critic import (
     NodeScorer,
 )
-from focus.scheduler.core.entropy import TokenEntropySession, token_entropies
+from focus.scheduler.core.entropy import token_entropies
 from focus.scheduler.core.execution import (
     PASS_KEY,
     Expander,
@@ -57,7 +57,6 @@ __all__ = [
     "Reservation",
     "FifoSession",
     "RankedSession",
-    "TokenEntropySession",
     "Budget",
     "ConcurrencyGating",
     "Expander",

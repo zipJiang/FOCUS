@@ -30,11 +30,6 @@ import math
 from collections.abc import Iterable, Sequence
 from itertools import accumulate
 
-from focus.harness import AnyRollout
-from focus.harness.turn import TurnTag
-from focus.scheduler.core.allocation import AllocationLedger, RankedSession
-from focus.scheduler.core.tree import Node, SchedulerView
-
 
 def token_entropies(logprobs: Iterable[float]) -> list[float]:
     """The per-token proxy ``p * -log p``, one per finite logprob.
@@ -69,55 +64,4 @@ def _edge_entropy(logprobs: Sequence[float], window: int) -> float | None:
     )
 
 
-class TokenEntropySession(RankedSession[AnyRollout]):
-    """Expand the node whose children were generated least certainly.
-
-    Per child edge: the highest sliding-window mean of per-token ``p * -log p``. Per
-    node: the plain mean of its children's edge scores -- *unweighted*, so one long
-    child cannot outvote a short one (the difference from a token-weighted average, and
-    the reason this is "average window entropy").
-
-    A node with no scored children scores ``+inf``, so untried frontier tips get
-    expanded before anything already branched -- an optimistic initialization, and the
-    reason no separate "prefer childless" rule is needed.
-
-    Rollout payloads only, unlike the payload-agnostic policies in
-    :mod:`~focus.scheduler.core.policies`: the criterion is about generated
-    tokens, so it needs a payload that has them.
-
-    ``tags`` names which turns of the edge count -- ``("task",)`` by default, the task
-    work only. A fold's turns sit on the same edge (a fold checkpoint's edge is the work
-    *and* the fold that ended it), but an agentic compactor's summary tokens are
-    uncertainty about summarizing, not about the task, so they are left out unless asked
-    for (``tags=None`` scores every turn).
-
-    Needs per-token logprobs: the generator must be asked for them
-    (``SamplingParams(logprobs=0)``) or every node scores ``+inf`` and selection
-    degenerates to the id tie-break.
-    """
-
-    def __init__(
-        self,
-        window: int = 8,
-        tags: Sequence[TurnTag] | None = ("task",),
-        *,
-        ledger: AllocationLedger[AnyRollout] | None = None,
-    ) -> None:
-        super().__init__(ledger)
-        if window < 1:
-            raise ValueError("window must be >= 1")
-        self._window = window
-        self._tags = None if tags is None else frozenset(tags)
-
-    def score(self, view: SchedulerView[AnyRollout], node: Node[AnyRollout]) -> float:
-        """The node's mean child-edge windowed entropy (``inf`` with none to score)."""
-        scores = []
-        for child in view.children(node):
-            edge = child.payload.generated_since(node.payload, tags=self._tags)
-            entropy = _edge_entropy(edge, self._window)
-            if entropy is not None:
-                scores.append(entropy)
-        return sum(scores) / len(scores) if scores else math.inf
-
-
-__all__ = ["TokenEntropySession", "token_entropies"]
+__all__ = ["token_entropies"]

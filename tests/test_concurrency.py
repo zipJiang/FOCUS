@@ -34,21 +34,15 @@ from typing import Any
 import pytest
 
 from focus import (
-    Allocator,
-    ConcurrencyGating,
-    FifoAllocator,
-    SearchPass,
-    WidthGating,
+    Collector,
+    Fifo,
+    NodeInfo,
+    Phase,
+    Priority,
+    Search,
 )
-from focus.allocation import (
-    AllocationSession,
-    NodeWorth,
-    Observations,
-    RolloutLedger,
-    ScoredSession,
-)
+from focus.allocation import Observations, RolloutLedger
 from focus.codec import ChatCodec
-from focus.config import RolloutConfig
 from focus.critic import Critic
 from focus.export import to_samples
 from focus.generation import (
@@ -67,11 +61,11 @@ from focus.harness import (
     build_budget,
 )
 from focus.harness.turn import Turn
-from focus.loop import Runtime
-from focus.preparation.records import PreparedBatch
+from focus.preparation.records import Batch
 from focus.protocols import Summary
 from focus.scheduler import (
     Budget,
+    ConcurrencyGating,
     Expander,
     GatingPolicy,
     Node,
@@ -80,6 +74,7 @@ from focus.scheduler import (
     SchedulerState,
     SchedulerView,
     Termination,
+    WidthGating,
 )
 from focus.values import RewardConfig
 from tests.estimators import FixedWeight
@@ -668,20 +663,13 @@ class JitterGenerator(Policy[Any]):
         )
 
 
-class _UnitWorth(NodeWorth):
-    def worth(self, view, node, counts: Observations) -> float:
-        del view, counts
-        return float(len(node.payload.turns))
-
-
-class _PreferDepth(Allocator):
-    """Expand the deepest forkable node -- a later pass without a ranking recipe."""
+class _PreferDepth(Priority):
+    """Expand the deepest forkable node -- a later phase without a ranking recipe."""
 
     name = "prefer_depth"
 
-    def build(self, view, ledger) -> AllocationSession[Any]:
-        del view
-        return ScoredSession(_UnitWorth(ledger.reward_config), ledger)
+    def __call__(self, node: NodeInfo) -> float:
+        return float(len(node.node.payload.turns))
 
 
 def _runtime(
@@ -689,7 +677,7 @@ def _runtime(
     *,
     critic: Critic | None = None,
     max_concurrency: int = 8,
-) -> Runtime:
+) -> Collector:
     """The whole loop over the fakes: folding runner, every-turn strategy, both
     default-shaped weighters at budgets this module can afford."""
     runner: Runner[Round, ToolTurn] = Runner(
@@ -707,23 +695,23 @@ def _runtime(
         protocol=Summary(build_budget(max_prompt_tokens=64, max_interactions=2)),
         max_steps=6,
     )
-    return Runtime(
-        runner=runner,
+    return Collector(
+        runner,
         critic=critic,
-        config=RolloutConfig(
+        search=Search(
+            [
+                Phase(Fifo(), 8, max_children=3),
+                Phase(_PreferDepth(), 8, max_pending=4),
+                Phase(_PreferDepth(), 8, max_pending=4),
+            ],
             max_concurrency=max_concurrency,
-            passes=(
-                SearchPass(FifoAllocator(), budget=8, gating=WidthGating(3)),
-                SearchPass(_PreferDepth(), budget=8, gating=ConcurrencyGating(4)),
-                SearchPass(_PreferDepth(), budget=8, gating=ConcurrencyGating(4)),
-            ),
         ),
     )
 
 
 @pytest.fixture
 def trees(monkeypatch: pytest.MonkeyPatch) -> list[SchedulerState[Any]]:
-    """Every tree :func:`run_rollout` seeds, captured as it is seeded.
+    """Every tree a collection seeds, captured as it is seeded.
 
     The loop returns records, not the tree they came off -- deliberately, since a result
     is meant to outlive the search. But the invariants this module is about (a gate that
@@ -767,7 +755,7 @@ async def test_the_whole_loop_exports_records_that_match_the_tree_they_came_off(
 
     result = await prepared("solve it", runtime, estimator=FixedWeight())
 
-    assert isinstance(result, PreparedBatch)
+    assert isinstance(result, Batch)
     assert result.actor
     assert result.critic
     assert {record.estimator for record in result.actor} == {"test_fixed"}

@@ -12,8 +12,7 @@ typed arguments, and this parser is the one that reads them.
 The price is exactness, and it is why :attr:`NativeToolCallParser.trainable` is
 ``False``: the call never was tokens, so a training pass over this turn's ids would be a
 pass over the prose around an action it cannot see. A rollout under this parser is
-evaluation -- :func:`~focus.loop.run_search` refuses a training-configured
-tree on a policy carrying it, by design.
+evaluation: preparation refuses actor samples from its inexact generations.
 """
 
 from __future__ import annotations

@@ -27,9 +27,6 @@ from dataclasses import replace
 
 import pytest
 
-from focus import (
-    prepare_samples,
-)
 from focus.export import to_samples
 from focus.harness import (
     RolloutState,
@@ -40,6 +37,7 @@ from focus.harness import (
 )
 from focus.harness.packing import PackedSequence
 from focus.harness.turn import logprob, trainable_logprobs
+from focus.preparation import prepare_samples
 from focus.preparation.records import spans_of
 from focus.scheduler import SchedulerState, SchedulerView
 from focus.values import RewardConfig

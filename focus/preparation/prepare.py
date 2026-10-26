@@ -12,8 +12,8 @@ from focus.preparation.base import Advantage, Edge, Estimator
 from focus.preparation.direct_branch import DirectBranchTd
 from focus.preparation.records import (
     ActorSample,
+    Batch,
     CriticSample,
-    PreparedBatch,
     _refuse_non_finite,
     _trainable_edges,
     edge_spans,
@@ -69,7 +69,7 @@ def prepare_samples(
     *,
     reward_config: RewardConfig,
     estimator: Estimator | None = _PAPER_RECIPE,
-) -> PreparedBatch:
+) -> Batch:
     """Compute one actor recipe and the critic's branch-mean targets.
 
     The default recipe is the paper's direct-branch TD. Critic targets do not depend
@@ -135,7 +135,7 @@ def prepare_samples(
         _refuse_non_finite(record)
     for target in critic:
         _refuse_non_finite(target)
-    result = PreparedBatch(
+    result = Batch(
         actor=tuple(actor),
         critic=tuple(critic),
         reward_config=reward_config,

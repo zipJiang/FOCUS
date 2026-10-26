@@ -3,17 +3,19 @@ from __future__ import annotations
 import pytest
 
 from focus import (
+    Collector,
     ExecutionServices,
+    Fifo,
     InMemoryWorkspace,
     NullWorkspace,
-    Runtime,
+    Phase,
+    Search,
 )
-from focus.config import RolloutSpec
 from focus.generation.parsing import HermesToolCallParser
 from focus.harness import BaseTool, Env, StepResult
 from focus.harness.workspace import StorageTool
 from focus.integrations.slime import make_generate
-from focus.preparation import PreparedBatch
+from focus.preparation import Batch
 from tests.helpers import ScriptedGenerator, SubmitEnv, tool_call, toy_runner
 
 
@@ -102,9 +104,13 @@ def test_storage_validation_accepts_capabilities_without_concrete_type():
         StorageTool().validate_workspace(NullWorkspace())
 
 
-@pytest.mark.parametrize("own_services", [False, True])
+def _collector(runner):
+    return Collector(runner, search=Search([Phase(Fifo(), 1, max_children=1)]))
+
+
+@pytest.mark.parametrize("own", [False, True])
 async def test_slime_preserves_factory_services_and_respects_ownership(
-    monkeypatch, own_services
+    monkeypatch, own
 ):
     closed = []
 
@@ -118,25 +124,23 @@ async def test_slime_preserves_factory_services_and_respects_ownership(
     seen = []
 
     def factory(args):
-        runner = toy_runner(policy, services=services)
-        return Runtime(runner=runner)
+        return _collector(toy_runner(policy, services=services))
 
-    async def collect(prompt, runtime, **kwargs):
-        seen.append(runtime)
-        return PreparedBatch()
+    async def collect(self, prompt, **kwargs):
+        seen.append(self)
+        return Batch()
 
-    monkeypatch.setattr("focus.integrations.slime.collect_samples", collect)
-    hook = make_generate(
-        RolloutSpec(), factory, estimator=None, own_services=own_services
-    )
-    # Distinct actor args create two runtimes that deliberately share services.
+    monkeypatch.setattr(Collector, "collect", collect)
+    hook = make_generate(factory, own=own)
+    # Distinct actor args create two collectors that deliberately share services.
     await hook(object(), "first")
     await hook(object(), "second")
-    assert all(runtime.runner.services is services for runtime in seen)
+    assert len(seen) == 2
+    assert all(collector.agent.services is services for collector in seen)
     await hook.aclose()
     await hook.aclose()
-    assert closed == ([services] if own_services else [])
-    if not own_services:
+    assert closed == ([services] if own else [])
+    if not own:
         await services.aclose()
 
 
@@ -155,18 +159,18 @@ async def test_slime_closes_other_owned_services_after_one_close_fails(monkeypat
                 raise RuntimeError("close failed")
 
     def factory(name):
-        return Runtime(
-            runner=toy_runner(ScriptedGenerator(["answer"]), services=Services(name))
+        return _collector(
+            toy_runner(ScriptedGenerator(["answer"]), services=Services(name))
         )
 
     async def collect(*args, **kwargs):
-        return PreparedBatch()
+        return Batch()
 
-    monkeypatch.setattr("focus.integrations.slime.collect_samples", collect)
-    hook = make_generate(RolloutSpec(), factory, estimator=None)
+    monkeypatch.setattr(Collector, "collect", collect)
+    hook = make_generate(factory)
     await hook("bad", "first")
     await hook("good", "second")
-    with pytest.raises(ExceptionGroup, match="service cleanup failed"):
+    with pytest.raises(ExceptionGroup, match="collector cleanup failed"):
         await hook.aclose()
     assert closed == ["bad", "good"]
     await hook.aclose()

@@ -11,18 +11,15 @@ from typing import Any
 
 import pytest
 
-from focus import (
-    prepare_samples,
-)
 from focus.export import format_edges, format_tree, to_samples
 from focus.harness import PackedSequence, TurnTag
-from focus.preparation import Advantage
+from focus.preparation import Advantage, prepare_samples
 from focus.preparation.records import (
     ESTIMATOR_KEY,
     LANE_KEY,
     ActorSample,
+    Batch,
     CriticSample,
-    PreparedBatch,
     edge_spans,
 )
 from focus.scheduler import SchedulerView
@@ -216,9 +213,9 @@ def _span(n: int = 3, *, tag: TurnTag = "task") -> PackedSequence:
     )
 
 
-def _result() -> PreparedBatch:
+def _result() -> Batch:
     """One GAE edge, a child-relative sibling pair, and a critic target."""
-    return PreparedBatch(
+    return Batch(
         actor=(
             ActorSample(
                 node_id=1,
@@ -329,7 +326,7 @@ def test_a_custom_sample_factory_builds_the_trainer_s_own_type() -> None:
 
 def test_a_spans_tag_reaches_the_trainer_sample() -> None:
     """Fold tokens and task tokens are the same shape; only the tag tells them apart."""
-    result = PreparedBatch(
+    result = Batch(
         actor=(
             ActorSample(
                 node_id=1,
@@ -454,7 +451,7 @@ def test_filtered_custom_factory_receives_original_edge_count() -> None:
 @pytest.mark.parametrize("cutoff", [-0.01, float("nan"), float("inf"), -float("inf")])
 def test_invalid_advantage_cutoff_is_rejected(cutoff: float) -> None:
     with pytest.raises(ValueError, match="finite and nonnegative"):
-        to_samples(PreparedBatch(), 0, min_abs_advantage=cutoff)
+        to_samples(Batch(), 0, min_abs_advantage=cutoff)
 
 
 @pytest.mark.parametrize("weight", [float("nan"), float("inf"), -float("inf")])
@@ -481,7 +478,7 @@ def test_a_result_survives_the_trip_back_from_a_worker() -> None:
     state.stats["rollouts"] = 3.0
 
     for result in (
-        PreparedBatch(),
+        Batch(),
         prepare_samples(
             state,
             estimator=None,
@@ -594,7 +591,7 @@ def test_the_edge_report_names_every_tag_an_edge_actually_carries() -> None:
     task turns landed in different packs printed as pure ``task`` -- the one thing the
     column exists to tell you apart.
     """
-    result = PreparedBatch(
+    result = Batch(
         actor=(
             ActorSample(
                 node_id=1,
@@ -614,7 +611,7 @@ def test_the_edge_report_survives_a_record_with_no_spans() -> None:
     A reporter that raises on the record someone is trying to look at is the reporter
     failing at its only job, so an empty span tuple prints ``-`` like an absent stamp.
     """
-    result = PreparedBatch(
+    result = Batch(
         actor=(
             ActorSample(
                 node_id=2,

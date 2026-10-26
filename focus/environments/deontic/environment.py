@@ -537,7 +537,7 @@ class World:
 
     Three things rather than a runner alone, because a caller has to hand the other two
     back to whatever drives the rollout -- ``runner.run_from(prompt, workspace=...)``
-    for one trajectory, ``run_search(prompt, runtime, workspace=...)`` for a tree --
+    for one trajectory, ``collector.search(prompt, workspace=...)`` for a tree --
     and assembling them twice is how the two modes would quietly drift apart.
     """
 

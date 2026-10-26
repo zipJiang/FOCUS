@@ -79,7 +79,7 @@ class ActorSample:
     def __getstate__(self) -> dict[str, Any]:
         """Pickle with a plain dict where the live record holds a read-only proxy.
 
-        The same trade :class:`PreparedBatch` makes for ``stats``, and for the same
+        The same trade :class:`Batch` makes for ``stats``, and for the same
         reason: a ``MappingProxyType`` has no pickle support at all, so freezing
         :attr:`diagnostics` at export would otherwise make every actor record -- and
         the result holding it -- unshippable.
@@ -114,7 +114,7 @@ _NO_STATS: Mapping[str, float] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
-class PreparedBatch:
+class Batch:
     """Everything one prompt produced for training, and what producing it cost.
 
     The records are the deliverable; :attr:`stats` and :attr:`failures` are the search's
@@ -138,6 +138,36 @@ class PreparedBatch:
 
     def __len__(self) -> int:
         return len(self.actor) + len(self.critic)
+
+    def to_records(
+        self,
+        group_index: int,
+        *,
+        actor_factory: Any = None,
+        critic_factory: Any = None,
+        min_abs_advantage: float | None = None,
+    ) -> list[Any]:
+        """Flatten into trainer records, one per actor span and one per critic target.
+
+        Without factories each record is a plain dict; see
+        :func:`~focus.export.to_samples` for the record schema and the factory
+        contract.
+        """
+        from focus.export import to_samples
+
+        return to_samples(
+            self,
+            group_index,
+            sample_factory=actor_factory,
+            critic_sample_factory=critic_factory,
+            min_abs_advantage=min_abs_advantage,
+        )
+
+    def describe(self) -> str:
+        """Actor edges with their diagnostics, then critic targets, one per line."""
+        from focus.export import format_edges
+
+        return format_edges(self)
 
     def __getstate__(self) -> dict[str, Any]:
         """Pickle with a plain dict where the live record holds a read-only proxy.

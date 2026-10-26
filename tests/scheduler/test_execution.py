@@ -7,9 +7,6 @@ from typing import Any, cast
 
 import pytest
 
-from focus import (
-    WidthGating,
-)
 from focus.generation import SamplingParams
 from focus.harness import (
     RolloutState,
@@ -24,6 +21,7 @@ from focus.scheduler import (
     Expander,
     RolloutExpander,
     Scheduler,
+    WidthGating,
 )
 from tests.helpers import (
     ScriptedGenerator,

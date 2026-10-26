@@ -1,6 +1,6 @@
 """How wrong the critic is at a node, and how noisy one more draw there would be.
 
-:class:`~focus.allocation.refinement.ResidualWorth` needs exactly two numbers
+:class:`~focus.search.ErrorReduction` needs exactly two numbers
 per node -- the posterior mean of the squared calibration error :math:`E[(V - V^*)^2
 \\mid \\text{data}]`, and the variance of one more sampled return -- and nothing else
 about the tree. Both are statements about a *distribution over outcomes*, and which

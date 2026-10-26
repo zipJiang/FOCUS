@@ -255,10 +255,8 @@ class Runner[S, A]:
     def policy(self) -> Policy[A]:
         """The model this runner drives, whole.
 
-        Read rather than reassembled: :func:`~focus.loop.run_search` asks it
-        whether a rollout from here could train the model that produced it before
-        spending a search on the answer, and a compactor deriving a nested runner
-        carries the same object rather than four fields that could drift apart.
+        Read rather than reassembled: a compactor deriving a nested runner carries the
+        same object rather than four fields that could drift apart.
         """
         return self._policy
 

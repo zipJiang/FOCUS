@@ -4,7 +4,10 @@ from dataclasses import replace
 
 import pytest
 
-from focus import EveryDecision, SparseCheckpoints
+from focus import (
+    EveryDecision,
+    SparseCheckpoints,
+)
 from focus.harness import InMemoryWorkspace
 from focus.harness.checkpoint import CheckpointPolicy
 from focus.harness.rollout import AnyRollout
