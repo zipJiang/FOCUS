@@ -14,7 +14,6 @@ from focus.config import (
     RolloutConfig,
     RolloutSpec,
     SearchPass,
-    VinePpoConfig,
 )
 from focus.execution import AdmissionPool, ExecutionServices, LocalInferenceExecutor
 from focus.execution.budget import ResourceBudget
@@ -74,7 +73,6 @@ from focus.preparation import (
     DirectBranchTdEstimator,
     GrpoEstimator,
     RefinedTdEstimator,
-    VinePpoEstimator,
     prepare_samples,
     register_estimator,
 )
@@ -129,7 +127,6 @@ __all__ = [
     "RankedSession",
     "TokenEntropySession",
     "SearchPass",
-    "VinePpoConfig",
     "FifoAllocator",
     "register_allocator",
     "prepare_samples",
@@ -223,7 +220,6 @@ __all__ = [
     "RefinedTdEstimator",
     "DirectBranchTdEstimator",
     "GrpoEstimator",
-    "VinePpoEstimator",
     "ValueRefinement",
     "register_estimator",
     # Saying all of the above in a config file, and building it from a name.

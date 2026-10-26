@@ -280,12 +280,6 @@ async def run_search(
         else await runtime.runner.start(prompt, workspace=workspace)
     )
     before_usage = asdict(runtime.runner.services.usage.get(root.episode_id, Usage()))
-    if runtime.config.vine is not None:
-        from focus.vine import run_vine_search
-
-        vine_state = await run_vine_search(root, runtime)
-        _resource_stats(vine_state, runtime, root.episode_id, before_usage)
-        return vine_state
     state: SchedulerState[AnyRollout] = SchedulerState.root(
         root, gating=ConcurrencyGating(1)
     )

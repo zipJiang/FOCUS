@@ -32,26 +32,6 @@ class SearchPass:
 
 
 @registrable(builds_self=True)
-@dataclass(frozen=True)
-class VinePpoConfig:
-    """Root trajectory count and disposable value probes per live checkpoint."""
-
-    group_size: int = 4
-    value_rollouts_per_state: int = 1
-
-    def __post_init__(self) -> None:
-        if type(self.group_size) is not int or self.group_size < 1:
-            raise ValueError("VinePpoConfig.group_size must be a positive integer")
-        if (
-            type(self.value_rollouts_per_state) is not int
-            or self.value_rollouts_per_state < 1
-        ):
-            raise ValueError(
-                "VinePpoConfig.value_rollouts_per_state must be a positive integer"
-            )
-
-
-@registrable(builds_self=True)
 @dataclass(frozen=True, kw_only=True)
 class RolloutConfig:
     """Every knob one rollout is run with, with the value it runs at if unwritten.
@@ -74,7 +54,6 @@ class RolloutConfig:
     """
 
     passes: tuple[SearchPass, ...] = ()
-    vine: VinePpoConfig | None = None
     reward_config: RewardConfig = field(default_factory=RewardConfig)
     #: The law an expansion draws under. A ``mixture`` here obliges whoever builds the
     #: :class:`~focus.loop.Runtime` to set its live ``scorer`` too: an
@@ -95,20 +74,6 @@ class RolloutConfig:
     max_concurrency: int = 4
 
     def __post_init__(self) -> None:
-        if self.vine is not None:
-            if self.passes:
-                raise ValueError("VinePPO cannot be combined with allocation passes")
-            if (
-                not isinstance(self.proposal, AnchorProposal)
-                or self.proposal.proposal_id != self.reward_config.anchor_version
-            ):
-                raise ValueError(
-                    "VinePPO requires the same anchor policy for all draws"
-                )
-            if self.reward_config.gamma != 1.0:
-                raise ValueError("VinePPO outcome differences require gamma=1")
-            if type(self.max_concurrency) is not int or self.max_concurrency < 1:
-                raise ValueError("VinePPO max_concurrency must be a positive integer")
         if not isinstance(self.passes, tuple):
             object.__setattr__(self, "passes", tuple(self.passes))
 
@@ -139,5 +104,4 @@ __all__ = [
     "RolloutConfig",
     "RolloutSpec",
     "SearchPass",
-    "VinePpoConfig",
 ]

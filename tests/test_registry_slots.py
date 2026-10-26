@@ -185,7 +185,6 @@ TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
     (AdvantageEstimator, {"name": "refined_td"}),
     (AdvantageEstimator, {"name": "direct_branch_td"}),
     (AdvantageEstimator, {"name": "grpo"}),
-    (AdvantageEstimator, {"name": "vine_ppo"}),
     (CalibrationModel, {"name": "beta_bernoulli"}),
     (CalibrationModel, {"name": "gaussian", "v_prior": 0.5}),
 )

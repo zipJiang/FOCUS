@@ -15,12 +15,10 @@ from focus.config.rollout import (
     RolloutConfig,
     RolloutSpec,
     SearchPass,
-    VinePpoConfig,
 )
 
 __all__ = [
     "SearchPass",
-    "VinePpoConfig",
     "RolloutConfig",
     "RolloutSpec",
 ]

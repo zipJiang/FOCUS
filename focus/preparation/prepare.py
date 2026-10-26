@@ -23,7 +23,6 @@ from focus.scheduler.core.critic import VALUE_CONTEXTS_KEY
 from focus.scheduler.core.execution import provenance_of
 from focus.scheduler.core.returns import finished_through, importance
 from focus.scheduler.core.tree import SchedulerState, SchedulerView
-from focus.vine import VINE_READY
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +36,6 @@ def prepare_samples(
 ) -> PreparedBatch:
     """Compute one actor recipe and critic targets before flattening token spans."""
     view = SchedulerView(state)
-    if VINE_READY in view.root.metadata and (
-        estimator is None or estimator.name != "vine_ppo"
-    ):
-        raise ValueError("VinePPO collections require the vine_ppo estimator")
     evidence = evidence_of(view, reward_config)
     if evidence.behavior_version not in (None, behavior_version):
         raise ValueError(
