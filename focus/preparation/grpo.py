@@ -1,36 +1,31 @@
-"""Training coefficients calculated from the finished tree."""
+"""Group-relative advantages over independent root rollouts."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
 
-from focus.harness import AnyRollout
-from focus.preparation.base import (
-    AdvantageEstimator,
-    _resolved,
-)
-from focus.preparation.records import ActorSample
-from focus.reward.config import RewardConfig
+from focus.preparation.base import Advantage, Edge, Estimator
 from focus.scheduler.core.returns import finished_below
-from focus.scheduler.core.tree import SchedulerView
 from focus.statistics import RunningStats
+from focus.values import TreeValues
 
 _GRPO_STD_EPSILON = 1e-6
 
 
-class GrpoEstimator(AdvantageEstimator):
-    name = "grpo"
+class Grpo(Estimator):
+    """Each edge's mean finished return, centered and scaled within the prompt group.
 
+    Requires independent rollouts from the root; branching below it is refused.
+    """
+
+    name = "grpo"
     requires_completed_paths = True
 
-    def assign(
-        self,
-        records: Sequence[ActorSample],
-        *,
-        view: SchedulerView[AnyRollout],
-        reward_config: RewardConfig,
-    ) -> None:
+    def advantages(
+        self, edges: Sequence[Edge], values: TreeValues
+    ) -> Sequence[Advantage]:
+        view, reward = values.tree, values.reward
         if any(
             node.id != view.root.id and len(node.children) > 1 for node in view.nodes()
         ):
@@ -39,25 +34,29 @@ class GrpoEstimator(AdvantageEstimator):
                 "branching below the root is unsupported"
             )
         returns = {
-            node.id: reward_config.configured_return(
+            node.id: reward.configured_return(
                 node.payload.turns, len(view.root.payload.turns)
             )
             for node in view.terminals()
         }
         if not returns:
-            return
+            return [Advantage(0.0) for _ in edges]
         group = RunningStats.of(list(returns.values()))
         baseline, spread = group.mean, math.sqrt(group.variance)
-        for record, node in _resolved(records, view):
-            finished = finished_below(view, node) or [node]
-            values = [returns[leaf.id] for leaf in finished if leaf.id in returns]
-            if not values:
+        result = []
+        for edge in edges:
+            finished = finished_below(view, edge.node) or [edge.node]
+            outcomes = [returns[leaf.id] for leaf in finished if leaf.id in returns]
+            if not outcomes:
+                result.append(Advantage(0.0))
                 continue
-            weight = sum(values) / len(values) - baseline
+            weight = sum(outcomes) / len(outcomes) - baseline
             if spread > 0.0:
                 weight /= spread + _GRPO_STD_EPSILON
-            record.weight = weight
-            # the spread rides along because it is the whole group's, not this edge's:
-            # a batch whose weights all look enormous is usually a group that barely
-            # varied, and this is the number that says so
-            record.diagnostics = {"advantage": weight, "std": spread}
+            # the spread is the whole group's: a batch whose weights all look enormous
+            # is usually a group that barely varied, and this is the number that says so
+            result.append(Advantage(weight, {"advantage": weight, "std": spread}))
+        return result
+
+
+__all__ = ["Grpo"]

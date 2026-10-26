@@ -12,7 +12,7 @@ from focus.config import RolloutConfig, SearchPass
 from focus.execution import Usage
 from focus.harness import AnyRollout, RolloutState, Runner
 from focus.harness.workspace import Workspace
-from focus.preparation import AdvantageEstimator, PreparedBatch, prepare_samples
+from focus.preparation import Estimator, PreparedBatch, prepare_samples
 from focus.reward import RewardModel
 from focus.scheduler.core.critic import NodeScorer
 from focus.scheduler.core.execution import PASS_KEY, RolloutExpander
@@ -186,7 +186,7 @@ async def collect_samples(
     prompt: str | AnyRollout,
     runtime: Runtime,
     *,
-    estimator: AdvantageEstimator | None,
+    estimator: Estimator | None,
     workspace: Workspace | None = None,
 ) -> PreparedBatch:
     """Collect a tree and prepare actor and critic samples for a training batch.

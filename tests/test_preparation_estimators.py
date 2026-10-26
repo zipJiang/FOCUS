@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import pickle
+from types import SimpleNamespace
 
 import pytest
 
-from focus import DirectBranchTdEstimator, GrpoEstimator, prepare_samples
+from focus import DirectBranchTd, Grpo, prepare_samples
 from focus.allocation.evidence import RolloutLedger, evidence_of
-from focus.preparation.records import ActorSample
+from focus.preparation import Edge
 from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerView
+from focus.scheduler.core.returns import edge_return
+from focus.values import tree_values
 from tests.helpers import DemoValue, turn
 from tests.trees import search_payload, stamped_child
 from tests.trees import training_root_state as root_state
@@ -30,19 +33,21 @@ def score(node, value):
     node.value_context = f"checkpoint {node.id}"
 
 
-def slot(node):
-    return ActorSample(
-        node_id=node.id,
-        group_id=node.parent_id,
-        spans=(),
-        estimator="direct_branch_td",
-    )
-
-
-def assign(view, config, *nodes):
-    records = [slot(n) for n in nodes]
-    DirectBranchTdEstimator().assign(records, view=view, reward_config=config)
-    return records
+def assign(view, config, *nodes, estimator=None):
+    """The estimator's advantages for the edges into ``nodes``, as weighted records."""
+    edges = []
+    for node in nodes:
+        parent = view.node(node.parent_id)
+        duration = sum(
+            t.transition is not None for t in node.payload.edge(parent.payload)
+        )
+        edges.append(Edge(node, parent, edge_return(node, parent, config), duration))
+    estimator = estimator or DirectBranchTd()
+    advantages = estimator.advantages(edges, tree_values(view, config))
+    return [
+        SimpleNamespace(weight=float(a.value), diagnostics=dict(a.diagnostics))
+        for a in advantages
+    ]
 
 
 def test_refined_terminal_weights_and_critic_contexts():
@@ -54,7 +59,7 @@ def test_refined_terminal_weights_and_critic_contexts():
     score(b, 999)
     batch = prepare_samples(
         state,
-        estimator=DirectBranchTdEstimator(),
+        estimator=DirectBranchTd(),
         reward_config=config,
     )
     assert [x.weight for x in batch.actor] == pytest.approx([-1.4 / 3, 1 - 1.4 / 3])
@@ -65,7 +70,7 @@ def test_refined_terminal_weights_and_critic_contexts():
     restored = pickle.loads(pickle.dumps(state))
     again = prepare_samples(
         restored,
-        estimator=DirectBranchTdEstimator(),
+        estimator=DirectBranchTd(),
         reward_config=config,
     )
     assert batch == again
@@ -180,14 +185,13 @@ def test_grpo_allows_linear_folds_but_rejects_internal_branching():
         state, n.id, search_payload(*n.payload.turns, turn([-1.0], done=True, reward=1))
     )
     b = stamped_child(state, 0, search_payload(turn([-1.0], done=True, reward=0)))
-    records = [slot(x) for x in [n, a, b]]
-    GrpoEstimator().assign(records, view=view, reward_config=config)
+    records = assign(view, config, n, a, b, estimator=Grpo())
     assert records[0].weight == records[1].weight > 0 > records[2].weight
     stamped_child(
         state, n.id, search_payload(*n.payload.turns, turn([-1.0], done=True, reward=0))
     )
     with pytest.raises(ValueError, match="branching below the root"):
-        GrpoEstimator().assign(records, view=view, reward_config=config)
+        assign(view, config, n, a, b, estimator=Grpo())
 
 
 @pytest.mark.parametrize("strength", [0.0, -1.0, float("nan"), float("inf")])
@@ -214,7 +218,7 @@ async def test_critic_export_reuses_exact_custom_scoring_inputs():
     scorer.write(nodes, scores)
     batch = prepare_samples(
         state,
-        estimator=DirectBranchTdEstimator(),
+        estimator=DirectBranchTd(),
         reward_config=config,
     )
     # the terminal leaf has no target; the root's is the context it was scored on
@@ -233,6 +237,6 @@ def test_inexact_generation_still_provides_checkpoint_critic_supervision():
     with pytest.raises(ValueError, match="inexact"):
         prepare_samples(
             state,
-            estimator=DirectBranchTdEstimator(),
+            estimator=DirectBranchTd(),
             reward_config=config,
         )

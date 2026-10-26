@@ -12,7 +12,7 @@ from focus.config import RolloutConfig, RolloutSpec
 from focus.export import CriticSampleFactory, SampleFactory, to_samples
 from focus.harness.workspace import Workspace
 from focus.loop import Runtime, collect_samples
-from focus.preparation import AdvantageEstimator
+from focus.preparation import Estimator
 from focus.preparation.records import ESTIMATOR_KEY, LANE_KEY
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ def make_generate(
     spec: RolloutSpec,
     runtime_factory: Callable[[Any], Runtime],
     *,
-    estimator: AdvantageEstimator | None,
+    estimator: Estimator | None,
     own_services: bool = True,
     to_prompt: Callable[[Any], Any] = lambda sample: sample,
     workspace_factory: Callable[[Any], Workspace] | None = None,

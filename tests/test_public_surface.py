@@ -89,11 +89,11 @@ def test_the_front_door_exports_everything_it_claims_to() -> None:
 def test_a_seam_whose_implementations_are_exported_exports_its_interface() -> None:
     """A user who can name a recipe should be able to name what to subclass.
 
-    `register_estimator` without `AdvantageEstimator` was the shape of the gap: the
+    `register_estimator` without `Estimator` was the shape of the gap: the
     front door taught how to register an estimator and hid the class to register.
     """
     pairs = {
-        "AdvantageEstimator": ("ChildRelative", "register_estimator"),
+        "Estimator": ("ChildRelative", "register_estimator"),
         "Trigger": ("PromptTokens", "StateCounter"),
         "Compactor": ("AgenticCompactor", "build_budget"),
         "ProposalPolicy": ("AnchorProposal", "MixtureProposal"),

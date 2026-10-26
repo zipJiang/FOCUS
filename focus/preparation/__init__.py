@@ -1,17 +1,20 @@
 """Tree-aware training preparation, independent of search policies."""
 
-from .base import AdvantageEstimator
-from .direct_branch import DirectBranchTdEstimator
-from .grpo import GrpoEstimator
-from .prepare import prepare_samples
+from .base import Advantage, Edge, Estimator
+from .direct_branch import DirectBranchTd
+from .grpo import Grpo
+from .prepare import critic_targets, prepare_samples
 from .records import ActorSample, CriticSample, PreparedBatch
 
 __all__ = [
-    "AdvantageEstimator",
     "ActorSample",
+    "Advantage",
     "CriticSample",
+    "DirectBranchTd",
+    "Edge",
+    "Estimator",
+    "Grpo",
     "PreparedBatch",
-    "DirectBranchTdEstimator",
-    "GrpoEstimator",
+    "critic_targets",
     "prepare_samples",
 ]

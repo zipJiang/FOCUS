@@ -1,24 +1,48 @@
-"""Group-level training coefficients, independent of search allocation."""
+"""Actor recipes: training coefficients for searched edges, from tree values."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any
 
 from focus.harness import AnyRollout
-from focus.reward.config import RewardConfig
-from focus.scheduler.core.tree import Node, SchedulerView
-
-if TYPE_CHECKING:
-    from focus.preparation.records import ActorSample
+from focus.scheduler.core.tree import Node
+from focus.values import TreeValues
 
 
-class AdvantageEstimator(ABC):
-    """Assign training coefficients to a finished group of edge records.
+@dataclass(frozen=True)
+class Edge:
+    """One searched continuation: from ``parent`` to ``node``.
 
-    Implementations hold configuration only and never mutate the tree. Write weight
-    and optional diagnostics without adding, removing, or re-keying records.
+    ``reward`` is the edge return :math:`R` under the batch's reward configuration and
+    ``duration`` the number of task transitions :math:`d` it took. Compaction turns
+    shape the reward but take no discount step.
+    """
+
+    node: Node[AnyRollout]
+    parent: Node[AnyRollout]
+    reward: float
+    duration: int
+
+
+@dataclass(frozen=True)
+class Advantage:
+    """An actor coefficient with optional diagnostics that never enter the loss."""
+
+    value: float
+    diagnostics: Mapping[str, float] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+
+class Estimator(ABC):
+    """Assign an actor coefficient to every edge of a settled tree.
+
+    Implement :meth:`advantages` as a pure function of the edges and the tree's
+    values. Return one float or :class:`Advantage` per edge, in order.
     """
 
     #: Recorded on every actor sample. Defaults to the class name.
@@ -32,18 +56,9 @@ class AdvantageEstimator(ABC):
             cls.name = cls.__name__
 
     @abstractmethod
-    def assign(
-        self,
-        records: Sequence[ActorSample],
-        *,
-        view: SchedulerView[AnyRollout],
-        reward_config: RewardConfig,
-    ) -> None: ...
+    def advantages(
+        self, edges: Sequence[Edge], values: TreeValues
+    ) -> Sequence[float | Advantage]: ...
 
 
-def _resolved(
-    records: Sequence[ActorSample], view: SchedulerView[AnyRollout]
-) -> Iterator[tuple[ActorSample, Node[AnyRollout]]]:
-    for record in records:
-        if (node := view.node(record.node_id)) is not None:
-            yield record, node
+__all__ = ["Advantage", "Edge", "Estimator"]

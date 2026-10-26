@@ -16,6 +16,7 @@ from focus import (
 )
 from focus.export import format_edges, format_tree, to_samples
 from focus.harness import PackedSequence, TurnTag
+from focus.preparation import Advantage
 from focus.preparation.records import (
     ESTIMATOR_KEY,
     LANE_KEY,
@@ -109,9 +110,8 @@ def test_an_estimators_diagnostics_are_frozen_on_the_way_out() -> None:
         name = "leaky"
         shared_dict: dict[str, float] = {"advantage": 1.0}
 
-        def assign(self, records, *, view, reward_config):
-            for record in records:
-                record.diagnostics = self.shared_dict
+        def advantages(self, edges, values):
+            return [Advantage(0.0, self.shared_dict) for _ in edges]
 
     leaky = Leaky()
     result = prepare_samples(
@@ -553,10 +553,8 @@ def test_a_non_finite_diagnostic_is_refused_too() -> None:
     class Unexplainable(RootReturn):
         name = "unexplainable"
 
-        def assign(self, records, *, view, reward_config):
-            for record in records:
-                record.weight = 1.0
-                record.diagnostics = {"baseline": float("nan")}
+        def advantages(self, edges, values):
+            return [Advantage(1.0, {"baseline": float("nan")}) for _ in edges]
 
     with pytest.raises(ValueError, match="non-finite diagnostic 'baseline'"):
         prepare_samples(

@@ -65,9 +65,9 @@ from focus.harness import (
 from focus.harness.checkpoint import CheckpointPolicy, EveryDecision, SparseCheckpoints
 from focus.loop import Runtime, collect_samples, run_search
 from focus.preparation import (
-    AdvantageEstimator,
-    DirectBranchTdEstimator,
-    GrpoEstimator,
+    DirectBranchTd,
+    Estimator,
+    Grpo,
     prepare_samples,
 )
 from focus.preparation.records import ActorSample, CriticSample, PreparedBatch
@@ -189,10 +189,10 @@ __all__ = [
     "ConcurrencyGating",
     "WidthGating",
     # What an edge is worth to the actor loss.
-    "AdvantageEstimator",
+    "Estimator",
     "Allocator",
-    "DirectBranchTdEstimator",
-    "GrpoEstimator",
+    "DirectBranchTd",
+    "Grpo",
     "ValueRefinement",
     # Saying all of the above in a config file, and building it from a name.
     "RolloutConfig",

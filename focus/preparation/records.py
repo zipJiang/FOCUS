@@ -41,8 +41,8 @@ def trainable_tokens(spans: Sequence[PackedSequence]) -> int:
 class ActorSample:
     """One edge the actor may train on, under the weight its estimator wrote.
 
-    One scalar reaches the loss, and :meth:`AdvantageEstimator.assign
-    <focus.preparation.base.AdvantageEstimator.assign>` writes it. Export
+    One scalar reaches the loss, and the estimator's
+    :meth:`~focus.preparation.base.Estimator.advantages` supplies it. Export
     composes nothing out of parts -- a confidence times an advantage would make every
     recipe declare a factor it may have no opinion about and put an arithmetic step
     between what an estimator

@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from focus import (
-    DirectBranchTdEstimator,
+    DirectBranchTd,
     ExecutionServices,
     FifoAllocator,
     InMemoryWorkspace,
@@ -19,7 +19,7 @@ from focus import (
 )
 from focus.generation.parsing import HermesToolCallParser
 from focus.harness import StorageTool
-from focus.preparation import AdvantageEstimator
+from focus.preparation import Estimator
 from tests.helpers import DemoValue, ScriptedGenerator, SubmitEnv, tool_call, toy_runner
 
 
@@ -49,7 +49,7 @@ def runtime(*, storage=False, version="snapshot-7"):
     )
 
 
-@pytest.mark.parametrize("estimator", [DirectBranchTdEstimator(), None])
+@pytest.mark.parametrize("estimator", [DirectBranchTd(), None])
 async def test_collection_uses_runtime_versions_and_keeps_lanes_separate(estimator):
     run = runtime()
     async with run.runner.services:
@@ -79,7 +79,7 @@ async def test_collection_accepts_a_workspace_and_existing_checkpoint():
     workspace = InMemoryWorkspace()
     async with run.runner.services:
         root = await run.runner.start("question", workspace=workspace)
-        batch = await collect_samples(root, run, estimator=DirectBranchTdEstimator())
+        batch = await collect_samples(root, run, estimator=DirectBranchTd())
     text = "\n".join(
         run.runner.policy.decode(record["tokens"])
         for record in to_samples(batch, group_index=0)
@@ -91,12 +91,11 @@ async def test_collection_accepts_a_workspace_and_existing_checkpoint():
 
 
 async def test_custom_estimator_and_export_factories_still_apply():
-    class FixedWeight(AdvantageEstimator):
+    class FixedWeight(Estimator):
         name = "custom-weight"
 
-        def assign(self, records, *, view, reward_config):
-            for record in records:
-                record.weight = 0.125
+        def advantages(self, edges, values):
+            return [0.125 for _ in edges]
 
     run = runtime()
     async with run.runner.services:
@@ -153,8 +152,8 @@ async def test_two_policy_snapshots_share_services_and_keep_their_own_logprobs()
     assert old.runner.policy.version == new.runner.policy.version
     async with services:
         batches = await asyncio.gather(
-            collect_samples("old", old, estimator=DirectBranchTdEstimator()),
-            collect_samples("new", new, estimator=DirectBranchTdEstimator()),
+            collect_samples("old", old, estimator=DirectBranchTd()),
+            collect_samples("new", new, estimator=DirectBranchTd()),
         )
     for batch, expected in zip(batches, (-0.25, -0.75), strict=True):
         actor = [s for s in to_samples(batch, 0) if s["metadata"]["lane"] == "actor"]

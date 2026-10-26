@@ -13,7 +13,7 @@ from focus import (
     AllocationSession,
     Allocator,
     ConcurrencyGating,
-    DirectBranchTdEstimator,
+    DirectBranchTd,
     FifoAllocator,
     RolloutConfig,
     RolloutLedger,
@@ -56,7 +56,7 @@ async def test_empty_configuration_returns_only_the_initialized_root() -> None:
     state = await run_search("solve it", runtime)
     assert len(state.nodes) == 1
     assert state.stats["turns"] == state.stats["rollouts"] == 0
-    for estimator in (None, DirectBranchTdEstimator()):
+    for estimator in (None, DirectBranchTd()):
         batch = prepare_samples(
             state,
             estimator=estimator,
@@ -118,7 +118,7 @@ async def test_one_tree_prepares_independent_recipes_without_mutating_search() -
     before = pickle.dumps(state)
     gae = prepare_samples(
         state,
-        estimator=DirectBranchTdEstimator(),
+        estimator=DirectBranchTd(),
         reward_config=runtime.config.reward_config,
     )
     grpo = prepare_samples(
@@ -139,11 +139,9 @@ async def test_one_tree_prepares_independent_recipes_without_mutating_search() -
     assert len(gae.actor) == len({r.node_id for r in gae.actor})
     assert gae.critic == grpo.critic == critic.critic
     assert not critic.actor
-    with pytest.raises(TypeError, match="estimator"):
-        prepare_samples(
-            state,
-            reward_config=runtime.config.reward_config,  # type: ignore[call-arg]
-        )
+    # the paper's recipe is the default
+    default = prepare_samples(state, reward_config=runtime.config.reward_config)
+    assert {r.estimator for r in default.actor} == {"direct_branch_td"}
 
 
 def test_removed_api_is_not_retained_as_aliases() -> None:
@@ -162,7 +160,7 @@ def test_removed_api_is_not_retained_as_aliases() -> None:
         "LedgerBackup",
     ):
         assert not hasattr(focus, name)
-    assert not hasattr(DirectBranchTdEstimator(), "build")
+    assert not hasattr(DirectBranchTd(), "build")
     assert not hasattr(FifoAllocator(), "assign")
     with pytest.raises(TypeError):
         RolloutConfig(weighters=())  # type: ignore[call-arg]

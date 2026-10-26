@@ -8,8 +8,8 @@ from types import MappingProxyType
 from focus.allocation.evidence import evidence_of
 from focus.harness import AnyRollout
 from focus.harness.turn import logprob
-from focus.preparation.base import AdvantageEstimator
-from focus.preparation.direct_branch import critic_targets
+from focus.preparation.base import Advantage, Edge, Estimator
+from focus.preparation.direct_branch import DirectBranchTd
 from focus.preparation.records import (
     ActorSample,
     CriticSample,
@@ -20,28 +20,68 @@ from focus.preparation.records import (
 )
 from focus.reward.config import RewardConfig
 from focus.scheduler.core.execution import PASS_KEY
-from focus.scheduler.core.returns import finished_through
+from focus.scheduler.core.returns import edge_return, finished_through
 from focus.scheduler.core.tree import SchedulerState, SchedulerView
+from focus.values import TreeValues, tree_values
 
 logger = logging.getLogger(__name__)
+
+_PAPER_RECIPE = DirectBranchTd()
+
+
+def critic_targets(values: TreeValues) -> list[CriticSample]:
+    """Branch-mean targets :math:`\\bar G` at every expanded checkpoint that was scored.
+
+    The target is held fixed during critic training. Trees searched without a value
+    model carry no critic inputs and yield no targets; checkpoints whose backup depends
+    on a failed critic score are skipped, so a partial collection still trains the
+    critic on the rest.
+    """
+    result = []
+    for node in values.tree.nodes():
+        value = values[node.id]
+        if (
+            value.backup is None
+            or value.refined is None
+            or value.prior is None
+            or node.value_context is None
+        ):
+            continue
+        result.append(
+            CriticSample(
+                node_id=node.id,
+                context=node.value_context,
+                target=value.backup,
+                diagnostics=MappingProxyType(
+                    {
+                        "prior": value.prior,
+                        "direct_branches": float(value.branches),
+                        "mean_return": value.backup,
+                        "refined_value": value.refined,
+                    }
+                ),
+            )
+        )
+    return result
 
 
 def prepare_samples(
     state: SchedulerState[AnyRollout],
     *,
-    estimator: AdvantageEstimator | None,
     reward_config: RewardConfig,
+    estimator: Estimator | None = _PAPER_RECIPE,
 ) -> PreparedBatch:
     """Compute one actor recipe and the critic's branch-mean targets.
 
-    Critic targets do not depend on the actor recipe: every expanded checkpoint the
-    critic scored regresses on the mean of its direct-branch backups. ``estimator=None``
-    prepares only those targets.
+    The default recipe is the paper's direct-branch TD. Critic targets do not depend
+    on the actor recipe: every expanded checkpoint the critic scored regresses on the
+    mean of its direct-branch backups. ``estimator=None`` prepares only those targets.
     """
     view = SchedulerView(state)
     evidence_of(view, reward_config)  # refuses trees searched under other rewards
+    values = tree_values(view, reward_config)
     actor: list[ActorSample] = []
-    critic: list[CriticSample] = []
+    edges: list[Edge] = []
     for node, parent in _trainable_edges(view) if estimator is not None else ():
         if (
             estimator is not None
@@ -67,11 +107,32 @@ def prepare_samples(
                     search_pass=node.metadata.get(PASS_KEY),
                 )
             )
-    critic.extend(critic_targets(view, reward_config))
+            edges.append(
+                Edge(
+                    node,
+                    parent,
+                    edge_return(node, parent, reward_config),
+                    sum(
+                        t.transition is not None
+                        for t in node.payload.edge(parent.payload)
+                    ),
+                )
+            )
+    critic = critic_targets(values)
     if estimator is not None:
-        estimator.assign(tuple(actor), view=view, reward_config=reward_config)
+        weights = estimator.advantages(tuple(edges), values)
+        if len(weights) != len(actor):
+            raise ValueError(
+                f"estimator {estimator.name!r} returned {len(weights)} advantages "
+                + f"for {len(actor)} edges"
+            )
+        for record, weight in zip(actor, weights, strict=True):
+            if isinstance(weight, Advantage):
+                record.weight = weight.value
+                record.diagnostics = MappingProxyType(dict(weight.diagnostics))
+            else:
+                record.weight = float(weight)
     for record in actor:
-        record.diagnostics = MappingProxyType(dict(record.diagnostics))
         _refuse_non_finite(record)
     for target in critic:
         _refuse_non_finite(target)

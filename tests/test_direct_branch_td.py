@@ -4,9 +4,9 @@ import pickle
 
 import pytest
 
-from focus import DirectBranchTdEstimator, prepare_samples
-from focus.preparation.direct_branch import direct_branch_values
+from focus import DirectBranchTd, prepare_samples
 from focus.reward.config import RewardConfig
+from focus.values import tree_values
 from tests.helpers import turn
 from tests.test_preparation_estimators import score, setup
 from tests.trees import search_payload, stamped_child
@@ -29,10 +29,10 @@ def example(kappa=1):
 
 def test_recursive_example_and_descendant_multiplicity():
     state, view, config, b = example()
-    values = direct_branch_values(view, config)
-    assert values[b.id].value == 0.5
-    assert values[0].mean == 0.75
-    assert values[0].value == pytest.approx(2 / 3)
+    values = tree_values(view, config)
+    assert values[b.id].refined == 0.5
+    assert values[0].backup == 0.75
+    assert values[0].refined == pytest.approx(2 / 3)
     assert values[0].branches == values[b.id].branches == 2
     for reward in (0, 1):
         stamped_child(
@@ -40,9 +40,9 @@ def test_recursive_example_and_descendant_multiplicity():
             b.id,
             search_payload(*b.payload.turns, turn([-1.0], reward=reward, done=True)),
         )
-    values = direct_branch_values(view, config)
-    assert values[0].mean == 0.75
-    assert values[0].value == pytest.approx(2 / 3)
+    values = tree_values(view, config)
+    assert values[0].backup == 0.75
+    assert values[0].refined == pytest.approx(2 / 3)
     assert values[0].branches == 2
     assert values[b.id].branches == 4
 
@@ -50,7 +50,7 @@ def test_recursive_example_and_descendant_multiplicity():
 def test_critic_mean_is_not_actor_posterior_and_tree_is_unchanged():
     state, _view, config, b = example(kappa=1)
     before = pickle.dumps(state)
-    estimator = DirectBranchTdEstimator()
+    estimator = DirectBranchTd()
     batch = prepare_samples(state, estimator=estimator, reward_config=config)
     assert pickle.dumps(state) == before
     assert estimator.name == "direct_branch_td"
@@ -75,13 +75,13 @@ def test_bootstrap_leaf_without_target_and_fold_duration_discount():
         ),
     )
     score(child, 0.8)
-    values = direct_branch_values(view, config)
-    assert values[child.id].value == 0.8
-    assert values[child.id].mean is None
-    assert values[0].mean == pytest.approx(1 + 0.5 * 2 + 0.5**2 * 0.8)
+    values = tree_values(view, config)
+    assert values[child.id].refined == 0.8
+    assert values[child.id].backup is None
+    assert values[0].backup == pytest.approx(1 + 0.5 * 2 + 0.5**2 * 0.8)
     batch = prepare_samples(
         state,
-        estimator=DirectBranchTdEstimator(),
+        estimator=DirectBranchTd(),
         reward_config=config,
     )
     assert [r.node_id for r in batch.critic] == [0]
@@ -95,5 +95,12 @@ def test_missing_or_nonfinite_successor_prior_rejected(prior):
     child.critic = None
     if prior is not None:
         score(child, prior)
+    values = tree_values(view, config)
+    # the gap reaches the root's backup, so neither has a refined value...
+    assert values[child.id].refined is None
+    assert values[0].refined is None
+    assert values[0].backup is None
+    # ...the actor recipe refuses the tree, and the critic skips what depends on it
     with pytest.raises(ValueError, match="finite network value"):
-        direct_branch_values(view, config)
+        prepare_samples(state, reward_config=config)
+    assert prepare_samples(state, estimator=None, reward_config=config).critic == ()
