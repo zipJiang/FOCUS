@@ -153,9 +153,17 @@ class ContextManager[S]:
         """
         raise ValueError(f"{type(self).__name__} does not compact context")
 
-    def prepare(self, rs: AnyRollout, runner: Agent[Any, Any]) -> PreparedPrompt:
-        """Prepare the model input from this branch's current context."""
-        return runner.policy.prepare(rs.messages, tools=runner.tools)
+    def prepare(
+        self,
+        rs: AnyRollout,
+        runner: Agent[Any, Any],
+        *,
+        tools: Sequence[dict[str, Any]] | None = None,
+    ) -> PreparedPrompt:
+        """Render this branch's context; ``tools`` overrides the agent's schemas."""
+        return runner.policy.prepare(
+            rs.messages, tools=runner.tools if tools is None else tools
+        )
 
     def record_reply(
         self,
@@ -259,13 +267,21 @@ class AppendOnly(ContextManager[Any]):
                 )
         return boundary
 
-    def prepare(self, rs: AnyRollout, runner: Agent[Any, Any]) -> PreparedPrompt:
+    def prepare(
+        self,
+        rs: AnyRollout,
+        runner: Agent[Any, Any],
+        *,
+        tools: Sequence[dict[str, Any]] | None = None,
+    ) -> PreparedPrompt:
         """Render chat context, or append exact segments to the initial prompt."""
         if not self.continuation:
-            return super().prepare(rs, runner)
+            return super().prepare(rs, runner, tools=tools)
         self._check_policy(runner)
         boundary = self._boundary(rs.messages, runner)
-        initial = runner.policy.prepare(rs.messages[:boundary], tools=runner.tools)
+        initial = runner.policy.prepare(
+            rs.messages[:boundary], tools=runner.tools if tools is None else tools
+        )
         tokens = initial.tokens + tuple(
             token
             for message in rs.messages[boundary:]

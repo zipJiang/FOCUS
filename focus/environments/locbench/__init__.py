@@ -3,7 +3,6 @@
 from .dataset import Case
 from .environment import (
     LocBenchEnv,
-    LocBenchRunner,
     LocBenchState,
     RunConfig,
     World,
@@ -16,7 +15,6 @@ __all__ = [
     "Case",
     "Gold",
     "LocBenchEnv",
-    "LocBenchRunner",
     "LocBenchState",
     "Repository",
     "RunConfig",

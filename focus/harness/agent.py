@@ -17,7 +17,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Literal
 
 from focus.codec import Message
 from focus.execution import ExecutionServices, Owner
@@ -42,9 +42,10 @@ from focus.harness.context import (
     AppendOnly,
     Compaction,
     ContextManager,
+    IncompleteCompactionError,
     Segments,
 )
-from focus.harness.env import Env
+from focus.harness.env import Env, StepResult
 from focus.harness.persistence import Checkpointer
 from focus.harness.rollout import RolloutState
 from focus.harness.turn import Turn
@@ -94,6 +95,9 @@ def _chained_prefix[S](
 #: Logical feedback for one final answer attempt when the step budget expires. Task
 #: specific in its wording only -- pass ``finish_prompt=`` to say it in the task's own
 #: terms (a required answer format, say), or ``None`` to truncate bare.
+#: Tokens kept free for the final-answer turn when a reply could fill the context.
+_FINISH_MARGIN = 1024
+
 DEFAULT_FINISH_PROMPT = (
     "You are out of steps: this is your last turn, and no further work tools will run. "
     "Give your best-supported final answer from what you have already gathered, "
@@ -155,12 +159,20 @@ class Agent[S, A]:
         context: ContextManager[S] | None = None,
         sampling_params: SamplingParams | None = None,
         max_steps: int = 32,
-        finish_prompt: str | _Default | None = _DEFAULT,
+        finish_prompt: str | Message | _Default | None = _DEFAULT,
         tools: Sequence[dict[str, Any]] | None = None,
         branch_points: CheckpointPolicy | None = None,
+        context_limit: int | None = None,
+        on_compaction_failure: Literal["raise", "end"] = "raise",
         execution: Execution | None = None,
         actor: bool = True,
     ) -> None:
+        if on_compaction_failure not in ("raise", "end"):
+            raise ValueError("on_compaction_failure must be 'raise' or 'end'")
+        if context_limit is not None and context_limit < 1:
+            raise ValueError("context_limit must be positive")
+        self.context_limit = context_limit
+        self.on_compaction_failure = on_compaction_failure
         self.execution = execution if execution is not None else Execution()
         self.actor = actor
         self.protocol: ContextManager[Any] = context or AppendOnly()
@@ -185,7 +197,7 @@ class Agent[S, A]:
         self._system_prompt: str = system_prompt
         self._sampling_params: SamplingParams | None = sampling_params
         self._max_steps: int = max_steps
-        self._finish_prompt: str | None = finish_prompt
+        self._finish_prompt: str | Message | None = finish_prompt
         # Tool schemas rendered into every prompt. Explicit `tools` wins; otherwise a
         # ToolEnv (or any env exposing `.schemas`) supplies them automatically.
         task_tools = tools if tools is not None else getattr(env, "schemas", ())
@@ -454,13 +466,37 @@ class Agent[S, A]:
         rs.check_continuation()
         if rs.done or rs.truncated:
             return rs
+        if self._env.should_finish(rs):
+            return await self._finish(rs, sampling_params=sampling_params)
         cond = self.protocol.prepare(rs, self)
         if self.protocol.should_compact(rs, cond.tokens):
             # This decision is the compaction alone; generation resumes next time.
             return self._mark(await self._fold(rs))
+        if self._near_context_limit(cond, sampling_params):
+            return await self._finish(rs, sampling_params=sampling_params)
         return await self._generate_turn(
             rs, list(rs.messages), cond, sampling_params=sampling_params, ending=False
         )
+
+    def _near_context_limit(
+        self, cond: PreparedPrompt, sampling_params: SamplingParams | None
+    ) -> bool:
+        """Whether a full reply would not leave room for the final-answer turn.
+
+        Only for a context manager that never rewrites context: one that compacts is
+        responsible for keeping its prompts small.
+        """
+        if self.context_limit is None or self.protocol.manages_context:
+            return False
+        reply = self._reply_tokens(sampling_params)
+        size = len(cond.tokens)
+        return size < self.context_limit <= size + reply + _FINISH_MARGIN
+
+    def _reply_tokens(self, sampling_params: SamplingParams | None) -> int:
+        params = merge_sampling_params(
+            self.policy.default_params, self._params(sampling_params)
+        )
+        return int(params.max_tokens or 0)
 
     async def _generate_turn(
         self,
@@ -483,6 +519,17 @@ class Agent[S, A]:
         into the new checkpoint.
         """
         params = self._params(sampling_params)
+        if self.context_limit is not None:
+            available = self.context_limit - len(cond.tokens)
+            if available <= 0:
+                raise ValueError(
+                    f"prompt of {len(cond.tokens)} tokens exceeds "
+                    + f"context_limit={self.context_limit}; refusing to truncate it"
+                )
+            if self._reply_tokens(sampling_params) > available:
+                params = merge_sampling_params(
+                    params or SamplingParams(), SamplingParams(max_tokens=available)
+                )
         self.services.attach_budget(rs.owner, rs.budget)
         result = await self._generate(cond, params, owner=rs.owner)
         self.protocol.record_reply(result, messages, self)
@@ -678,14 +725,20 @@ class Agent[S, A]:
             rs.turns_taken,
             rs.folds,
         )
+        prompt = self._finish_prompt
         messages: list[Message] = [
             *rs.messages,
-            {"role": "tool", "content": self._finish_prompt},
+            dict(prompt)
+            if not isinstance(prompt, str)
+            else {"role": "tool", "content": prompt},
         ]
+        tools = tuple(self._env.finish_tools(self._tools))
         return await self._generate_turn(
             rs,
             messages,
-            self.protocol.prepare(replace(rs, messages=tuple(messages)), self),
+            self.protocol.prepare(
+                replace(rs, messages=tuple(messages)), self, tools=tools
+            ),
             sampling_params=sampling_params,
             ending=True,
         )
@@ -714,16 +767,29 @@ class Agent[S, A]:
         ``"compaction"`` effect marks the boundary for branch-point policies.
         """
         self.services.attach_budget(rs.owner, rs.budget)
-        folded = await self.protocol.compact(
-            Compaction(
-                messages=rs.messages,
-                seed=rs.seed,
-                state=rs.state,
-                workspace=rs.workspace,
-                runner=self,
-                checkpoint=rs,
+        try:
+            folded = await self.protocol.compact(
+                Compaction(
+                    messages=rs.messages,
+                    seed=rs.seed,
+                    state=rs.state,
+                    workspace=rs.workspace,
+                    runner=self,
+                    checkpoint=rs,
+                )
             )
-        )
+        except IncompleteCompactionError as exc:
+            if self.on_compaction_failure != "end" or not exc.turns:
+                raise
+            # The rejected fold keeps its exact generations, but never becomes context:
+            # a token-free task transition ends the episode with zero outcome reward.
+            state = self._env.on_compaction_failure(rs.state, exc.reasons)
+            terminal: Turn[S] = Turn(
+                prefix=(),
+                logprobs=(),
+                transition=StepResult(next_state=state, done=True, reward_outcome=0.0),
+            )
+            return replace(rs, state=state, turns=(*rs.turns, *exc.turns, terminal))
         marker: Turn[Any] = Turn(
             prefix=(),
             tokens=(),

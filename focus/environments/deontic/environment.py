@@ -62,10 +62,8 @@ from focus.harness import (
     Workspace,
 )
 from focus.harness.compaction import DEFAULT_INSTRUCTION
-from focus.harness.context import AppendOnly, IncompleteCompactionError
-from focus.harness.env import StepResult
+from focus.harness.context import AppendOnly
 from focus.harness.tools.submission import submission_payload, submitted_call
-from focus.harness.turn import Turn
 
 # -- the case ------------------------------------------------------------------------
 
@@ -350,45 +348,6 @@ class DeonticState(SubmitFields, RoundBudget):
     compaction_failure: tuple[str, ...] = ()
 
 
-class DeonticRunner(Agent[DeonticState, ToolTurn]):
-    """Optionally turn rejected model folds into honest terminal training branches.
-
-    Only :class:`IncompleteCompactionError` is an authored outcome: the compactor has
-    already retried, and the exception carries the exact generated turns. Backend,
-    transport, and implementation errors remain exceptions and still fail collection.
-    """
-
-    def __init__(self, *, compaction_failure: str = "raise", **kwargs) -> None:
-        if compaction_failure not in ("raise", "terminal_zero"):
-            raise ValueError("Unknown compaction failure policy")
-        super().__init__(**kwargs)
-        self.compaction_failure = compaction_failure
-
-    async def _compact(self, rs):
-        try:
-            return await super()._compact(rs)
-        except IncompleteCompactionError as exc:
-            if self.compaction_failure != "terminal_zero" or not exc.turns:
-                raise
-            state = replace(
-                rs.state,
-                answer=None,
-                compaction_failure=exc.reasons,
-            )
-            # The rejected folds remain exact trainable generations but never replace
-            # task context. A token-free task transition records the terminal outcome.
-            terminal = Turn(
-                prefix=(),
-                logprobs=(),
-                transition=StepResult(
-                    next_state=state,
-                    done=True,
-                    reward_outcome=0.0,
-                ),
-            )
-            return replace(rs, state=state, turns=rs.turns + exc.turns + (terminal,))
-
-
 class DeonticEnv(ToolEnv[DeonticState]):
     """Statute world: tools spend the round's budget, ``submit`` answers."""
 
@@ -413,6 +372,11 @@ class DeonticEnv(ToolEnv[DeonticState]):
         #: rather than subclassed so the trained agent and the evaluated agent are the
         #: same object built by the same `build_world`.
         self._scorer = scorer
+
+    def on_compaction_failure(
+        self, state: DeonticState, reasons: tuple[str, ...]
+    ) -> DeonticState:
+        return replace(state, answer=None, compaction_failure=reasons)
 
     async def initial_state(self) -> DeonticState:
         return DeonticState(calls_remaining=self._budget, calls_max=self._budget)
@@ -561,7 +525,9 @@ def build_world(case: Case, cfg: RunConfig) -> World:
         scorer=cfg.scorer,
         roll_call_budget=True,
     )
-    runner: Agent[DeonticState, ToolTurn] = DeonticRunner(
+    if cfg.compaction_failure not in ("raise", "terminal_zero"):
+        raise ValueError("Unknown compaction failure policy")
+    runner: Agent[DeonticState, ToolTurn] = Agent(
         policy=cfg.policy,
         env=env,
         system_prompt=build_system_prompt(cfg.tools),
@@ -571,7 +537,9 @@ def build_world(case: Case, cfg: RunConfig) -> World:
         context=AppendOnly() if cfg.no_compact else build_deontic_compactor(cfg),
         max_steps=cfg.max_steps,
         finish_prompt=finish_prompt(case),
-        compaction_failure=cfg.compaction_failure,
+        on_compaction_failure=(
+            "end" if cfg.compaction_failure == "terminal_zero" else "raise"
+        ),
     )
     return World(
         runner=runner,

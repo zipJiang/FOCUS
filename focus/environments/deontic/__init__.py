@@ -3,7 +3,6 @@
 from .environment import (
     Case,
     DeonticEnv,
-    DeonticRunner,
     DeonticState,
     RunConfig,
     World,
@@ -14,7 +13,6 @@ from .environment import (
 __all__ = [
     "Case",
     "DeonticEnv",
-    "DeonticRunner",
     "DeonticState",
     "RunConfig",
     "World",

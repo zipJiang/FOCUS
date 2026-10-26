@@ -24,13 +24,12 @@ from focus.harness import (
     Workspace,
 )
 from focus.harness.compaction import DEFAULT_INSTRUCTION
-from focus.harness.context import AppendOnly, IncompleteCompactionError
+from focus.harness.context import AppendOnly
 from focus.harness.tools.submission import (
     SubmitTool,
     submission_payload,
     submitted_call,
 )
-from focus.harness.turn import Turn
 
 from .calls import call_key
 from .dataset import Case
@@ -200,12 +199,21 @@ class LocBenchEnv(ToolEnv[LocBenchState]):
         call_budget: int = 20,
         maximum: int = MAX_LOCATIONS,
         roll_call_budget: bool = False,
+        repeat_limit: int = 0,
+        fold_horizon: int | None = None,
     ) -> None:
+        """``repeat_limit`` ends the investigation after that many identical
+        consecutive requests (zero disables it). ``fold_horizon`` ends it once task
+        turns plus compactions reach that many decisions."""
         if call_budget < 1:
             raise ValueError("call_budget must be positive")
+        if repeat_limit < 0:
+            raise ValueError("repeat_limit must be nonnegative (zero disables it)")
         self._gold = gold
         self._budget = call_budget
         self._roll_call_budget = roll_call_budget
+        self._repeat_limit = repeat_limit
+        self._fold_horizon = fold_horizon
         super().__init__(
             [RepositoryTool(repo, name) for name in ("list", "grep", "read")],
             submit=LocationSubmit(maximum),
@@ -213,6 +221,22 @@ class LocBenchEnv(ToolEnv[LocBenchState]):
 
     async def initial_state(self) -> LocBenchState:
         return LocBenchState(calls_remaining=self._budget, calls_max=self._budget)
+
+    def should_finish(self, rollout: RolloutState[LocBenchState]) -> bool:
+        if (
+            self._fold_horizon is not None
+            and rollout.turns_taken + rollout.folds >= self._fold_horizon
+        ):
+            return True
+        return bool(
+            self._repeat_limit
+            and rollout.state.consecutive_requests >= self._repeat_limit
+        )
+
+    def on_compaction_failure(
+        self, state: LocBenchState, reasons: tuple[str, ...]
+    ) -> LocBenchState:
+        return replace(state, locations=(), submitted=False, compaction_failure=reasons)
 
     async def step(
         self,
@@ -289,64 +313,6 @@ class RunConfig:
             raise ValueError("all generation and call budgets must be positive")
 
 
-class LocBenchRunner(Agent[LocBenchState, ToolTurn]):
-    """Apply LocBench stopping and authored-compaction failure policies."""
-
-    def __init__(
-        self,
-        *,
-        repeat_limit: int,
-        compaction_failure: str = "raise",
-        count_folds_in_horizon: bool = False,
-        **kwargs: Any,
-    ) -> None:
-        if compaction_failure not in ("raise", "terminal_zero"):
-            raise ValueError("Unknown compaction failure policy")
-        super().__init__(**kwargs)
-        self.repeat_limit = repeat_limit
-        self.compaction_failure = compaction_failure
-        self.count_folds_in_horizon = count_folds_in_horizon
-
-    async def _compact(
-        self, rs: RolloutState[LocBenchState]
-    ) -> RolloutState[LocBenchState]:
-        try:
-            return await super()._compact(rs)
-        except IncompleteCompactionError as exc:
-            if self.compaction_failure != "terminal_zero" or not exc.turns:
-                raise
-            state = replace(
-                rs.state,
-                locations=(),
-                submitted=False,
-                compaction_failure=exc.reasons,
-            )
-            terminal = Turn(
-                prefix=(),
-                logprobs=(),
-                transition=StepResult(
-                    next_state=state,
-                    done=True,
-                    reward_outcome=0.0,
-                ),
-            )
-            return replace(rs, state=state, turns=rs.turns + exc.turns + (terminal,))
-
-    async def _advance(
-        self,
-        rs: RolloutState[LocBenchState],
-        *,
-        sampling_params: SamplingParams | None = None,
-    ) -> RolloutState[LocBenchState]:
-        if rs.done or rs.truncated:
-            return rs
-        if self.count_folds_in_horizon and rs.turns_taken + rs.folds >= self._max_steps:
-            return await self._finish(rs, sampling_params=sampling_params)
-        if self.repeat_limit and rs.state.consecutive_requests >= self.repeat_limit:
-            return await self._finish(rs, sampling_params=sampling_params)
-        return await super()._advance(rs, sampling_params=sampling_params)
-
-
 def render_environment_state(state: LocBenchState) -> str:
     """Exact executed state kept outside the model-authored localization notes."""
     counts = Counter(state.calls)
@@ -404,12 +370,11 @@ def build_world(case: Case, repo: Repository, config: RunConfig) -> World:
         call_budget=config.call_budget,
         maximum=config.max_locations,
         roll_call_budget=config.compact,
+        repeat_limit=config.repeat_limit,
+        fold_horizon=config.max_steps if config.count_folds_in_horizon else None,
     )
     workspace = NullWorkspace()
-    runner = LocBenchRunner(
-        repeat_limit=config.repeat_limit,
-        compaction_failure=config.compaction_failure,
-        count_folds_in_horizon=config.count_folds_in_horizon,
+    runner = Agent(
         policy=config.policy,
         env=env,
         system_prompt=(
@@ -431,6 +396,9 @@ def build_world(case: Case, repo: Repository, config: RunConfig) -> World:
         finish_prompt=(
             "Investigation budget exhausted. Call submit with your ranked locations "
             "now, using the evidence already gathered."
+        ),
+        on_compaction_failure=(
+            "end" if config.compaction_failure == "terminal_zero" else "raise"
         ),
     )
     return World(runner, workspace, case.task_prompt())

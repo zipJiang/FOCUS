@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -178,3 +180,53 @@ async def test_browsercomp_navigation_and_runner_share_archive() -> None:
         "browser.find",
         "submit",
     ]
+
+
+def _rollout(state: object, *, turns: int = 0, folds: int = 0) -> Any:
+    return SimpleNamespace(state=state, turns_taken=turns, folds=folds)
+
+
+async def test_locbench_ends_on_repeated_requests_and_its_fold_horizon(
+    repository: Repository,
+) -> None:
+    from focus.environments.locbench import LocBenchEnv
+
+    gold = Gold(frozenset({"src/target.py"}), frozenset())
+    repeats = LocBenchEnv(repository, gold, repeat_limit=3)
+    state = await repeats.initial_state()
+    assert not repeats.should_finish(_rollout(state))
+    assert repeats.should_finish(_rollout(replace(state, consecutive_requests=3)))
+
+    horizon = LocBenchEnv(repository, gold, fold_horizon=4)
+    assert not horizon.should_finish(_rollout(state, turns=2, folds=1))
+    assert horizon.should_finish(_rollout(state, turns=2, folds=2))
+
+    failed = repeats.on_compaction_failure(
+        replace(state, locations=("a",), submitted=True), ("reply_cap",)
+    )
+    assert (failed.locations, failed.submitted) == ((), False)
+    assert failed.compaction_failure == ("reply_cap",)
+
+
+async def test_browsercomp_answers_before_its_task_limit_with_submit_only() -> None:
+    from focus.environments.browsercomp_plus import SearchEnv
+
+    env = SearchEnv(RetrievalArchive(Corpus()), task_limit=5)
+    state = await env.initial_state()
+    assert not env.should_finish(_rollout(state, turns=3))
+    assert env.should_finish(_rollout(state, turns=4))
+    names = [t["function"]["name"] for t in env.finish_tools(env.schemas)]
+    assert names == ["submit"]
+    failed = env.on_compaction_failure(replace(state, answer="x"), ("empty_notes",))
+    assert failed.answer is None
+    assert failed.compaction_failure == ("empty_notes",)
+
+
+async def test_deontic_records_a_rejected_fold() -> None:
+    from focus.environments.deontic import DeonticEnv
+
+    env = DeonticEnv(tools=[], budget=2, scorer=lambda *a: 0.0)
+    state = replace(await env.initial_state(), answer="x")
+    failed = env.on_compaction_failure(state, ("reply_cap",))
+    assert failed.answer is None
+    assert failed.compaction_failure == ("reply_cap",)

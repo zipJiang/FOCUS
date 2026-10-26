@@ -108,8 +108,8 @@ async def test_runner_uses_protocol_preparation_for_advance_and_finish():
     from focus import AppendOnly
 
     class CustomPrompt(AppendOnly):
-        def prepare(self, rs, runner):
-            prompt = super().prepare(rs, runner)
+        def prepare(self, rs, runner, *, tools=None):
+            prompt = super().prepare(rs, runner, tools=tools)
             return replace(prompt, tokens=(777, *prompt.tokens))
 
     runner = toy_runner(ScriptedGenerator(["go", "stop"]), context=CustomPrompt())

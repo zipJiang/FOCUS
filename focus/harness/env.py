@@ -9,10 +9,15 @@ receive the active branch's workspace on each call.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from focus.codec import Message
 from focus.harness.workspace import Workspace
+
+if TYPE_CHECKING:
+    from focus.harness.rollout import AnyRollout
 
 
 # ``S_co`` is covariant: a ``StepResult`` is frozen and only ever *yields* its state, so
@@ -94,6 +99,27 @@ class Env[S, A](ABC):
         See :meth:`~focus.harness.agent.Agent.finish`, which drives it.
         """
         return StepResult(state, done=True)
+
+    def should_finish(self, rollout: AnyRollout) -> bool:
+        """Whether to stop working and take the final-answer turn now.
+
+        Called before each decision of a live rollout. The default never stops early;
+        override for task limits such as repeated identical requests.
+        """
+        return False
+
+    def finish_tools(self, tools: Sequence[dict[str, Any]]) -> Sequence[dict[str, Any]]:
+        """Tool schemas offered on the final-answer turn; by default, all of them."""
+        return tools
+
+    def on_compaction_failure(self, state: S, reasons: tuple[str, ...]) -> S:
+        """The terminal state of an episode ended by a rejected compaction.
+
+        Used when the agent is built with ``on_compaction_failure="end"``. The episode
+        ends with zero outcome reward; override to clear a partial answer or record
+        the reasons.
+        """
+        return state
 
 
 __all__ = ["Env", "StepResult"]

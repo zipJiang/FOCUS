@@ -2,7 +2,6 @@
 
 from .browser import BrowserFind, BrowserOpen, BrowserSearch
 from .environment import (
-    BrowserRunner,
     Case,
     RetrievalArchive,
     SearchEnv,
@@ -15,7 +14,6 @@ from .environment import (
 __all__ = [
     "BrowserFind",
     "BrowserOpen",
-    "BrowserRunner",
     "BrowserSearch",
     "Case",
     "RetrievalArchive",

@@ -12,17 +12,24 @@ from focus.generation import Policy, SamplingParams
 from focus.generation.parsing import ToolTurn
 from focus.harness import (
     Agent,
+    AnyOf,
     NullWorkspace,
+    PromptTokens,
     RoundBudget,
+    StateCounter,
     SubmitFields,
+    Summarize,
     ToolEnv,
-    build_budget,
 )
 from focus.harness.compaction.agentic import DEFAULT_INSTRUCTION
-from focus.harness.context import AppendOnly, IncompleteCompactionError
+from focus.harness.context import (
+    AppendOnly,
+    Compaction,
+    CompactionResult,
+    IncompleteCompactionError,
+)
 from focus.harness.env import StepResult
 from focus.harness.tools.dispatch import tool_reply
-from focus.harness.turn import Turn
 
 COMPACTION_SCHEMA = """
 
@@ -138,98 +145,31 @@ class State(SubmitFields, RoundBudget):
     compaction_failure: tuple[str, ...] = ()
 
 
-class BrowserRunner(Agent[State, ToolTurn]):
-    """Bound the entire task path, including continuations from saved branches."""
+class _CappedSummarize(Summarize[State]):
+    """Summarize, with this task's compaction penalties capped per episode.
 
-    def __init__(self, *, context_limit=98304, compaction_failure="raise", **kwargs):
-        if compaction_failure not in ("raise", "terminal_zero"):
-            raise ValueError("Unknown compaction failure policy")
-        super().__init__(**kwargs)
-        self.context_limit = context_limit
-        self.compaction_failure = compaction_failure
+    Penalties on malformed compaction attempts sum to at most 0.05 over an episode,
+    whether the fold succeeds or is rejected.
+    """
 
-    async def _compact(self, rs):
+    async def compact(self, compaction: Compaction[State]) -> CompactionResult[State]:
+        previous = compaction.checkpoint.turns if compaction.checkpoint else ()
         try:
-            result = await super()._compact(rs)
-            return replace(
-                result,
-                turns=rs.turns
-                + self._cap_compaction_penalties(rs, result.turns[len(rs.turns) :]),
-            )
+            result = await super().compact(compaction)
         except IncompleteCompactionError as exc:
-            exc.turns = self._cap_compaction_penalties(rs, exc.turns)
-            if self.compaction_failure != "terminal_zero" or not exc.turns:
-                raise
-            state = replace(rs.state, answer=None, compaction_failure=exc.reasons)
-            # The rejected fold keeps its exact tokens/logprobs but never becomes
-            # context. A token-free task transition records the terminal failure;
-            # fold generations themselves remain free of environment transitions.
-            terminal = Turn(
-                prefix=(),
-                logprobs=(),
-                transition=StepResult(next_state=state, done=True, reward_outcome=0.0),
-            )
-            return replace(rs, state=state, turns=rs.turns + exc.turns + (terminal,))
+            exc.turns = _cap_compaction_penalties(previous, exc.turns)
+            raise
+        return replace(result, turns=_cap_compaction_penalties(previous, result.turns))
 
-    @staticmethod
-    def _cap_compaction_penalties(rs, turns):
-        remaining = max(0.0, 0.05 + sum(t.compaction_penalty for t in rs.turns))
-        capped = []
-        for turn in turns:
-            penalty = -min(remaining, max(0.0, -turn.compaction_penalty))
-            remaining = max(0.0, remaining + penalty)
-            capped.append(replace(turn, compaction_penalty=penalty))
-        return tuple(capped)
 
-    async def _advance(self, rs, *, sampling_params=None):
-        if (
-            not rs.done
-            and not rs.truncated
-            and rs.turns_taken >= rs.state.task_limit - 1
-        ):
-            return await self._finish(rs, sampling_params=sampling_params)
-        if not rs.done and not rs.truncated and not self.protocol.manages_context:
-            size = len(
-                self._policy.prepare(rs.messages, tools=self._tools or ()).tokens
-            )
-            if size < self.context_limit and size >= self.context_limit - 16384 - 1024:
-                return await self._finish(rs, sampling_params=sampling_params)
-        return await super()._advance(rs, sampling_params=sampling_params)
-
-    async def _finish(self, rs, *, sampling_params=None):
-        if rs.done:
-            return rs
-        rs.check_continuation()
-        if self._finish_prompt is None:
-            return replace(rs, truncated=True)
-        if self.protocol.should_compact(rs, self.protocol.prepare(rs, self).tokens):
-            rs = await self._fold(rs)
-        if rs.done:
-            return rs
-        messages = [*rs.messages, {"role": "user", "content": self._finish_prompt}]
-        tools = tuple(t for t in self._tools or () if t["function"]["name"] == "submit")
-        return await self._generate_turn(
-            rs,
-            messages,
-            self._policy.prepare(messages, tools=tools),
-            sampling_params=sampling_params,
-            ending=True,
-        )
-
-    async def _generate_turn(self, rs, messages, cond, *, sampling_params, ending):
-        params = self._params(sampling_params) or SamplingParams(
-            max_tokens=16384, temperature=None, top_p=None
-        )
-        available = self.context_limit - len(cond.tokens)
-        if available <= 0:
-            raise ValueError(
-                "Browser context exceeds limit; refusing prompt truncation"
-            )
-        if params.max_tokens > available:
-            params = replace(params, max_tokens=available)
-        return await super()._generate_turn(
-            rs, messages, cond, sampling_params=params, ending=ending
-        )
+def _cap_compaction_penalties(previous, turns):
+    remaining = max(0.0, 0.05 + sum(t.compaction_penalty for t in previous))
+    capped = []
+    for turn in turns:
+        penalty = -min(remaining, max(0.0, -turn.compaction_penalty))
+        remaining = max(0.0, remaining + penalty)
+        capped.append(replace(turn, compaction_penalty=penalty))
+    return tuple(capped)
 
 
 class SearchEnv(ToolEnv[State]):
@@ -262,6 +202,17 @@ class SearchEnv(ToolEnv[State]):
             calls_max=self.call_budget,
             task_limit=self.task_limit,
         )
+
+    def should_finish(self, rollout):
+        """Answer when the next task turn would exhaust the task limit."""
+        return rollout.turns_taken >= rollout.state.task_limit - 1
+
+    def finish_tools(self, tools):
+        """Offer only the submit tool on the final-answer turn."""
+        return tuple(t for t in tools if t["function"]["name"] == "submit")
+
+    def on_compaction_failure(self, state, reasons):
+        return replace(state, answer=None, compaction_failure=reasons)
 
     async def step(self, state, turn, *, workspace=None):
         if len(turn.tool_calls) > 1:
@@ -313,8 +264,8 @@ def make_runner(
         read_chars=read_chars,
         task_limit=max_steps,
     )
-    compactor = build_budget(
-        max_prompt_tokens=prompt_limit,
+    compactor = _CappedSummarize(
+        trigger=AnyOf(PromptTokens(prompt_limit), StateCounter()),
         max_reply_tokens=compactor_max_tokens,
         summary_target_tokens=min(summary_target_tokens, compactor_max_tokens),
         require_complete_reply=True,
@@ -328,14 +279,19 @@ def make_runner(
     )
     from .browser import FINISH_PROMPT, SYSTEM
 
-    runner = BrowserRunner(
-        context_limit=context_limit,
-        compaction_failure=compaction_failure,
+    if compaction_failure not in ("raise", "terminal_zero"):
+        raise ValueError("Unknown compaction failure policy")
+    runner = Agent(
         policy=policy,
         env=env,
         system_prompt=SYSTEM,
         context=AppendOnly() if no_compact else compactor,
+        sampling_params=SamplingParams(max_tokens=16384, temperature=None, top_p=None),
         max_steps=max_steps,
-        finish_prompt=FINISH_PROMPT,
+        finish_prompt={"role": "user", "content": FINISH_PROMPT},
+        context_limit=context_limit,
+        on_compaction_failure="end"
+        if compaction_failure == "terminal_zero"
+        else "raise",
     )
     return runner, policy, NullWorkspace(), case.question, compactor, env.schemas
