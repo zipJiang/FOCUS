@@ -554,7 +554,10 @@ def _random_tree(rng: random.Random, config=None) -> SchedulerState[RolloutState
                 )
                 for t in _random_log(rng, max_turns=3, terminal=rng.random() < 0.75)
             )
-            parent_id = stamped_child(state, parent_id, rollout(*log)).id
+            child = stamped_child(state, parent_id, rollout(*log))
+            if child.payload.done:
+                break  # a finished episode has nothing to branch from
+            parent_id = child.id
     return state
 
 
@@ -601,6 +604,35 @@ def _parent_of(state: SchedulerState[RolloutState[None]], node_id: int) -> int:
     parent_id = state.nodes[node_id].parent_id
     assert parent_id is not None
     return parent_id
+
+
+def _refined(
+    state: SchedulerState[RolloutState[None]], node_id: int, config: RewardConfig
+) -> tuple[float, float | None]:
+    """``(V~, G-bar)`` at one checkpoint, spelled out from the paper's recursion.
+
+    Every checkpoint in these trees carries a network prior of zero.
+    """
+    node = state.nodes[node_id]
+    if node.payload.done:
+        return 0.0, None
+    prior = node.critic["v-base"]
+    if not node.children:
+        return prior, None
+    backups = []
+    for child_id in node.children:
+        child = state.nodes[child_id]
+        start = len(node.payload.turns)
+        duration = sum(t.transition is not None for t in child.payload.turns[start:])
+        successor, _ = _refined(state, child_id, config)
+        backups.append(
+            _discounted(child.payload.turns, start, config)
+            + config.gamma**duration * successor
+        )
+    n = len(backups)
+    mean = sum(backups) / n
+    kappa = config.value_prior_strength
+    return (kappa * prior + n * mean) / (kappa + n), mean
 
 
 def _discounted(turns: Sequence[Turn[None]], start: int, config: RewardConfig) -> float:
@@ -657,14 +689,16 @@ def test_a_record_is_the_regions_of_its_edge_and_the_return_over_it(
             assert record.spans == spans_of(edge), case
             assert record.edge_tokens == len(_generated(edge)), case
 
+        expanded = {
+            node.id
+            for node in state.nodes.values()
+            if node.children and not node.payload.done
+        }
+        assert {r.node_id for r in result.critic} == expanded, case
         for critic in result.critic:
             node = state.nodes[critic.node_id]
-            evidence = state.nodes[0].metadata["rollout_evidence"]
-            stats = evidence.observations[node.id].returns
-            expected_value = (
-                0 if node.payload.done else stats.n * stats.mean / (1 + stats.n)
-            )
-            assert critic.target == pytest.approx(expected_value), case
+            _, branch_mean = _refined(state, node.id, config)
+            assert critic.target == pytest.approx(branch_mean), case
             assert critic.context == node.metadata["value_contexts"]["v-base"]
 
         for record in result.actor:

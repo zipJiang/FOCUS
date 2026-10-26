@@ -6,7 +6,6 @@ from focus import (
     DirectBranchTdEstimator,
     FifoAllocator,
     InMemoryWorkspace,
-    RefinedTdEstimator,
     RewardConfig,
     RolloutConfig,
     Runtime,
@@ -47,9 +46,7 @@ def runtime(*, storage=False, version="snapshot-7"):
     )
 
 
-@pytest.mark.parametrize(
-    "estimator", [DirectBranchTdEstimator(), RefinedTdEstimator(), None]
-)
+@pytest.mark.parametrize("estimator", [DirectBranchTdEstimator(), None])
 async def test_collection_uses_runtime_versions_and_keeps_lanes_separate(estimator):
     run = runtime()
     async with run.runner.services:

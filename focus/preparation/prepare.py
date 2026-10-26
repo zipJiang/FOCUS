@@ -9,6 +9,7 @@ from focus.allocation.evidence import evidence_of
 from focus.harness import AnyRollout
 from focus.harness.turn import logprob
 from focus.preparation.base import AdvantageEstimator
+from focus.preparation.direct_branch import critic_targets
 from focus.preparation.records import (
     ActorSample,
     CriticSample,
@@ -17,9 +18,7 @@ from focus.preparation.records import (
     _trainable_edges,
     edge_spans,
 )
-from focus.preparation.refined_td import checkpoint_value
 from focus.reward.config import RewardConfig
-from focus.scheduler.core.critic import VALUE_CONTEXTS_KEY
 from focus.scheduler.core.execution import PASS_KEY
 from focus.scheduler.core.returns import finished_through
 from focus.scheduler.core.tree import SchedulerState, SchedulerView
@@ -34,9 +33,14 @@ def prepare_samples(
     reward_config: RewardConfig,
     behavior_version: str,
 ) -> PreparedBatch:
-    """Compute one actor recipe and critic targets before flattening token spans."""
+    """Compute one actor recipe and the critic's branch-mean targets.
+
+    Critic targets do not depend on the actor recipe: every expanded checkpoint the
+    critic scored regresses on the mean of its direct-branch backups. ``estimator=None``
+    prepares only those targets.
+    """
     view = SchedulerView(state)
-    evidence = evidence_of(view, reward_config)
+    evidence_of(view, reward_config)  # refuses trees searched under other rewards
     if estimator is not None and not estimator.name:
         raise ValueError(
             f"{type(estimator).__name__} has no `name`; "
@@ -75,41 +79,7 @@ def prepare_samples(
                     search_pass=node.metadata.get(PASS_KEY),
                 )
             )
-    critic_override = (
-        estimator.critic_targets(view=view, reward_config=reward_config)
-        if estimator is not None
-        else None
-    )
-    for node in view.nodes() if critic_override is None else ():
-        counts = evidence.observations.get(node.id)
-        if counts is None or counts.returns.n == 0:
-            continue
-        context = node.metadata.get(VALUE_CONTEXTS_KEY, {}).get(
-            reward_config.value_version
-        )
-        if context is None:
-            # No value model was run here: GRPO and custom actor-only recipes
-            # remain usable without inventing a critic input or network prior.
-            continue
-        value = checkpoint_value(node, evidence, reward_config)
-        critic.append(
-            CriticSample(
-                node_id=node.id,
-                context=context,
-                target=value.value,
-                reward_config_id=reward_config.config_id,
-                value_version=reward_config.value_version,
-                diagnostics=MappingProxyType(
-                    {
-                        "prior": value.prior,
-                        "observations": float(value.observations),
-                        "mean_return": counts.returns.mean,
-                    }
-                ),
-            )
-        )
-    if critic_override is not None:
-        critic.extend(critic_override)
+    critic.extend(critic_targets(view, reward_config))
     if estimator is not None:
         estimator.assign(tuple(actor), view=view, reward_config=reward_config)
     for record in actor:

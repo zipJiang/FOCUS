@@ -4,7 +4,6 @@ from focus.scheduler.core.allocation import AllocationSession, Reservation
 
 from .base import (
     Allocator,
-    BestFirstAllocator,
     FifoAllocator,
     TokenEntropyAllocator,
     register_allocator,
@@ -18,7 +17,6 @@ __all__ = [
     "AllocationSession",
     "Reservation",
     "FifoAllocator",
-    "BestFirstAllocator",
     "TokenEntropyAllocator",
     "register_allocator",
     "NodeWorth",

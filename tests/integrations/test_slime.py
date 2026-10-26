@@ -17,8 +17,8 @@ import pytest
 
 from focus import (
     ConcurrencyGating,
+    DirectBranchTdEstimator,
     FifoAllocator,
-    RefinedTdEstimator,
     SearchPass,
     WidthGating,
 )
@@ -108,7 +108,7 @@ async def test_make_generate_builds_one_runtime_per_actor_and_returns_a_group(
     monkeypatch.setattr("focus.loop.run_search", fake_rollout)
     monkeypatch.setattr("focus.loop.prepare_samples", lambda *a, **kw: _result())
     generate = make_generate(
-        RolloutSpec(), runtime_factory=factory, estimator=RefinedTdEstimator()
+        RolloutSpec(), runtime_factory=factory, estimator=DirectBranchTdEstimator()
     )
     args = FakeArgs()
     first = await generate(args, FakeSample())
@@ -160,7 +160,7 @@ async def test_concurrent_args_keep_the_runtime_that_generated_each_tree(
             )
         ),
         runtime_factory=factory,
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
     )
     async with asyncio.TaskGroup() as tasks:
         first = tasks.create_task(
@@ -236,7 +236,7 @@ def _storage_generate(**kwargs: Any) -> Any:
             ),
         ),
         **kwargs,
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
     )
 
 
@@ -310,7 +310,7 @@ async def test_an_env_with_no_workspace_tools_needs_no_factory() -> None:
             value_model=DemoValue(),
             runner=toy_runner(gen, env=SubmitEnv([]), parser=HermesToolCallParser()),
         ),
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
     )
 
     samples = await generate(object(), "solve it")
@@ -422,7 +422,7 @@ async def test_the_spec_s_config_replaces_the_factory_s_and_the_live_objects_sta
                 passes=(SearchPass(FifoAllocator(), budget=99, gating=WidthGating(3)),),
             ),
         ),
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
     )
 
     await generate(object(), object())

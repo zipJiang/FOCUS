@@ -28,7 +28,6 @@ from focus.harness import RolloutState
 from focus.registry import build
 from focus.reward.config import RewardConfig
 from focus.scheduler import (
-    BestFirstSession,
     Budget,
     Expander,
     FifoSession,
@@ -657,27 +656,6 @@ def test_a_scored_pass_records_births_beside_the_return_it_bought() -> None:
     assert observations[root.id].returns.n == 1
     assert observations[chain[0].id].returns.n == 1
     assert observations[chain[0].id].m_done == 0
-
-
-def test_best_first_keeps_ancestor_statistics_separate_from_suffix_evidence() -> None:
-    """Best-first keeps its ancestor means alongside the shared direct evidence."""
-    state, _ = _root()
-    root = state.nodes[0]
-    observations: dict[int, Observations] = {}
-    session = BestFirstSession(
-        key="mean_return", ledger=RolloutLedger(RewardConfig(), observations)
-    )
-    reservation = session.select(SchedulerView(state))
-    assert reservation is not None
-    chain = _chain(state, 0.0, 1.0)
-
-    for node in chain:
-        stamp(node)
-
-    session.complete(reservation, state, chain)
-
-    assert root.visits == 1  # ancestor statistics were maintained separately
-    assert observations[chain[0].id].returns.n == 1
 
 
 def test_birth_samples_alone_let_the_first_pass_discriminate() -> None:

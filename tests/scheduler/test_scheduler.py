@@ -19,7 +19,6 @@ from focus.harness import (
 from focus.registry import build
 from focus.scheduler import (
     AllocationSession,
-    BestFirstSession,
     Budget,
     ConcurrencyGating,
     Expander,
@@ -286,16 +285,6 @@ def test_strategies_build_via_registry() -> None:
     assert isinstance(
         build(Termination, {"name": "budget", "max_rollouts": 4}), Termination
     )
-
-
-async def test_bestfirst_owns_its_return_statistics() -> None:
-    state = await Scheduler(
-        expander=ChainExpander(),
-        allocation=BestFirstSession(key="mean_return"),
-        termination=Budget(max_rollouts=1),
-    ).run(Toy(0))
-    assert state.nodes[0].visits == 1
-    assert state.nodes[0].mean_return == state.terminals()[0].payload.reward
 
 
 @pytest.mark.asyncio

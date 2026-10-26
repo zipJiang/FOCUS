@@ -70,9 +70,9 @@ def test_the_critic_target_counts_task_transitions_only() -> None:
         behavior_version="policy",
     )
 
-    assert len(result.critic) == 2
-    # only the terminal task turn is on the edge: the parent's 0.5 and the fold are out
-    assert [r.target for r in result.critic] == pytest.approx([0.5, 0.0])
+    # only the terminal task turn is on the edge: the parent's 0.5 and the fold are
+    # out, and the fold takes no discount step; a terminal has no target of its own
+    assert [r.target for r in result.critic] == pytest.approx([1.0])
     assert result.critic[0].context == "root context"
 
 
@@ -239,7 +239,7 @@ def _result() -> PreparedBatch:
                 spans=(_span(), _span(2)),
                 group_id=0,
                 reward_config_id="rc-0",
-                estimator="refined_td",
+                estimator="direct_branch_td",
                 weight=-1.5,
                 diagnostics={"advantage": -1.5, "baseline": 0.25},
                 search_pass=0,
@@ -283,7 +283,7 @@ def test_every_sample_says_which_head_it_trains_and_what_scored_it() -> None:
     assert {s["metadata"][LANE_KEY] for s in samples} == {"actor", "critic"}
     actor = [s for s in samples if s["metadata"][LANE_KEY] == "actor"]
     assert {s["metadata"][ESTIMATOR_KEY] for s in actor} == {
-        "refined_td",
+        "direct_branch_td",
         "test_custom",
     }
     assert all(s["group_index"] == 4 for s in samples)
@@ -788,4 +788,4 @@ def test_compaction_shaping_enters_actor_and_critic_without_discount_step():
         behavior_version=VERSION,
     )
     assert result.actor[0].weight == pytest.approx(0.98)
-    assert result.critic[0].target == pytest.approx(0.49)
+    assert result.critic[0].target == pytest.approx(0.98)

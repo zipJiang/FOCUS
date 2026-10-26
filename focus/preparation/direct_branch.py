@@ -1,4 +1,4 @@
-"""Recursive direct-branch values with unshrunk critic supervision."""
+"""Recursive direct-branch values, TD advantages, and branch-mean critic targets."""
 
 from __future__ import annotations
 
@@ -22,20 +22,29 @@ from focus.scheduler.core.tree import SchedulerView
 
 @dataclass(frozen=True)
 class DirectBranchValue:
-    prior: float
-    value: float
+    """One checkpoint's network prior, refined value, and direct-branch mean.
+
+    ``value`` and ``mean`` are ``None`` when they depend on a checkpoint the critic
+    failed to score; only a lenient backup produces such entries.
+    """
+
+    prior: float | None
+    value: float | None
     mean: float | None
     branches: int
 
 
 def direct_branch_values(
-    view: SchedulerView[AnyRollout], config: RewardConfig
+    view: SchedulerView[AnyRollout], config: RewardConfig, *, strict: bool = True
 ) -> dict[int, DirectBranchValue]:
     """Back up each sampled edge once, irrespective of descendant multiplicity.
 
     Successor values include their own prior blend. A terminal's remaining value
     is zero; its reward is on the incoming edge. An unexplored nonterminal uses
     its frozen network prior and has no critic target. No tree state is mutated.
+
+    A nonterminal checkpoint without a finite network value raises, unless
+    ``strict`` is false: then every value that depends on it is ``None``.
     """
     values: dict[int, DirectBranchValue] = {}
     for node in sorted(view.nodes(), key=lambda n: n.depth, reverse=True):
@@ -46,29 +55,44 @@ def direct_branch_values(
             continue
         prior = node.critic.get(config.value_version)
         if prior is None or not math.isfinite(prior):
-            raise ValueError(f"checkpoint {node.id} requires a finite network value")
-        contributions = []
+            if strict:
+                raise ValueError(
+                    f"checkpoint {node.id} requires a finite network value"
+                )
+            prior = None
+        contributions: list[float] | None = []
         for child_id in node.children:
             child = view.node(child_id)
             if child is None or child.parent_id != node.id:
                 raise ValueError(f"invalid direct branch from checkpoint {node.id}")
+            successor = values[child.id].value
+            if successor is None or contributions is None:
+                contributions = None
+                continue
             duration = sum(
                 t.transition is not None for t in child.payload.edge(node.payload)
             )
             contributions.append(
-                edge_return(child, node, config)
-                + config.gamma**duration * values[child.id].value
+                edge_return(child, node, config) + config.gamma**duration * successor
             )
-        count = len(contributions)
+        count = len(node.children)
+        if contributions is None:
+            values[node.id] = DirectBranchValue(prior, None, None, count)
+            continue
         total = math.fsum(contributions)
         mean = total / count if count else None
-        value = (
-            (config.value_prior_strength * prior + total)
-            / (config.value_prior_strength + count)
-            if count
-            else prior
-        )
-        if not math.isfinite(value) or (mean is not None and not math.isfinite(mean)):
+        value: float | None
+        if prior is None:
+            value = None
+        elif count:
+            value = (config.value_prior_strength * prior + total) / (
+                config.value_prior_strength + count
+            )
+        else:
+            value = prior
+        if (value is not None and not math.isfinite(value)) or (
+            mean is not None and not math.isfinite(mean)
+        ):
             raise ValueError(f"checkpoint {node.id} has non-finite branch values")
         values[node.id] = DirectBranchValue(prior, value, mean, count)
     return values
@@ -76,7 +100,7 @@ def direct_branch_values(
 
 @register_estimator("direct_branch_td")
 class DirectBranchTdEstimator(AdvantageEstimator):
-    """Refined direct-branch TD for actors; detached branch means for critics."""
+    """Segment TD advantages over refined direct-branch values (the paper's recipe)."""
 
     def assign(
         self,
@@ -91,6 +115,11 @@ class DirectBranchTdEstimator(AdvantageEstimator):
             if parent is None or node.parent_id != parent.id:
                 raise ValueError(f"edge {node.id} has no matching parent")
             before, after = values[parent.id], values[node.id]
+            # A strict backup leaves no value unset.
+            assert before.value is not None
+            assert after.value is not None
+            assert before.prior is not None
+            assert after.prior is not None
             duration = sum(
                 t.transition is not None for t in node.payload.edge(parent.payload)
             )
@@ -110,41 +139,52 @@ class DirectBranchTdEstimator(AdvantageEstimator):
                 "successor_direct_branches": float(after.branches),
             }
 
-    def critic_targets(
-        self,
-        *,
-        view: SchedulerView[AnyRollout],
-        reward_config: RewardConfig,
-    ) -> Sequence[CriticSample]:
-        values = direct_branch_values(view, reward_config)
-        result = []
-        for node in view.nodes():
-            value = values[node.id]
-            if value.mean is None:
-                continue
-            context = node.metadata.get(VALUE_CONTEXTS_KEY, {}).get(
-                reward_config.value_version
+
+def critic_targets(
+    view: SchedulerView[AnyRollout], reward_config: RewardConfig
+) -> list[CriticSample]:
+    """Branch-mean targets at every expanded checkpoint the critic scored.
+
+    The target is the backup mean of the direct branches, held fixed during critic
+    training. Trees searched without a value model carry no critic inputs and yield
+    no targets; checkpoints whose backup depends on a failed critic score are skipped.
+    """
+    if not any(
+        reward_config.value_version in node.metadata.get(VALUE_CONTEXTS_KEY, {})
+        for node in view.nodes()
+    ):
+        return []
+    values = direct_branch_values(view, reward_config, strict=False)
+    result = []
+    for node in view.nodes():
+        value = values[node.id]
+        context = node.metadata.get(VALUE_CONTEXTS_KEY, {}).get(
+            reward_config.value_version
+        )
+        # A checkpoint the critic failed to score, or whose backup depends on one,
+        # has no target; the rest of a partial collection still trains the critic.
+        if (
+            value.mean is None
+            or value.value is None
+            or value.prior is None
+            or context is None
+        ):
+            continue
+        result.append(
+            CriticSample(
+                node_id=node.id,
+                context=context,
+                target=value.mean,
+                reward_config_id=reward_config.config_id,
+                value_version=reward_config.value_version,
+                diagnostics=MappingProxyType(
+                    {
+                        "prior": value.prior,
+                        "direct_branches": float(value.branches),
+                        "mean_return": value.mean,
+                        "refined_value": value.value,
+                    }
+                ),
             )
-            if context is None:
-                raise ValueError(
-                    f"checkpoint {node.id} has no serialized critic context"
-                )
-            result.append(
-                CriticSample(
-                    node_id=node.id,
-                    context=context,
-                    target=value.mean,
-                    reward_config_id=reward_config.config_id,
-                    value_version=reward_config.value_version,
-                    diagnostics=MappingProxyType(
-                        {
-                            "prior": value.prior,
-                            "observations": float(value.branches),
-                            "direct_branches": float(value.branches),
-                            "mean_return": value.mean,
-                            "refined_value": value.value,
-                        }
-                    ),
-                )
-            )
-        return result
+        )
+    return result

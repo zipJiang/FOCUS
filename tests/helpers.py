@@ -530,12 +530,12 @@ __all__ = [
 
 async def prepared(prompt: Any, runtime: Any, *, estimator: Any = None) -> Any:
     """Run a test search and explicitly prepare its chosen training recipe."""
-    from focus import RefinedTdEstimator, prepare_samples, run_search
+    from focus import DirectBranchTdEstimator, prepare_samples, run_search
 
     state = await run_search(prompt, runtime)
     return prepare_samples(
         state,
-        estimator=estimator if estimator is not None else RefinedTdEstimator(),
+        estimator=estimator if estimator is not None else DirectBranchTdEstimator(),
         reward_config=runtime.config.reward_config,
         behavior_version=runtime.runner.policy.version,
     )

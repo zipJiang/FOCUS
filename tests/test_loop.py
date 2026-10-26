@@ -14,8 +14,8 @@ from focus import (
     AllocationSession,
     Allocator,
     ConcurrencyGating,
+    DirectBranchTdEstimator,
     FifoAllocator,
-    RefinedTdEstimator,
     SearchPass,
     WidthGating,
     prepare_samples,
@@ -188,20 +188,20 @@ def _runtime(**kwargs) -> Runtime:
 
 def test_search_has_no_implicit_passes() -> None:
     assert RolloutConfig().passes == ()
-    assert not hasattr(RefinedTdEstimator(), "build")
+    assert not hasattr(DirectBranchTdEstimator(), "build")
     assert not hasattr(FifoAllocator(), "assign")
 
 
 @pytest.mark.asyncio
 async def test_one_call_runs_every_pass_and_returns_training_records() -> None:
-    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    result = await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
 
     assert isinstance(result, PreparedBatch)
     assert result.reward_config is not None
     assert len(result) > 0
     assert result.critic
     assert result.actor
-    assert {r.estimator for r in result.actor} == {"refined_td"}
+    assert {r.estimator for r in result.actor} == {"direct_branch_td"}
 
 
 @pytest.mark.asyncio
@@ -219,7 +219,7 @@ async def test_a_prompt_that_is_neither_text_nor_a_checkpoint_is_refused() -> No
 
     with pytest.raises(TypeError, match="prompt must be"):
         await prepared(
-            TrainerSample("solve it"), _runtime(), estimator=RefinedTdEstimator()
+            TrainerSample("solve it"), _runtime(), estimator=DirectBranchTdEstimator()
         )
 
 
@@ -227,7 +227,7 @@ async def test_a_prompt_that_is_neither_text_nor_a_checkpoint_is_refused() -> No
 async def test_the_reward_configuration_is_stamped_on_every_record() -> None:
     runtime = _runtime(reward_config=RewardConfig(beta_step=0.25, config_id="rc-9"))
 
-    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+    result = await prepared("solve it", runtime, estimator=DirectBranchTdEstimator())
 
     every = result.actor
     assert every
@@ -244,7 +244,7 @@ async def test_later_pass_edges_are_actor_data() -> None:
     A later-pass edge is drawn under the same generative law as a first-pass edge, so
     nothing about how it was scheduled disqualifies it from training the actor.
     """
-    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    result = await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
 
     assert result.actor
     pass_ids = {r.search_pass for r in result.actor}
@@ -259,7 +259,7 @@ async def test_later_pass_edges_are_actor_data() -> None:
 
 @pytest.mark.asyncio
 async def test_exported_spans_keep_their_mask_aligned_to_their_tokens() -> None:
-    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    result = await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
 
     records = result.actor
     spans = [span for r in records for span in r.spans]
@@ -272,9 +272,9 @@ async def test_exported_spans_keep_their_mask_aligned_to_their_tokens() -> None:
 
 @pytest.mark.asyncio
 async def test_a_fold_and_a_leaf_on_one_chain_score_comparably() -> None:
-    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    result = await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
 
-    weights = [abs(r.weight) for r in result.actor if r.estimator == "refined_td"]
+    weights = [abs(r.weight) for r in result.actor if r.estimator == "direct_branch_td"]
     assert len(weights) > 2
     assert all(math.isfinite(w) for w in weights)
 
@@ -381,7 +381,7 @@ async def test_the_weight_an_estimator_wrote_is_the_one_that_goes_on_the_wire() 
                 SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
             )
         ),
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
     )
 
     assert result.actor
@@ -409,7 +409,7 @@ async def test_a_constant_weight_reaches_every_slot_untouched() -> None:
 
 @pytest.mark.asyncio
 async def test_the_estimator_weight_is_the_exported_reward() -> None:
-    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    result = await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
 
     by_node = {(r.estimator, r.node_id): r for r in result.actor}
     checked = 0
@@ -431,7 +431,7 @@ async def test_the_estimator_weight_is_the_exported_reward() -> None:
 
 @pytest.mark.asyncio
 async def test_no_exported_span_is_empty() -> None:
-    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    result = await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
 
     records = result.actor
     assert records
@@ -442,9 +442,9 @@ async def test_no_exported_span_is_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_the_advantage_estimator_reaches_the_exported_weight() -> None:
-    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    result = await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
 
-    advantages = [r for r in result.actor if r.estimator == "refined_td"]
+    advantages = [r for r in result.actor if r.estimator == "direct_branch_td"]
     assert advantages
     assert any(r.weight != 0.0 for r in advantages)
     assert all(r.group_id != r.node_id for r in advantages)
@@ -462,7 +462,7 @@ async def test_every_expansion_records_which_pass_produced_it() -> None:
 
 @pytest.mark.asyncio
 async def test_one_scheduler_pass_per_weighter_that_asks_for_evidence() -> None:
-    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    result = await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
     passes = {r.search_pass for r in result.actor}
     assert passes == {0, 1, 2}
 
@@ -488,7 +488,7 @@ async def test_each_pass_gets_its_own_budget_on_the_shared_tree() -> None:
         )
     )
 
-    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+    result = await prepared("solve it", runtime, estimator=DirectBranchTdEstimator())
 
     slack = runtime.config.max_concurrency * runtime.runner.max_steps
     turns = {0: 6, 1: 4, 2: 2}
@@ -554,7 +554,7 @@ async def test_a_later_pass_starts_from_what_an_earlier_one_bought() -> None:
                 SearchPass(spy, budget=8, gating=ConcurrencyGating(4)),
             )
         ),
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
     )
 
     assert spy.seen
@@ -583,7 +583,7 @@ async def test_passes_share_one_ledger_without_copying_totals() -> None:
 @pytest.mark.asyncio
 async def test_search_and_preparation_log_their_own_work(caplog) -> None:
     caplog.set_level(logging.INFO)
-    await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
     passes = [
         r.getMessage()
         for r in caplog.records
@@ -600,13 +600,13 @@ async def test_search_and_preparation_log_their_own_work(caplog) -> None:
         if r.getMessage().startswith("samples prepared")
     ]
     assert len(batches) == 1
-    assert "estimator=refined_td" in batches[0]
+    assert "estimator=direct_branch_td" in batches[0]
 
 
 @pytest.mark.asyncio
 async def test_the_result_reports_what_the_search_cost() -> None:
     """Enough to log throughput or alert on a dead endpoint without the tree."""
-    result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    result = await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
 
     assert result.stats["rollouts"] > 0
     assert result.stats["nodes"] > 0
@@ -627,7 +627,7 @@ async def test_run_rollout_is_run_search_and_then_an_export() -> None:
     two estimators on one tree, or re-scoring a tree from disk -- and it is only worth
     anything if the by-hand path lands on the same records the one-call path does.
     """
-    whole = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
+    whole = await prepared("solve it", _runtime(), estimator=DirectBranchTdEstimator())
 
     # a fresh runtime, so the scripted generator starts where the other one did
     piecewise = _runtime()
@@ -636,7 +636,7 @@ async def test_run_rollout_is_run_search_and_then_an_export() -> None:
     assert (
         prepare_samples(
             state,
-            estimator=RefinedTdEstimator(),
+            estimator=DirectBranchTdEstimator(),
             reward_config=piecewise.config.reward_config,
             behavior_version=piecewise.runner.policy.version,
         ).actor
@@ -645,7 +645,7 @@ async def test_run_rollout_is_run_search_and_then_an_export() -> None:
     assert (
         prepare_samples(
             state,
-            estimator=RefinedTdEstimator(),
+            estimator=DirectBranchTdEstimator(),
             reward_config=piecewise.config.reward_config,
             behavior_version=piecewise.runner.policy.version,
         ).critic
@@ -674,7 +674,7 @@ async def test_search_can_run_inexact_models_but_preparation_refuses_them() -> N
     with pytest.raises(ValueError, match="not trainable"):
         prepare_samples(
             state,
-            estimator=RefinedTdEstimator(),
+            estimator=DirectBranchTdEstimator(),
             reward_config=runtime.config.reward_config,
             behavior_version=runtime.runner.policy.version,
         )
@@ -720,7 +720,7 @@ async def test_scoring_a_searched_tree_keeps_the_runner_s_own_channel() -> None:
 
     result = prepare_samples(
         state,
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
         reward_config=runtime.config.reward_config,
         behavior_version=runtime.runner.policy.version,
     )
@@ -748,7 +748,7 @@ async def test_one_tree_scores_under_two_estimators_without_searching_twice() ->
 
     gae = prepare_samples(
         state,
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
         reward_config=runtime.config.reward_config,
         behavior_version=runtime.runner.policy.version,
     )
@@ -760,7 +760,7 @@ async def test_one_tree_scores_under_two_estimators_without_searching_twice() ->
     )
 
     assert [r.node_id for r in gae.actor] == [r.node_id for r in grpo.actor]
-    assert {r.estimator for r in gae.actor} == {"refined_td"}
+    assert {r.estimator for r in gae.actor} == {"direct_branch_td"}
     assert {r.estimator for r in grpo.actor} == {"test_fixed"}
     assert [r.weight for r in gae.actor] != [r.weight for r in grpo.actor]
 
@@ -801,13 +801,13 @@ async def test_a_settled_tree_ships_even_though_its_lock_does_not() -> None:
     assert (
         prepare_samples(
             restored,
-            estimator=RefinedTdEstimator(),
+            estimator=DirectBranchTdEstimator(),
             reward_config=runtime.config.reward_config,
             behavior_version=runtime.runner.policy.version,
         ).actor
         == prepare_samples(
             state,
-            estimator=RefinedTdEstimator(),
+            estimator=DirectBranchTdEstimator(),
             reward_config=runtime.config.reward_config,
             behavior_version=runtime.runner.policy.version,
         ).actor
@@ -815,13 +815,13 @@ async def test_a_settled_tree_ships_even_though_its_lock_does_not() -> None:
     assert (
         prepare_samples(
             restored,
-            estimator=RefinedTdEstimator(),
+            estimator=DirectBranchTdEstimator(),
             reward_config=runtime.config.reward_config,
             behavior_version=runtime.runner.policy.version,
         ).critic
         == prepare_samples(
             state,
-            estimator=RefinedTdEstimator(),
+            estimator=DirectBranchTdEstimator(),
             reward_config=runtime.config.reward_config,
             behavior_version=runtime.runner.policy.version,
         ).critic
@@ -849,7 +849,7 @@ async def test_one_value_head_is_built_for_the_whole_call(monkeypatch) -> None:
     monkeypatch.setattr(loop_module, "_value_head", counting)
 
     result = await prepared(
-        "solve it", _value_runtime(LengthReward()), estimator=RefinedTdEstimator()
+        "solve it", _value_runtime(LengthReward()), estimator=DirectBranchTdEstimator()
     )
 
     assert result.actor
@@ -908,7 +908,7 @@ async def test_later_passes_score_what_they_add_too() -> None:
     model = LengthReward()
 
     result = await prepared(
-        "solve it", _value_runtime(model), estimator=RefinedTdEstimator()
+        "solve it", _value_runtime(model), estimator=DirectBranchTdEstimator()
     )
 
     assert result.stats["nodes"] > 0
@@ -918,25 +918,26 @@ async def test_later_passes_score_what_they_add_too() -> None:
 
 
 @pytest.mark.asyncio
-async def test_network_prior_changes_td_through_both_refined_endpoints() -> None:
+async def test_network_prior_changes_td_through_the_refined_values() -> None:
     base = await prepared(
         "solve it",
         _runtime(value_model=ConstantReward(0.0)),
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
     )
     shifted = await prepared(
         "solve it",
         _runtime(value_model=ConstantReward(0.5)),
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
     )
-    for before, after in zip(base.actor, shifted.actor, strict=True):
-        d = after.diagnostics
-        parent_shift = 0.5 / (1 + d["parent_observations"])
-        successor_shift = (
-            0.5 / (1 + d["successor_observations"]) if d["successor_prior"] else 0
-        )
-        assert after.weight - before.weight == pytest.approx(
-            successor_shift - parent_shift
+    assert any(
+        before.weight != after.weight
+        for before, after in zip(base.actor, shifted.actor, strict=True)
+    )
+    for record in shifted.actor:
+        d = record.diagnostics
+        assert d["parent_prior"] == 0.5
+        assert record.weight == pytest.approx(
+            d["edge_reward"] + d["successor_value"] - d["parent_value"]
         )
 
 
@@ -995,7 +996,7 @@ async def test_the_run_stamps_and_reads_the_runner_s_own_behavior_channel() -> N
     runtime = _runtime()
     runtime.runner = _runner(version="pi-7")
 
-    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+    result = await prepared("solve it", runtime, estimator=DirectBranchTdEstimator())
 
     assert result.actor
     # and the logprobs are there, not an empty column beside a claim that they are
@@ -1156,7 +1157,7 @@ async def test_allocator_errors_propagate_after_the_first_pass() -> None:
     )
 
     with pytest.raises(ValueError, match="estimator bug"):
-        await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+        await prepared("solve it", runtime, estimator=DirectBranchTdEstimator())
 
 
 class StaggeredGenerator(CyclingGenerator):
@@ -1268,12 +1269,12 @@ async def test_a_pure_allocator_grows_the_tree_and_claims_no_export_slot() -> No
                 SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
             ),
         ),
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
     )
 
-    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
+    result = await prepared("solve it", runtime, estimator=DirectBranchTdEstimator())
 
-    assert {record.estimator for record in result.actor} == {"refined_td"}
+    assert {record.estimator for record in result.actor} == {"direct_branch_td"}
     assert result.stats["rollouts"] > without.stats["rollouts"]
 
 

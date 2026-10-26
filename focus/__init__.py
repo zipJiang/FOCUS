@@ -2,7 +2,6 @@
 
 from focus.allocation import (
     Allocator,
-    BestFirstAllocator,
     FifoAllocator,
     RolloutLedger,
     TokenEntropyAllocator,
@@ -71,7 +70,6 @@ from focus.preparation import (
     AdvantageEstimator,
     DirectBranchTdEstimator,
     GrpoEstimator,
-    RefinedTdEstimator,
     prepare_samples,
     register_estimator,
 )
@@ -100,7 +98,6 @@ from focus.scheduler import (
 from focus.scheduler.core.allocation import (
     AllocationLedger,
     AllocationSession,
-    BestFirstSession,
     FifoSession,
     RankedSession,
     Reservation,
@@ -112,14 +109,12 @@ from focus.tiktoken_chat import TiktokenChatTokenizer
 # each group. The groups are the documentation: they are the order the docs introduce
 # the library in, which is not the order an alphabetical list would give.
 __all__ = [
-    "BestFirstAllocator",
     "TokenEntropyAllocator",
     "RolloutLedger",
     "AllocationSession",
     "AllocationLedger",
     "Reservation",
     "FifoSession",
-    "BestFirstSession",
     "RankedSession",
     "TokenEntropySession",
     "SearchPass",
@@ -209,7 +204,6 @@ __all__ = [
     # What an edge is worth to the actor loss.
     "AdvantageEstimator",
     "Allocator",
-    "RefinedTdEstimator",
     "DirectBranchTdEstimator",
     "GrpoEstimator",
     "ValueRefinement",

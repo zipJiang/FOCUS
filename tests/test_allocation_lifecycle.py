@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 
 from focus import (
-    BestFirstAllocator,
     ConcurrencyGating,
     FifoAllocator,
     RewardConfig,
@@ -319,7 +318,7 @@ def test_ranked_scan_does_not_copy_frontier_and_scores_each_node_once() -> None:
 
 @pytest.mark.parametrize(
     "allocator",
-    [FifoAllocator(), BestFirstAllocator(), TokenEntropyAllocator(), ValueRefinement()],
+    [FifoAllocator(), TokenEntropyAllocator(), ValueRefinement()],
 )
 def test_configuration_creates_isolated_sessions(allocator) -> None:
     config = RewardConfig()

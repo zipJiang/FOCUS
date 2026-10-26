@@ -12,7 +12,7 @@ from focus.reward.config import RewardConfig
 from focus.scheduler.core.tree import Node, SchedulerView
 
 if TYPE_CHECKING:
-    from focus.preparation.records import ActorSample, CriticSample
+    from focus.preparation.records import ActorSample
 
 
 @registrable(slot="advantage_estimator")
@@ -26,15 +26,6 @@ class AdvantageEstimator(ABC):
     name: str = ""
     #: Outcome-based recipes may require a completed path through each actor edge.
     requires_completed_paths: bool = False
-
-    def critic_targets(
-        self,
-        *,
-        view: SchedulerView[AnyRollout],
-        reward_config: RewardConfig,
-    ) -> Sequence[CriticSample] | None:
-        """Override critic supervision, or retain default suffix targets with None."""
-        return None
 
     @abstractmethod
     def assign(

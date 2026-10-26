@@ -12,13 +12,13 @@ import focus
 from focus import (
     AllocationSession,
     Allocator,
-    BestFirstAllocator,
     ConcurrencyGating,
+    DirectBranchTdEstimator,
     FifoAllocator,
-    RefinedTdEstimator,
     RolloutConfig,
     RolloutLedger,
     SearchPass,
+    TokenEntropyAllocator,
     ValueRefinement,
     WidthGating,
     prepare_samples,
@@ -56,7 +56,7 @@ async def test_empty_configuration_returns_only_the_initialized_root() -> None:
     state = await run_search("solve it", runtime)
     assert len(state.nodes) == 1
     assert state.stats["turns"] == state.stats["rollouts"] == 0
-    for estimator in (None, RefinedTdEstimator()):
+    for estimator in (None, DirectBranchTdEstimator()):
         batch = prepare_samples(
             state,
             estimator=estimator,
@@ -94,17 +94,12 @@ async def test_gate_changes_reopen_nodes_and_policies_keep_their_backup() -> Non
     runtime = _runtime(
         passes=(
             SearchPass(FifoAllocator(), budget=4, gating=WidthGating(1)),
-            SearchPass(
-                BestFirstAllocator(key="mean_return"),
-                budget=8,
-                gating=ConcurrencyGating(1),
-            ),
+            SearchPass(FifoAllocator(), budget=8, gating=ConcurrencyGating(1)),
             SearchPass(capture, budget=1, gating=ConcurrencyGating(1)),
         )
     )
     state = await run_search("solve it", runtime)
     assert len(state.nodes[state.root_id].children) > 1
-    assert state.nodes[state.root_id].visits > 0
     assert capture.ledger
     assert sum(c.m_done for c in capture.ledger.values()) == state.stats["rollouts"]
     assert all(c.m_pending == 0 for c in capture.ledger.values())
@@ -124,7 +119,7 @@ async def test_one_tree_prepares_independent_recipes_without_mutating_search() -
     before = pickle.dumps(state)
     gae = prepare_samples(
         state,
-        estimator=RefinedTdEstimator(),
+        estimator=DirectBranchTdEstimator(),
         reward_config=runtime.config.reward_config,
         behavior_version=runtime.runner.policy.version,
     )
@@ -143,7 +138,7 @@ async def test_one_tree_prepares_independent_recipes_without_mutating_search() -
     assert pickle.dumps(state) == before
     assert gae.actor
     assert grpo.actor
-    assert {r.estimator for r in gae.actor} == {"refined_td"}
+    assert {r.estimator for r in gae.actor} == {"direct_branch_td"}
     assert {r.estimator for r in grpo.actor} == {"test_fixed"}
     assert len(gae.actor) == len({r.node_id for r in gae.actor})
     assert gae.critic == grpo.critic == critic.critic
@@ -172,7 +167,7 @@ def test_removed_api_is_not_retained_as_aliases() -> None:
         "LedgerBackup",
     ):
         assert not hasattr(focus, name)
-    assert not hasattr(RefinedTdEstimator(), "build")
+    assert not hasattr(DirectBranchTdEstimator(), "build")
     assert not hasattr(FifoAllocator(), "assign")
     with pytest.raises(TypeError):
         RolloutConfig(weighters=())  # type: ignore[call-arg]
@@ -183,7 +178,7 @@ def test_custom_policies_are_built_independently_for_each_search() -> None:
     from tests.helpers import rollout
     from tests.trees import root_state
 
-    allocator = BestFirstAllocator(key="mean_return")
+    allocator = TokenEntropyAllocator()
     view = SchedulerView(root_state(rollout()))
     first = allocator.build(view, RolloutLedger(RewardConfig()))
     second = allocator.build(view, RolloutLedger(RewardConfig()))

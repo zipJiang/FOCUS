@@ -73,11 +73,9 @@ from focus.reward import RewardModel, RewardResult
 from focus.reward.config import RewardConfig
 from focus.scheduler import (
     Budget,
-    CriticScheduler,
     Expander,
     GatingPolicy,
     Node,
-    NodeScorer,
     RankedSession,
     Scheduler,
     SchedulerState,
@@ -571,49 +569,6 @@ class FlakyReward(RewardModel):
         return [RewardResult(score=len(context) / 10.0) for context in contexts]
 
 
-@pytest.mark.parametrize("seed", SEEDS)
-async def test_a_critic_pass_scores_a_tree_that_is_still_growing(seed: int) -> None:
-    """Two schedulers, one tree, one lock: what the critic owes when generation stops.
-
-    The critic tracks generation through ``until`` and drains after it, so the promise
-    is that no finished node is left silently unscored: each one carries the version, or
-    it was in a batch the server dropped -- and every drop is on the count a trainer
-    reads. Nothing is scored twice (which would double a batch's cost and, with a
-    non-deterministic server, overwrite a real estimate), nothing escapes as an
-    exception, and the lock both of them take is free at the end.
-    """
-    expander = JitterExpander(random.Random(seed))
-    model = FlakyReward(random.Random(seed + 1000))
-    state = _root(WidthGating(3))
-    generated = asyncio.Event()
-    critic: CriticScheduler[Any] = CriticScheduler(
-        model=model,
-        serialize=_name,
-        version="rm-v1",
-        batch_size=3,
-        poll_interval=0.0,  # a bare yield: the wait is for the seed, not for a clock
-    )
-
-    async def _generate() -> None:
-        try:
-            await _scheduler(
-                expander, Budget(max_rollouts=12), max_concurrency=4
-            ).run_on(state)
-        finally:
-            generated.set()
-
-    await asyncio.gather(_generate(), critic.run_on(state, until=generated))
-
-    assert_tree_invariants(state, expander)
-    terminals = state.terminals()
-    assert terminals  # the pass had something to score
-    for node in terminals:
-        assert "rm-v1" in node.critic or _name(node.payload) in model.dropped
-    assert state.stats["score_failures"] == float(model.failures)
-    assert model.calls  # ... and it really did call the server
-    assert max(model.calls.values()) == 1  # no node was ever scored twice
-
-
 def _reason_above(state: SchedulerState[Any], node: Node[Any]) -> bool:
     """Whether any strict ancestor of ``node`` recorded a scoring failure."""
     cursor = node.parent_id
@@ -622,57 +577,6 @@ def _reason_above(state: SchedulerState[Any], node: Node[Any]) -> bool:
             return True
         cursor = state.nodes[cursor].parent_id
     return False
-
-
-@pytest.mark.parametrize("seed", SEEDS)
-async def test_two_scorers_on_one_tree_stay_on_their_own_channels(seed: int) -> None:
-    """The production shape: a value head scoring inside the expansion, a critic pass
-    scoring the same tree from outside, on a second version.
-
-    They write the same dict on the same nodes under the same lock, so what has to hold
-    is that neither can reach the other's key and that the failure account is the sum of
-    both -- ``stats["score_failures"]`` is one counter and two writers increment it.
-    """
-    expander = JitterExpander(random.Random(seed))
-    bundled = FlakyReward(random.Random(seed + 20))
-    external = FlakyReward(random.Random(seed + 30))
-    state = _root(WidthGating(3))
-    generated = asyncio.Event()
-    critic: CriticScheduler[Any] = CriticScheduler(
-        model=external,
-        serialize=_name,
-        version="rm-v2",
-        batch_size=4,
-        poll_interval=0.0,
-    )
-    scorer: NodeScorer[Any] = NodeScorer(
-        model=bundled, serialize=_name, version="rm-v1"
-    )
-
-    async def _generate() -> None:
-        try:
-            await _scheduler(
-                expander,
-                Budget(max_rollouts=12),
-                max_concurrency=4,
-                scorer=scorer,
-            ).run_on(state)
-        finally:
-            generated.set()
-
-    await asyncio.gather(_generate(), critic.run_on(state, until=generated))
-
-    assert_tree_invariants(state, expander)
-    assert state.stats["score_failures"] == float(bundled.failures + external.failures)
-    for node in state.nodes.values():
-        # A bundled scoring failure keeps the whole chain and files its reason on the
-        # node the expansion *left* -- so an unscored node is one some ancestor of which
-        # launched a dropped batch. Walked rather than checked on the parent: a chain is
-        # attached as a line, and only its first node's parent is that launch point.
-        if node.id != state.root_id:
-            assert "rm-v1" in node.critic or _reason_above(state, node)
-    for node in state.terminals():
-        assert "rm-v2" in node.critic or _name(node.payload) in external.dropped
 
 
 # -- the harness fakes the whole-loop scenarios run on --------------------------------
@@ -1012,60 +916,3 @@ async def test_cancelling_a_jittered_search_gives_back_what_selection_took(
         state
     )
     assert len(state.nodes) > grown  # the tree still had slots to launch from
-
-
-@pytest.mark.parametrize("seed", SEEDS)
-async def test_cancelling_generation_leaves_the_critic_a_consistent_tree(
-    seed: int,
-) -> None:
-    """The abort runs while a second scheduler is actively mutating the same state.
-
-    A critic pass tracks generation through ``until``, so a cancelled generation is
-    also the critic's signal to drain -- and it drains over the very tree the abort is
-    handing reservations back into. Both have to come out clean: the critic stops on its
-    own rather than spinning on an event that was set by a cancellation, and the tree it
-    is left with holds no slot and no reservation.
-    """
-    rng = random.Random(seed)
-    expander = JitterExpander(random.Random(seed))
-    model = FlakyReward(random.Random(seed + 40))
-    observations: dict[int, Observations] = {}
-    state = _root(WidthGating(3))
-    generated = asyncio.Event()
-    critic: CriticScheduler[Any] = CriticScheduler(
-        model=model,
-        serialize=_name,
-        version="rm-v1",
-        batch_size=2,
-        poll_interval=0.0,
-    )
-    before = asyncio.all_tasks()
-
-    async def _generate() -> None:
-        try:
-            await _scheduler(
-                expander,
-                Budget(max_rollouts=64),
-                max_concurrency=4,
-                allocation=_LeastSampled(observations),
-            ).run_on(state)
-        finally:
-            generated.set()
-
-    generation = asyncio.create_task(_generate())
-    scoring = asyncio.create_task(critic.run_on(state, until=generated))
-    for _ in range(rng.randrange(2, 30)):
-        await asyncio.sleep(0)
-    assert not generation.done()
-    generation.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await generation
-    await scoring  # drains what generation left, and stops: no exception escapes
-    for _ in range(20):
-        await asyncio.sleep(0)
-
-    assert asyncio.all_tasks() - before == set()
-    assert_settled(state)
-    assert all(counts.m_pending == 0 for counts in observations.values())
-    for node in state.terminals():
-        assert "rm-v1" in node.critic or _name(node.payload) in model.dropped

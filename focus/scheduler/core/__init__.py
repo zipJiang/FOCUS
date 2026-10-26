@@ -13,17 +13,12 @@ endpoint with the search pass that produced them.
 from focus.scheduler.core.allocation import (
     AllocationLedger,
     AllocationSession,
-    BestFirstSession,
     FifoSession,
     RankedSession,
     Reservation,
 )
 from focus.scheduler.core.critic import (
-    AllNodes,
-    CriticScheduler,
-    CriticSelection,
     NodeScorer,
-    Terminals,
     rollout_text,
 )
 from focus.scheduler.core.entropy import TokenEntropySession, token_entropies
@@ -62,14 +57,10 @@ __all__ = [
     "AllocationLedger",
     "Reservation",
     "FifoSession",
-    "BestFirstSession",
     "RankedSession",
     "TokenEntropySession",
-    "AllNodes",
     "Budget",
     "ConcurrencyGating",
-    "CriticScheduler",
-    "CriticSelection",
     "Expander",
     "Gate",
     "GatingPolicy",
@@ -80,7 +71,6 @@ __all__ = [
     "Scheduler",
     "SchedulerState",
     "SchedulerView",
-    "Terminals",
     "Termination",
     "WidthGating",
     "edge_return",

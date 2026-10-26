@@ -1,45 +1,23 @@
-"""A critic scheduler: annotate tree nodes with version-tagged critic values.
+"""Score search checkpoints with a value model and record the predictions on nodes.
 
-Runs *concurrently* with the generation
-:class:`~focus.scheduler.core.scheduler.Scheduler` over the same
-:class:`SchedulerState`. Where generation grows the tree, the critic reads it: it
-selects nodes, scores each node's serialized payload with a
-:class:`~focus.reward.RewardModel`, and writes the scalar back as
-``node.critic[version]`` -- keyed by the reward-model version so several
-passes/models coexist.
-
-Both schedulers share one ``state`` and mutate it under ``state.lock`` (the lock the
-tree exposes for exactly this). The critic *tracks* generation via an ``until``
-event: it keeps scoring new nodes as they appear, then drains and stops once
-generation is done.
-
-    state = SchedulerState.root(root, gating=WidthGating(4))
-    done = asyncio.Event()
-    async def _gen():
-        try: return await generation.run_on(state)
-        finally: done.set()
-    gen_result, _ = await asyncio.gather(_gen(), critic.run_on(state, until=done))
+The scheduler calls :class:`NodeScorer` on every chain it attaches. Each prediction is
+written as ``node.critic[version]`` together with the serialized context it scored.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
 from focus.execution import ExecutionServices, Owner
 from focus.harness.transcript import format_transcript
-from focus.registry import register, registrable
 from focus.reward import RewardModel, RewardResult
 from focus.scheduler.core.tree import (
-    STAT_SCORE_FAILURES,
     Node,
     Payload,
-    SchedulerState,
-    SchedulerView,
 )
 
 if TYPE_CHECKING:
@@ -188,139 +166,6 @@ class NodeScorer[P: Payload]:
             )
 
 
-# -- which nodes to score ------------------------------------------------------------
-
-
-@registrable(slot="critic_selection")
-class CriticSelection[P: Payload](ABC):
-    """Name the nodes a critic pass should score (candidates; the scheduler skips ones
-    already scored for the current version)."""
-
-    @abstractmethod
-    def targets(self, view: SchedulerView[P]) -> list[Node[P]]: ...
-
-
-@register(CriticSelection, "terminals")
-class Terminals(CriticSelection[P]):
-    """Score terminal (done) nodes -- outcome scoring. The default."""
-
-    def targets(self, view: SchedulerView[P]) -> list[Node[P]]:
-        return view.terminals()
-
-
-@register(CriticSelection, "all")
-class AllNodes(CriticSelection[P]):
-    """Score every node -- a process/per-node critic over the whole tree."""
-
-    def targets(self, view: SchedulerView[P]) -> list[Node[P]]:
-        return view.nodes()
-
-
-# -- the critic scheduler ------------------------------------------------------------
-
-
-class CriticScheduler[P: Payload]:
-    """Score selected nodes with a reward model and tag each with a version.
-
-    Batch-per-round: one :meth:`RewardModel.ascore_batch` scores a whole batch.
-    Selecting and writing happen under ``state.lock``; scoring (the slow HTTP) happens
-    *outside* it, so generation keeps mutating the tree meanwhile.
-
-    ``serialize`` is optional here for the same reason it is on :class:`NodeScorer`, and
-    means the same thing -- the two ways of scoring a tree must not disagree about how a
-    payload is rendered just because one of them made the argument mandatory.
-    ``timeout`` likewise: seconds per batch, a fire counted as the scoring failure it
-    is, which for a pass tracking generation via ``until`` is the difference between a
-    slow reward server and one that never lets the pass drain at all.
-    """
-
-    def __init__(
-        self,
-        *,
-        model: RewardModel,
-        serialize: Callable[[P], str] | None = None,
-        version: str,
-        selection: CriticSelection[P] | None = None,
-        batch_size: int = 16,
-        poll_interval: float = 0.05,
-        timeout: float | None = None,
-    ) -> None:
-        # the (model, serialize, version) triple lives on the scorer, so this scheduler
-        # and the generation scheduler score a payload the same way -- including how a
-        # payload is rendered when the caller names no renderer, and how long one batch
-        # may take (see `NodeScorer`); this scheduler builds the scorer, so a caller
-        # could not otherwise bound it at all
-        self._scorer: NodeScorer[P] = NodeScorer(
-            model=model, serialize=serialize, version=version, timeout=timeout
-        )
-        self._selection = selection or Terminals()
-        self._batch_size = max(1, batch_size)
-        self._poll_interval = poll_interval
-
-    async def run_on(
-        self, state: SchedulerState[P], *, until: asyncio.Event | None = None
-    ) -> None:
-        """Score nodes until drained. With ``until``, keep scoring new nodes until it
-        is set (generation done) *and* nothing is left; without it, one drain and
-        return.
-
-        A scoring fault is survived exactly the way the bundled path survives one (see
-        :class:`~focus.scheduler.core.scheduler.Scheduler`): counted in
-        ``stats[score_failures]``, logged at WARNING with a traceback, and the pass
-        carries on with the next batch. The nodes it hit are *given up on for this run*
-        -- selection re-targets whatever is still unscored, so retrying them is what a
-        dead reward server would turn into an infinite loop, spinning on the same batch
-        while generation waits for a pass that can never drain.
-        """
-        view = SchedulerView(state)
-        # Node ids this run has already failed to score. Local to the call, not the
-        # tree: another pass (a second version, a retry after the server is back) starts
-        # with a clean slate, and nothing outside this loop should read a transient.
-        abandoned: set[int] = set()
-        while True:
-            async with state.lock:
-                batch = self._next_batch(view, abandoned)
-            if not batch:
-                if until is None or until.is_set():
-                    return  # nothing left and generation is done -> stop
-                await asyncio.sleep(self._poll_interval)  # wait for new nodes
-                continue
-            try:
-                scores = await self._scorer.score([node.payload for node in batch])
-                async with state.lock:
-                    self._scorer.write(batch, scores)
-            except Exception as exc:
-                abandoned.update(node.id for node in batch)
-                # `.get`: `SchedulerState.root` seeds every counter, but this scheduler
-                # also runs on a state some other caller assembled, and a missing key
-                # must not turn a reward-server outage into a KeyError.
-                state.stats[STAT_SCORE_FAILURES] = (
-                    state.stats.get(STAT_SCORE_FAILURES, 0.0) + 1.0
-                )
-                logger.warning(
-                    "critic scoring failed version=%s nodes=%s",
-                    self._scorer.version,
-                    [node.id for node in batch],
-                    exc_info=exc,
-                )
-
-    def _next_batch(self, view: SchedulerView[P], abandoned: set[int]) -> list[Node[P]]:
-        """Up to ``batch_size`` selected nodes not yet scored for this version.
-
-        ``abandoned`` names nodes a scoring fault already ate this run; without it the
-        same unscored nodes would be selected again on the very next turn of the loop.
-        """
-        unscored = [
-            node
-            for node in self._selection.targets(view)
-            if self._scorer.version not in node.critic and node.id not in abandoned
-        ]
-        return unscored[: self._batch_size]
-
-
-# -- payload serialization -----------------------------------------------------------
-
-
 def rollout_text(rollout: AnyRollout) -> str:
     """Default ``serialize`` for rollout payloads: flattened ``role: content`` join.
 
@@ -330,10 +175,6 @@ def rollout_text(rollout: AnyRollout) -> str:
 
 
 __all__ = [
-    "AllNodes",
-    "CriticScheduler",
-    "CriticSelection",
     "NodeScorer",
-    "Terminals",
     "rollout_text",
 ]

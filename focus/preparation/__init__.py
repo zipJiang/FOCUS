@@ -5,7 +5,6 @@ from .direct_branch import DirectBranchTdEstimator
 from .grpo import GrpoEstimator
 from .prepare import prepare_samples
 from .records import ActorSample, CriticSample, PreparedBatch
-from .refined_td import RefinedTdEstimator
 
 __all__ = [
     "AdvantageEstimator",
@@ -13,7 +12,6 @@ __all__ = [
     "ActorSample",
     "CriticSample",
     "PreparedBatch",
-    "RefinedTdEstimator",
     "DirectBranchTdEstimator",
     "GrpoEstimator",
     "prepare_samples",
