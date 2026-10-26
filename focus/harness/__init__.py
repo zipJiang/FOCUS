@@ -24,9 +24,11 @@ from focus.harness.persistence import (
 from focus.harness.rollout import TASK, AnyRollout, RolloutState
 from focus.harness.tools import (
     BaseTool,
+    FunctionTool,
     Tool,
     ToolError,
     dispatch,
+    tool,
     tool_schema,
 )
 from focus.harness.tools.budget import RoundBudget
@@ -93,6 +95,8 @@ __all__ = [
     "WorkspaceError",
     "build_budget",
     "dispatch",
+    "tool",
+    "FunctionTool",
     "flatten_tool_calls",
     "format_transcript",
     "logprob",

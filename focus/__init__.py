@@ -53,6 +53,7 @@ from focus.harness import (
     Workspace,
     build_budget,
     regions,
+    tool,
 )
 from focus.harness.checkpoint import CheckpointPolicy, EveryDecision, SparseCheckpoints
 from focus.preparation import (
@@ -145,6 +146,7 @@ __all__ = [
     "SubmitFields",
     "ToolEnv",
     "ToolError",
+    "tool",
     "Trigger",
     "Turn",
     "Workspace",

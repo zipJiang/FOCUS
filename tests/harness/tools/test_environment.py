@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import pytest
 
 from focus.generation import GenerateResult
-from focus.generation.parsing import HermesToolCallParser
+from focus.generation.parsing import HermesToolCallParser, ToolTurn
 from focus.harness import (
     InMemoryWorkspace,
     RoundBudget,
@@ -244,15 +244,19 @@ async def test_reset_builds_fresh_state_from_environment_configuration() -> None
 
 
 @pytest.mark.asyncio
-async def test_a_state_that_is_not_a_dataclass_is_refused_at_reset() -> None:
-    """Writable budget counters require a dataclass, checked before generation."""
+async def test_only_the_mixins_opt_a_state_into_charging_and_answers() -> None:
+    """A field that merely shares a name is the task's own business."""
 
-    class _Loose:
-        calls_remaining = 0
+    @dataclass(frozen=True)
+    class _Named:
+        calls_remaining: int = 3
+        answer: str | None = None
 
-    class _LooseEnv(ToolEnv[_Loose]):
-        async def initial_state(self) -> _Loose:
-            return _Loose()
+    class _NamedEnv(ToolEnv[_Named]):
+        async def initial_state(self) -> _Named:
+            return _Named()
 
-    with pytest.raises(TypeError, match="dataclass"):
-        await _LooseEnv([StorageTool()]).reset()
+    env = _NamedEnv([])
+    state = await env.reset()
+    assert env.on_tool_calls(state, ToolTurn(text="", tool_calls=())) is state
+    assert env.on_submit(state, ToolTurn(text=""), {"answer": "x"}) is state

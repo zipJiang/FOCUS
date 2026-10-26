@@ -24,7 +24,7 @@ not exist".
 
 from __future__ import annotations
 
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass
 from typing import Any
 
 from focus.generation.parsing import ToolCall, ToolTurn
@@ -108,11 +108,6 @@ __all__ = [
     "SubmitFields",
     "SubmitTool",
 ]
-
-
-def has_submit_fields(state: object) -> bool:
-    """Whether the default submission hook can store an answer on the state."""
-    return is_dataclass(state) and hasattr(state, "answer")
 
 
 def submitted_call(turn: ToolTurn, submit: SubmitTool | None) -> ToolCall | None:

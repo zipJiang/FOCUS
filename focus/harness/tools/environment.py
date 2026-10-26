@@ -5,17 +5,18 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import is_dataclass, replace
+from dataclasses import replace
 from typing import Any, TypeVar, final
 
 from focus.generation.parsing import ToolCall, ToolTurn
 from focus.harness.env import Env, StepResult
 from focus.harness.tools.base import Tool, ToolError, tool_schema
+from focus.harness.tools.budget import RoundBudget
 from focus.harness.tools.dispatch import dispatch, tool_reply
 from focus.harness.tools.submission import (
     SUBMIT,
+    SubmitFields,
     SubmitTool,
-    has_submit_fields,
     submit_replies,
     submitted_call,
 )
@@ -29,8 +30,10 @@ class ToolEnv(Env[S, ToolTurn], ABC):
 
     No-tool replies receive feedback until the runner's budget expires. With
     ``submit=None``, visible text instead ends the task (used by fold environments).
-    Task states may optionally carry an ``answer`` and a ``calls_remaining`` budget.
-    No submission or reminder counters are required.
+    A task state that inherits :class:`~focus.harness.tools.submission.SubmitFields`
+    records the submitted answer; one that inherits
+    :class:`~focus.harness.tools.budget.RoundBudget` is charged one call per
+    dispatched tool call.
     """
 
     def __init__(
@@ -53,14 +56,8 @@ class ToolEnv(Env[S, ToolTurn], ABC):
 
     @final
     async def reset(self) -> S:
-        """Validate writable task fields before generation starts."""
-        state = await self.initial_state()
-        if hasattr(state, "calls_remaining") and not is_dataclass(state):
-            raise TypeError(
-                f"{type(state).__name__} carries calls_remaining but is not a "
-                "dataclass; use @dataclass(frozen=True) and RoundBudget."
-            )
-        return state
+        """The initial task state; implement :meth:`initial_state`."""
+        return await self.initial_state()
 
     @abstractmethod
     async def initial_state(self) -> S:
@@ -144,8 +141,8 @@ class ToolEnv(Env[S, ToolTurn], ABC):
             else:
                 return self._ended(state, turn, payload)
         # An unsubmitted final turn is unanswered, regardless of visible prose.
-        if has_submit_fields(state):
-            state = replace(state, answer=None)  # type: ignore[type-var]
+        if isinstance(state, SubmitFields):
+            state = replace(state, answer=None)
         return StepResult(state, done=True)
 
     def reward(self, state: S, turn: ToolTurn) -> float:
@@ -159,18 +156,17 @@ class ToolEnv(Env[S, ToolTurn], ABC):
 
     def on_submit(self, state: S, turn: ToolTurn, payload: dict[str, Any]) -> S:
         """Record a valid answer. Text is used only with submit disabled."""
-        if not has_submit_fields(state):
+        if not isinstance(state, SubmitFields):
             return state
         answer = payload.get(self.answer_field, "") if self._submit else turn.text
-        return replace(state, answer=str(answer))  # type: ignore[type-var]
+        return replace(state, answer=str(answer))
 
     def on_tool_calls(self, state: S, turn: ToolTurn) -> S:
         """Charge optional per-round budget once per dispatched tool call."""
-        remaining = getattr(state, "calls_remaining", None)
-        if remaining is None:
+        if not isinstance(state, RoundBudget):
             return state
-        return replace(  # type: ignore[type-var]
-            state, calls_remaining=remaining - len(turn.tool_calls)
+        return replace(
+            state, calls_remaining=state.calls_remaining - len(turn.tool_calls)
         )
 
 
