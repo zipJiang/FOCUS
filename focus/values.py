@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from focus.harness import AnyRollout
     from focus.harness.env import StepResult
     from focus.harness.turn import Turn
-    from focus.scheduler.core.tree import SchedulerView
+    from focus.scheduler.core.tree import SchedulerState, SchedulerView
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -130,7 +130,9 @@ class TreeValues(Mapping[int, NodeValues]):
         return len(self._values)
 
 
-def tree_values(view: SchedulerView[AnyRollout], reward: RewardConfig) -> TreeValues:
+def tree_values(
+    tree: SchedulerState[AnyRollout] | SchedulerView[AnyRollout], reward: RewardConfig
+) -> TreeValues:
     """Back up every checkpoint once, deepest first.
 
     Each direct child contributes its edge return plus its own discounted refined
@@ -140,6 +142,9 @@ def tree_values(view: SchedulerView[AnyRollout], reward: RewardConfig) -> TreeVa
     """
     from focus.allocation.evidence import EVIDENCE_KEY, RolloutEvidence
     from focus.scheduler.core.returns import edge_return
+    from focus.scheduler.core.tree import SchedulerView
+
+    view = tree if isinstance(tree, SchedulerView) else SchedulerView(tree)
 
     stored = view.root.metadata.get(EVIDENCE_KEY)
     observed = stored.observations if isinstance(stored, RolloutEvidence) else {}

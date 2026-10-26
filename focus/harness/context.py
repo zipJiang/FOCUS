@@ -64,26 +64,23 @@ class IncompleteCompactionError(ValueError):
 class Compaction[S]:
     """Everything a compaction is handed -- the conversation to fold, and the agent.
 
-    A compactor reads ``messages`` (the grown conversation), persists what matters into
-    ``workspace``, and returns the messages to continue from -- ``seed`` (the system +
-    first user message) for a plain reset, or ``seed`` with what it kept folded in; how
-    the fold is shaped is the compactor's own policy.
+    A context manager reads ``messages`` (the grown conversation), persists what
+    matters into ``workspace``, and returns the messages to continue from -- ``seed``
+    (the system and first user message) for a plain reset, or ``seed`` with what it
+    kept folded in.
 
-    Its one collaborator is the ``agent`` being folded, not a bag of that agent's
-    parts: a model-driven fold is a rollout under the *same* policy on a different
-    world, so it asks for :meth:`~focus.harness.agent.Agent.derive` instead
-    of reassembling a agent out of a generator, a codec, a parser and a version tag
-    smuggled across this seam -- and cannot end up guessing a tool dialect the rollout
-    never spoke. A compactor that generates nothing simply ignores it.
+    A model-driven fold is a rollout under the *same* policy in a different
+    environment, so it calls :meth:`~focus.harness.agent.Agent.derive` on ``agent``
+    and inherits the rollout's model, codec, and tool dialect. A manager that
+    generates nothing ignores it.
     """
 
     messages: tuple[Message, ...]
     seed: tuple[Message, ...]
     state: S
     workspace: Workspace
-    #: The agent whose rollout is being folded: the model, the codec, the tool dialect
-    #: and the policy-version tag in one piece. Loose in the action parameter because a
-    #: fold's env speaks the parser's actions, which need not be the task env's.
+    #: The agent whose rollout is being folded. Loose in the action parameter because
+    #: a fold's environment speaks the parser's actions, which need not be the task's.
     agent: Agent[S, Any]
 
     checkpoint: Any = None
@@ -94,23 +91,21 @@ class CompactionResult[S]:
     """What one compaction produced: the messages to continue from, and the new state.
 
     Compaction is a state transition like ``env.step`` -- it reads ``state`` (via
-    :class:`Compaction`) and returns a new one, so a compactor can reset the counters
-    its :attr:`~Compactor.trigger` watched (e.g. a per-compaction search budget), which
-    is what :meth:`~...compaction.triggers.Trigger.relieve` is for.
+    :class:`Compaction`) and returns a new one, so a context manager can reset the
+    counters its trigger watched (e.g. a per-compaction search budget), which is what
+    :meth:`~focus.harness.triggers.Trigger.relieve` is for.
 
-    ``turns`` are the turns a model-driven compactor generated getting here --
+    ``turns`` are the turns a model-driven fold generated getting here --
     transition-free, because a fold rewrites the working context rather than acting on
-    the world. The agent appends them to its log like any others (stamping them
-    ``"fold"`` on the way in, so the tag is its own statement rather than a plug-in's),
-    so a fold's tool-call turns are first-class trainable data rather than a special
-    kind of record. A plain compactor returns none, and the agent leaves one zero-token
-    ``"fold"`` turn in their place -- the marker that records that anything happened.
+    the world. The agent appends them to its log tagged ``"fold"``, so a fold's turns
+    are trainable data like any others. A manager that generates nothing returns none,
+    and the agent records one zero-token ``"fold"`` turn as the marker of the fold.
     """
 
     messages: tuple[Message, ...]
     state: S
-    #: ``Turn[Any]``, not ``Turn[S]``: a generative compactor's turns are
-    #: generated in the *fold's* own world (``FoldEnv``), so their state
+    #: ``Turn[Any]``, not ``Turn[S]``: a model-driven fold's turns are
+    #: generated in the *fold's* own environment, so their state
     #: parameter is not the task's -- and it is vacuous besides, since these
     #: turns are retagged transition-free before they get here.
     turns: tuple[Turn[Any], ...] = ()

@@ -27,6 +27,11 @@ def example(kappa=1):
     return state, view, config, b
 
 
+def test_values_read_a_tree_or_its_view():
+    state, view, config, _ = example()
+    assert dict(tree_values(state, config)) == dict(tree_values(view, config))
+
+
 def test_recursive_example_and_descendant_multiplicity():
     state, view, config, b = example()
     values = tree_values(view, config)
