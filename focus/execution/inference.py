@@ -11,7 +11,11 @@ from focus.codec import Message
 from focus.execution.budget import ResourceBudget
 from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, Owner
 from focus.generation import GenerateResult, Policy, PreparedPrompt, SamplingParams
-from focus.generation.interfaces import aclose_client
+from focus.generation.interfaces import (
+    _continuation_params,
+    _validate_continuation_result,
+    aclose_client,
+)
 from focus.registry import register
 from focus.reward import RewardModel, RewardResult
 
@@ -154,6 +158,12 @@ class ExecutionServices:
         token_input: bool = False,
         queue_timeout: float | None = None,
     ) -> GenerateResult:
+        if prompt.exact_continuation:
+            if not policy.provides_exact_tokens or policy.provides_native_tool_calls:
+                raise ValueError(
+                    "Token continuation requires an exact token-input policy"
+                )
+            params = _continuation_params(policy.default_params, params)
         key = self.inference.bind(policy)
         usage = self.usage.setdefault(owner.episode, Usage())
         self.charge(owner, model_calls=1, prompt_tokens=len(prompt.tokens))
@@ -178,6 +188,13 @@ class ExecutionServices:
             raise
         usage.output_tokens += len(result.tokens)
         self.charge(owner, output_tokens=len(result.tokens))
+        if prompt.exact_continuation:
+            assert params is not None
+            try:
+                _validate_continuation_result(result, params)
+            except ValueError:
+                usage.failures += 1
+                raise
         return result
 
     async def score(

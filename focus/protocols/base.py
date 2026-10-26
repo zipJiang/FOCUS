@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from focus.codec import Message
 from focus.execution import Usage
+from focus.generation import GenerateResult, PreparedPrompt
 from focus.generation.parsing.base import ToolTurn
 from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
@@ -30,13 +33,26 @@ class Applied:
 
 
 class ContextProtocol:
-    """Stateless protocol; branch-owned data belongs in rollout.execution.
+    """Shared protocol; branch-owned data belongs in the rollout state.
 
     apply receives the already-recorded generation. Its effects reference that index,
     and only task operations return transitions.
     """
 
     manages_context = False
+
+    def prepare(self, rs: AnyRollout, runner: Runner[Any, Any]) -> PreparedPrompt:
+        """Prepare the model input from this branch's current context."""
+        return runner.policy.prepare(rs.messages, tools=runner.tools)
+
+    def record_reply(
+        self,
+        result: GenerateResult,
+        messages: list[Message],
+        runner: Runner[Any, Any],
+    ) -> None:
+        """Append the generated reply to the branch's live conversation."""
+        runner.policy.record_reply(result, messages)
 
     def schemas(self) -> tuple[dict[str, Any], ...]:
         return ()
@@ -88,7 +104,91 @@ class ContextProtocol:
 
 @register(ContextProtocol, "append_only")
 class AppendOnly(ContextProtocol):
-    """Keep the task transcript as its live context."""
+    """Retain context as chat turns or exact segments of one assistant response.
+
+    ``continuation=True`` preserves original generated token IDs between requests.
+    It requires an exact token-input policy and uninterrupted assistant output.
+    """
+
+    def __init__(self, *, continuation: bool = False) -> None:
+        self.continuation = continuation
+
+    def _check_policy(self, runner: Runner[Any, Any]) -> None:
+        if self.continuation and (
+            not runner.policy.provides_exact_tokens
+            or runner.policy.provides_native_tool_calls
+        ):
+            raise ValueError("Token continuation requires an exact token-input policy")
+
+    async def initialize(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
+        self._check_policy(runner)
+        return rs
+
+    def _boundary(self, messages: Sequence[Message], runner: Runner[Any, Any]) -> int:
+        boundary = next(
+            (
+                i
+                for i, message in enumerate(messages)
+                if "focus_continuation_tokens" in message
+            ),
+            len(messages),
+        )
+        for message in messages[boundary:]:
+            if (
+                message.get("role") != "assistant"
+                or "focus_continuation_tokens" not in message
+            ):
+                raise ValueError(
+                    "Token continuation requires uninterrupted assistant output"
+                )
+            tokens = message["focus_continuation_tokens"]
+            if not isinstance(tokens, (tuple, list)) or any(
+                type(token) is not int for token in tokens
+            ):
+                raise ValueError("Continuation metadata must contain integer token IDs")
+            if message.get("content") != runner.policy.decode(
+                tokens, skip_special_tokens=True
+            ):
+                raise ValueError(
+                    "Continuation text was edited; its token IDs are unchanged"
+                )
+        return boundary
+
+    def prepare(self, rs: AnyRollout, runner: Runner[Any, Any]) -> PreparedPrompt:
+        """Render chat context, or append exact segments to the initial prompt."""
+        if not self.continuation:
+            return super().prepare(rs, runner)
+        self._check_policy(runner)
+        boundary = self._boundary(rs.messages, runner)
+        initial = runner.policy.prepare(rs.messages[:boundary], tools=runner.tools)
+        tokens = initial.tokens + tuple(
+            token
+            for message in rs.messages[boundary:]
+            for token in message["focus_continuation_tokens"]
+        )
+        return replace(
+            initial,
+            tokens=tokens,
+            _messages=deepcopy(rs.messages),
+            exact_continuation=True,
+        )
+
+    def record_reply(
+        self,
+        result: GenerateResult,
+        messages: list[Message],
+        runner: Runner[Any, Any],
+    ) -> None:
+        """Keep exact token IDs with each assistant segment in continuation mode."""
+        if self.continuation and (
+            not result.exact_generation
+            or result.native_tool_calls
+            or result.native_output
+        ):
+            raise ValueError("Token continuation requires an exact text completion")
+        super().record_reply(result, messages, runner)
+        if self.continuation:
+            messages[-1]["focus_continuation_tokens"] = tuple(result.tokens)
 
 
 class ToolProtocol(ContextProtocol):

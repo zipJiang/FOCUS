@@ -18,6 +18,7 @@ from focus.generation.interfaces import (
     aclose_client,
     close_client,
     finite_logprobs,
+    prepare_generation,
     run_async,
     settled_knobs,
 )
@@ -133,9 +134,7 @@ class VLLMPolicy(Policy[Any]):
             response = self._client.completions.create(**kwargs)
         except Exception as exc:
             raise self._wrap_request_error(exc, prefix_tuple, params) from exc
-        return self._validate_generation(
-            _parse_completion(response, prefix_tuple), params
-        )
+        return _parse_completion(response, prefix_tuple)
 
     async def agenerate_tokens(
         self,
@@ -147,16 +146,16 @@ class VLLMPolicy(Policy[Any]):
             response = await self._async_client().completions.create(**kwargs)
         except Exception as exc:
             raise self._wrap_request_error(exc, prefix_tuple, params) from exc
-        return self._validate_generation(
-            _parse_completion(response, prefix_tuple), params
-        )
+        return _parse_completion(response, prefix_tuple)
 
     def _prepare(
         self,
         prefix_tokens: Sequence[TokenId],
         sampling_params: SamplingParams | None,
     ) -> tuple[tuple[TokenId, ...], SamplingParams, dict[str, Any]]:
-        prefix_tuple, params = self._prepare_generation(prefix_tokens, sampling_params)
+        prefix_tuple, params = prepare_generation(
+            self.default_params, prefix_tokens, sampling_params
+        )
         model = self.served_model
         kwargs = self._completion_kwargs(model, prefix_tuple, params)
         return prefix_tuple, params, kwargs

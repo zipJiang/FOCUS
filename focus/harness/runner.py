@@ -410,7 +410,7 @@ class Runner[S, A]:
         if len(prepared.turns) != len(rs.turns):
             return self._mark(prepared)
         rs = prepared
-        cond = self._policy.prepare(rs.messages, tools=self._tools)
+        cond = self.protocol.prepare(rs, self)
         return await self._generate_turn(
             rs, list(rs.messages), cond, sampling_params=sampling_params, ending=False
         )
@@ -438,7 +438,7 @@ class Runner[S, A]:
         params = self._params(sampling_params)
         self.services.attach_budget(rs.owner, rs.budget)
         result = await self._generate(cond, params, owner=rs.owner)
-        self._policy.record_reply(result, messages)
+        self.protocol.record_reply(result, messages, self)
         action = self._policy.parse(result)
         origin = len(rs.turns)
         draft = self._turn(
@@ -639,7 +639,7 @@ class Runner[S, A]:
         return await self._generate_turn(
             rs,
             messages,
-            self._policy.prepare(messages, tools=self._tools or ()),
+            self.protocol.prepare(replace(rs, messages=tuple(messages)), self),
             sampling_params=sampling_params,
             ending=True,
         )

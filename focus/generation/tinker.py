@@ -10,6 +10,7 @@ from focus.generation.interfaces import (
     close_client,
     finite_logprobs,
     normalize_stop_reason,
+    prepare_generation,
 )
 from focus.generation.policy import Policy, PolicyFormat, register_policy
 from focus.generation.types import (
@@ -119,9 +120,7 @@ class TinkerPolicy(Policy[Any]):
             prefix_tokens, sampling_params
         )
         response = await self._client.sample_async(**kwargs)
-        return self._validate_generation(
-            self._parse_response(response, prefix_tuple, params), params
-        )
+        return self._parse_response(response, prefix_tuple, params)
 
     def _sample_request(
         self,
@@ -129,7 +128,9 @@ class TinkerPolicy(Policy[Any]):
         sampling_params: SamplingParams | None,
     ) -> tuple[SamplingParams, tuple[TokenId, ...], dict[str, Any]]:
         tinker = _import_tinker()
-        prefix_tuple, params = self._prepare_generation(prefix_tokens, sampling_params)
+        prefix_tuple, params = prepare_generation(
+            self.default_params, prefix_tokens, sampling_params
+        )
         model_input = tinker.types.ModelInput.from_ints(list(prefix_tuple))
         topk = params.prompt_logprobs
         kwargs = {

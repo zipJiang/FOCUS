@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
+from focus.generation.interfaces import prepare_generation
 from focus.generation.policy import Policy, PolicyFormat, register_policy
 from focus.generation.sglang import (
     _parse_sglang_output,
@@ -61,12 +62,12 @@ class SlimePolicy(Policy[Any]):
         prefix_tokens: Sequence[TokenId],
         sampling_params: SamplingParams | None = None,
     ) -> GenerateResult:
-        prefix_tuple, params = self._prepare_generation(prefix_tokens, sampling_params)
+        prefix_tuple, params = prepare_generation(
+            self.default_params, prefix_tokens, sampling_params
+        )
         payload = _sglang_payload(prefix_tuple, params)
         output = await self._post(self._url, payload, **self._post_kwargs)
-        return self._validate_generation(
-            _parse_sglang_output(output, prefix_tuple, params), params
-        )
+        return _parse_sglang_output(output, prefix_tuple, params)
 
 
 __all__ = [

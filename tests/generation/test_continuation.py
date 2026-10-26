@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from focus import (
+    AppendOnly,
+    ContextProtocol,
+    ExecutionServices,
     Policy,
     PolicyFormat,
+    PreparedPrompt,
     SamplingParams,
     TokenChunk,
     TokenChunkParser,
@@ -21,9 +25,35 @@ from focus.registry import build
 from tests.helpers import test_format
 
 
+def stub(**kwargs: Any) -> Any:
+    return SimpleNamespace(**kwargs)
+
+
+def prepare(policy, messages, tools=()):
+    return AppendOnly(continuation=True).prepare(
+        stub(messages=tuple(messages)),
+        stub(policy=policy, tools=tools),
+    )
+
+
+def record(policy, result, messages):
+    AppendOnly(continuation=True).record_reply(result, messages, stub(policy=policy))
+
+
+async def generate(policy, tokens, params=None):
+    prompt = PreparedPrompt(
+        tuple(tokens), policy.format, (), (), exact_continuation=True
+    )
+    services = ExecutionServices()
+    try:
+        return await services.generate(policy, prompt, params)
+    finally:
+        await services.aclose()
+
+
 def backend():
     return Policy(
-        format=replace(test_format(), continuation=True),
+        format=test_format(),
         model="test-model",
         served_model="served-model",
         version="policy-7",
@@ -37,21 +67,21 @@ def test_original_ids_survive_lossy_decode_json_and_sibling_branches():
     inner.format.codec.decode = Mock(return_value="same text")
     policy = inner
     history = [{"role": "user", "content": "problem"}]
-    initial = policy.prepare(history).tokens
-    policy.record_reply(GenerateResult(tokens=(12345, 67890)), history)
+    initial = prepare(policy, history).tokens
+    record(policy, GenerateResult(tokens=(12345, 67890)), history)
     checkpoint = deepcopy(history)
     restored = json.loads(json.dumps(history))
-    assert policy.prepare(restored).tokens == (*initial, 12345, 67890)
+    assert prepare(policy, restored).tokens == (*initial, 12345, 67890)
     siblings = [deepcopy(restored), deepcopy(restored)]
     for messages, token in zip(siblings, [91, 92], strict=True):
-        policy.record_reply(GenerateResult(tokens=(token,)), messages)
-        assert policy.prepare(messages).tokens == (*initial, 12345, 67890, token)
+        record(policy, GenerateResult(tokens=(token,)), messages)
+        assert prepare(policy, messages).tokens == (*initial, 12345, 67890, token)
     assert history == checkpoint
-    prepared = policy.prepare(history)
+    prepared = prepare(policy, history)
     history[-1]["content"] = "edited"
     assert prepared.messages[-1]["content"] == "same text"
     with pytest.raises(ValueError, match="edited"):
-        policy.prepare(history)
+        prepare(policy, history)
 
 
 def test_initial_codec_render_and_tool_schemas_are_preserved():
@@ -59,8 +89,8 @@ def test_initial_codec_render_and_tool_schemas_are_preserved():
     tools = [{"type": "function", "function": {"name": "test"}}]
     history = [{"role": "user", "content": "problem"}]
     policy.format.codec.render = Mock(return_value=(99, 98))
-    policy.record_reply(GenerateResult(tokens=(42,)), history)
-    continued = policy.prepare(history, tools)
+    record(policy, GenerateResult(tokens=(42,)), history)
+    continued = prepare(policy, history, tools)
     assert continued.tokens == (99, 98, 42)
     assert continued.tools == tools
     policy.format.codec.render.assert_called_once_with(
@@ -72,12 +102,12 @@ def test_initial_codec_render_and_tool_schemas_are_preserved():
 def test_intervening_messages_rejected_before_generation(role):
     policy = backend()
     history = [{"role": "user", "content": "problem"}]
-    policy.record_reply(GenerateResult(tokens=(42,)), history)
+    record(policy, GenerateResult(tokens=(42,)), history)
     history.append({"role": role, "content": "Continue"})
     with pytest.raises(ValueError, match="uninterrupted"):
-        policy.validate_context(history)
+        prepare(policy, history)
     with pytest.raises(ValueError, match="uninterrupted"):
-        policy.prepare(history)
+        prepare(policy, history)
 
 
 async def test_custom_parser_and_model_identity_are_independent_of_continuation():
@@ -90,8 +120,10 @@ async def test_custom_parser_and_model_identity_are_independent_of_continuation(
         "served-model",
         "policy-7",
     )
-    prompt = policy.prepare([{"role": "user", "content": "problem"}])
-    assert await policy.agenerate(prompt, SamplingParams(max_tokens=256)) is result
+    prompt = prepare(policy, [{"role": "user", "content": "problem"}])
+    assert (
+        await generate(policy, prompt.tokens, SamplingParams(max_tokens=256)) is result
+    )
     assert policy.parse(result) == "custom action"
     with pytest.raises(ValueError, match="different policy format"):
         await policy.agenerate(backend().prepare([]))
@@ -99,10 +131,9 @@ async def test_custom_parser_and_model_identity_are_independent_of_continuation(
 
 @pytest.mark.parametrize(("exact", "native"), [(False, False), (True, True)])
 def test_incompatible_backend_rejected(exact, native):
+    policy = Policy(format=test_format(), exact=exact, native=native)
     with pytest.raises(ValueError, match="exact token-input"):
-        Policy(
-            format=replace(test_format(), continuation=True), exact=exact, native=native
-        )
+        prepare(policy, [])
 
 
 async def test_inexact_per_call_provenance_rejected():
@@ -110,9 +141,9 @@ async def test_inexact_per_call_provenance_rejected():
     result = GenerateResult(tokens=(42,), exact_generation=False)
     policy._complete = AsyncMock(return_value=result)
     with pytest.raises(ValueError, match="exact generated"):
-        await policy.agenerate_tokens((1,))
+        await generate(policy, (1,))
     with pytest.raises(ValueError, match="exact text"):
-        policy.record_reply(result, [])
+        record(policy, result, [])
 
 
 @pytest.mark.parametrize("tokens", [None, "123", [True], [1.5]])
@@ -122,15 +153,19 @@ def test_invalid_continuation_metadata_rejected(tokens):
         {"role": "assistant", "content": "", "focus_continuation_tokens": tokens}
     ]
     with pytest.raises(ValueError, match="integer token IDs"):
-        policy.prepare(messages)
+        prepare(policy, messages)
 
 
 def test_default_format_renders_each_chat_turn_without_continuation_metadata():
     policy = Policy(format=test_format())
     messages = [{"role": "user", "content": "problem"}]
-    policy.record_reply(GenerateResult(tokens=(42,)), messages)
+    protocol = AppendOnly()
+    runner = stub(policy=policy, tools=())
+    protocol.record_reply(GenerateResult(tokens=(42,)), messages, runner)
     assert "focus_continuation_tokens" not in messages[-1]
-    assert policy.prepare(messages).tokens == policy.format.codec.render(messages)
+    assert protocol.prepare(
+        stub(messages=messages), runner
+    ).tokens == policy.format.codec.render(messages)
 
 
 @pytest.mark.parametrize("size", [1, 256, 512])
@@ -156,7 +191,7 @@ async def test_invalid_request_limits_fail_before_generation(limit):
     inner._complete = AsyncMock()
     policy = inner
     with pytest.raises(ValueError, match="positive integer"):
-        await policy.agenerate_tokens((1,), SamplingParams(max_tokens=limit))
+        await generate(policy, (1,), SamplingParams(max_tokens=limit))
     inner._complete.assert_not_awaited()
 
 
@@ -173,7 +208,7 @@ async def test_generation_validates_the_effective_request_limit(override, finish
         tokens=(42,) * limit,
         stop_reason=finish,
     )
-    result = await policy.agenerate_tokens((1,), params)
+    result = await generate(policy, (1,), params)
     assert len(result.tokens) == limit
     assert inner._complete.call_args.args[1].max_tokens == limit
     inner._complete.return_value = GenerateResult(
@@ -181,16 +216,16 @@ async def test_generation_validates_the_effective_request_limit(override, finish
         stop_reason=finish,
     )
     with pytest.raises(ValueError, match="exceeded"):
-        await policy.agenerate_tokens((1,), params)
+        await generate(policy, (1,), params)
     inner._complete.return_value = GenerateResult(
         tokens=(42,) * (limit - 1),
         stop_reason=finish,
     )
     if finish == "length":
         with pytest.raises(ValueError, match="before the requested"):
-            await policy.agenerate_tokens((1,), params)
+            await generate(policy, (1,), params)
     else:
-        assert len((await policy.agenerate_tokens((1,), params)).tokens) == limit - 1
+        assert len((await generate(policy, (1,), params)).tokens) == limit - 1
 
 
 async def test_partial_override_keeps_the_default_token_limit():
@@ -203,9 +238,7 @@ async def test_partial_override_keeps_the_default_token_limit():
         )
     )
     policy = inner
-    await policy.agenerate_tokens(
-        (9,), SamplingParams(max_tokens=None, temperature=0.7)
-    )
+    await generate(policy, (9,), SamplingParams(max_tokens=None, temperature=0.7))
     effective = inner._complete.call_args.args[1]
     assert effective.max_tokens == 3
     assert effective.temperature == 0.7
@@ -214,21 +247,19 @@ async def test_partial_override_keeps_the_default_token_limit():
 def test_configuration_registry_supports_the_same_customization():
     parser = build(ActionParser, {"name": "token_chunk"})
     assert isinstance(parser, TokenChunkParser)
-    policy = Policy(
-        format=PolicyFormat("test", test_format().codec, parser, continuation=True)
-    )
-    assert policy.format.continuation
-    assert policy.format.parser is parser
+    format = PolicyFormat("test", test_format().codec, parser)
+    protocol = build(ContextProtocol, {"name": "append_only", "continuation": True})
+    assert isinstance(protocol, AppendOnly)
+    assert protocol.continuation
+    assert format.parser is parser
 
 
 @pytest.fixture(params=["vllm", "sglang", "slime", "tinker"])
 def continuation_backend(request, monkeypatch):
-    from types import SimpleNamespace
-
     from focus.generation import SGLangPolicy, SlimePolicy, TinkerPolicy, VLLMPolicy
     from tests.generation.test_tinker import _install_fake_tinker
 
-    format = replace(test_format(), continuation=True)
+    format = test_format()
     defaults = SamplingParams(max_tokens=2)
     output = {
         "text": "ab",
@@ -238,9 +269,9 @@ def continuation_backend(request, monkeypatch):
         },
     }
     if request.param == "vllm":
-        response = SimpleNamespace(
+        response = stub(
             choices=[
-                SimpleNamespace(
+                stub(
                     text="ab",
                     token_ids=[97, 98],
                     finish_reason="length",
@@ -248,12 +279,8 @@ def continuation_backend(request, monkeypatch):
                 )
             ]
         )
-        sync = SimpleNamespace(
-            completions=SimpleNamespace(create=Mock(return_value=response))
-        )
-        async_client = SimpleNamespace(
-            completions=SimpleNamespace(create=AsyncMock(return_value=response))
-        )
+        sync = stub(completions=stub(create=Mock(return_value=response)))
+        async_client = stub(completions=stub(create=AsyncMock(return_value=response)))
         monkeypatch.setattr(
             "focus.generation.vllm._import_openai", lambda: lambda **kw: sync
         )
@@ -267,12 +294,10 @@ def continuation_backend(request, monkeypatch):
         monkeypatch.setattr(policy, "_async_client", lambda: async_client)
         return policy
     if request.param == "sglang":
-        response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: output)
-        clients = SimpleNamespace(
-            Client=lambda **kw: SimpleNamespace(post=Mock(return_value=response)),
-            AsyncClient=lambda **kw: SimpleNamespace(
-                post=AsyncMock(return_value=response)
-            ),
+        response = stub(raise_for_status=lambda: None, json=lambda: output)
+        clients = stub(
+            Client=lambda **kw: stub(post=Mock(return_value=response)),
+            AsyncClient=lambda **kw: stub(post=AsyncMock(return_value=response)),
         )
         monkeypatch.setattr("focus.generation.sglang._import_httpx", lambda: clients)
         return SGLangPolicy(
@@ -287,14 +312,12 @@ def continuation_backend(request, monkeypatch):
             default_params=defaults,
         )
     _install_fake_tinker(monkeypatch)
-    client: Any = SimpleNamespace(
+    client: Any = stub(
         get_tokenizer=lambda: format.codec.tokenizer,
         sample_async=AsyncMock(
-            return_value=SimpleNamespace(
+            return_value=stub(
                 sequences=[
-                    SimpleNamespace(
-                        tokens=[97, 98], stop_reason="length", logprobs=None
-                    ),
+                    stub(tokens=[97, 98], stop_reason="length", logprobs=None),
                 ]
             )
         ),
@@ -302,21 +325,29 @@ def continuation_backend(request, monkeypatch):
     return TinkerPolicy(client, model="test", format=format, default_params=defaults)
 
 
-@pytest.mark.parametrize("use_async", [False, True])
-def test_backend_generation_checks_continuation_limits(continuation_backend, use_async):
-    import asyncio
-
+async def test_backend_generation_checks_continuation_limits(continuation_backend):
     policy = continuation_backend
 
-    def generate(params=None):
-        if use_async:
-            return asyncio.run(policy.agenerate_tokens((1,), params))
-        return policy.generate_tokens((1,), params)
-
-    assert generate().tokens == (97, 98)
+    assert (await generate(policy, (1,))).tokens == (97, 98)
     with pytest.raises(ValueError, match="exceeded"):
-        generate(SamplingParams(max_tokens=1))
+        await generate(policy, (1,), SamplingParams(max_tokens=1))
     with pytest.raises(ValueError, match="before the requested"):
-        generate(SamplingParams(max_tokens=3))
+        await generate(policy, (1,), SamplingParams(max_tokens=3))
     with pytest.raises(ValueError, match="positive integer"):
-        generate(SamplingParams(max_tokens=0))
+        await generate(policy, (1,), SamplingParams(max_tokens=0))
+
+
+def test_same_policy_supports_independent_context_protocols():
+    policy = backend()
+    history = [{"role": "user", "content": "problem"}]
+    initial = prepare(policy, history).tokens
+    record(policy, GenerateResult(tokens=(42,)), history)
+    continued = prepare(policy, history)
+    ordinary = AppendOnly().prepare(
+        stub(messages=history), stub(policy=policy, tools=())
+    )
+    assert continued.tokens == (*initial, 42)
+    assert continued.exact_continuation
+    assert not ordinary.exact_continuation
+    assert ordinary.tokens == policy.format.codec.render(history)
+    assert not hasattr(policy.format, "continuation")

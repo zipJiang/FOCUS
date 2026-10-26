@@ -186,7 +186,7 @@ async def test_all_protocols_restore_complete_state_with_fresh_runner(
 
     def protocol():
         return {
-            "plain": AppendOnly,
+            "plain": lambda: AppendOnly(),
             "summary": lambda: Summary(ToyCompactor()),
             "custom": KeepRecent,
         }[approach]()

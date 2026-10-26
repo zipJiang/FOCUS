@@ -13,6 +13,7 @@ from focus.generation.types import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
+    GenerateResult,
     SamplingParams,
     TokenId,
 )
@@ -155,3 +156,29 @@ def finite_logprobs(
     if len(raw) != length or any(v is None or not math.isfinite(v) for v in raw):
         raise ValueError("completion logprobs must be aligned, present and finite")
     return [float(v) for v in raw if v is not None]
+
+
+def _continuation_params(
+    defaults: SamplingParams,
+    params: SamplingParams | None,
+) -> SamplingParams:
+    resolved = merge_sampling_params(defaults, params)
+    limit = resolved.max_tokens
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("max_tokens must be a positive integer")
+    return resolved
+
+
+def _validate_continuation_result(
+    result: GenerateResult, params: SamplingParams
+) -> None:
+    if not result.exact_generation or result.native_tool_calls or result.native_output:
+        raise ValueError(
+            "Token continuation requires exact generated token IDs and text output"
+        )
+    limit = params.max_tokens
+    assert limit is not None
+    if len(result.tokens) > limit:
+        raise ValueError(f"Generation exceeded the requested limit of {limit} tokens")
+    if result.stop_reason == "length" and len(result.tokens) != limit:
+        raise ValueError("Generation stopped before the requested token limit")

@@ -34,7 +34,7 @@ class Summary(ContextProtocol):
 
     def needs_prepare(self, rs: AnyRollout, runner: Runner[Any, Any]) -> bool:
         return self.compactor is not None and self.compactor.trigger.fires(
-            runner.policy.prepare(rs.messages, tools=runner.tools).tokens,
+            self.prepare(rs, runner).tokens,
             rs.state,
         )
 
