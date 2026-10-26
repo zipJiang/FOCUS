@@ -5,7 +5,8 @@ A :class:`Collector` binds an agent, an optional critic, a search, and an actor 
 :class:`~focus.preparation.records.Batch`; :meth:`Collector.search` and
 :meth:`Collector.prepare` expose the two stages for inspecting a tree or comparing
 recipes on the same evidence. Used as an async context manager, a collector closes its
-execution services, model client, and critic on exit.
+agent's execution services on exit; policies and critics belong to the caller, who
+often shares them across collectors.
 """
 
 from __future__ import annotations
@@ -58,8 +59,8 @@ class Collector:
     step rewards for both search statistics and preparation.
 
     ``own=True`` (the default) makes ``async with collector`` close the agent's
-    execution services, its policy client, and the critic on exit. Pass ``own=False``
-    when an enclosing context shares them across collectors.
+    execution services on exit. Pass ``own=False`` when an enclosing context shares
+    those services across collectors. Close policy clients and critics yourself.
     """
 
     def __init__(
@@ -97,20 +98,9 @@ class Collector:
         if self.own:
             await self.aclose()
 
-    async def aclose(self, *, services: bool = True) -> None:
-        """Close the execution services, the policy client, and the critic.
-
-        ``services=False`` leaves execution services that other collectors share open.
-        """
-        try:
-            if services:
-                await self.agent.services.aclose()
-        finally:
-            try:
-                await self.agent.policy.aclose()
-            finally:
-                if self.critic is not None:
-                    await self.critic.aclose()
+    async def aclose(self) -> None:
+        """Close the agent's execution services."""
+        await self.agent.services.aclose()
 
     async def collect(
         self, prompt: str | AnyRollout, *, workspace: Workspace | None = None

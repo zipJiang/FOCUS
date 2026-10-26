@@ -113,7 +113,7 @@ async def test_one_tree_prepares_under_several_recipes():
     assert "value" in paper.describe()
 
 
-async def test_a_collector_closes_what_it_owns():
+async def test_a_collector_closes_its_services_and_leaves_clients_to_the_caller():
     closed = []
 
     class Services(ExecutionServices):
@@ -132,7 +132,7 @@ async def test_a_collector_closes_what_it_owns():
         second = await run.collect("second")
     assert first.critic
     assert second.critic
-    assert closed == ["services", "critic"]
+    assert closed == ["services"]  # the critic is shared; its owner closes it
 
 
 async def test_a_borrowing_collector_leaves_shared_services_open():

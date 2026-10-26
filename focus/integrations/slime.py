@@ -40,9 +40,10 @@ def make_generate(
     argument is accepted but does not override them.
 
     ``to_prompt`` extracts the prompt and ``workspace_factory`` creates each prompt's
-    workspace. With ``own=True``, :meth:`aclose` closes every collector the hook
-    created; pass ``False`` when an enclosing context owns their services and clients.
-    Close the hook after all active calls finish.
+    workspace. With ``own=True``, :meth:`aclose` closes the execution services of
+    every collector the hook created, once per distinct service; pass ``False`` when an
+    enclosing context owns them. Model clients and critics stay with the factory's
+    owner. Close the hook after all active calls finish.
 
     Actor and critic factories customize exported records. ``min_abs_advantage``
     filters actor edges during export without changing collection or critic targets.
@@ -94,13 +95,11 @@ def make_generate(
             owned.clear()
             cached = None
             failures: list[Exception] = []
-            closed: set[int] = set()
-            for collector in collectors:
-                # Collectors built for different args may share one execution service.
-                shared = id(collector.agent.services) in closed
-                closed.add(id(collector.agent.services))
+            # Collectors built for different args may share one execution service.
+            services = {id(c.agent.services): c.agent.services for c in collectors}
+            for service in services.values():
                 try:
-                    await collector.aclose(services=not shared)
+                    await service.aclose()
                 except Exception as exc:
                     failures.append(exc)
             if failures:
