@@ -5,8 +5,9 @@ from dataclasses import replace
 
 import pytest
 
+from focus.critic import Critic
 from focus.harness import AnyRollout
-from focus.reward import RewardModel, RewardResult
+from focus.harness.transcript import format_transcript
 from focus.scheduler import (
     Budget,
     Expander,
@@ -15,7 +16,6 @@ from focus.scheduler import (
     Scheduler,
     SchedulerState,
     WidthGating,
-    rollout_text,
 )
 from focus.scheduler.core.critic import ValuePrediction
 from tests.helpers import DeadReward, ShortBatchReward, StalledReward, rollout
@@ -24,27 +24,31 @@ from tests.scheduler.fakes import ChainExpander, Toy
 # -- fakes ---------------------------------------------------------------------------
 
 
-class CountingReward(RewardModel):
+class CountingReward(Critic):
     """Score = the serialized payload read back as a number; counts batch calls."""
 
     def __init__(self) -> None:
         self.calls = 0
         self.scored: list[str] = []
 
-    def score(self, context: str) -> RewardResult:
-        return RewardResult(score=float(context))
-
-    def score_batch(self, contexts: Sequence[str]) -> list[RewardResult]:
+    async def predict(self, contexts: Sequence[str]) -> list[float]:
         self.calls += 1
         self.scored.extend(contexts)
-        return [self.score(c) for c in contexts]
-
-    async def ascore_batch(self, contexts: Sequence[str]) -> list[RewardResult]:
-        return self.score_batch(contexts)
+        return [float(c) for c in contexts]
 
 
-def _serialize(toy: Toy) -> str:
-    return str(toy.n)
+class ToyCritic(Critic):
+    """Render a toy payload as its number for any wrapped critic."""
+
+    def __init__(self, inner: Critic, *, timeout: float | None = None) -> None:
+        self.inner = inner
+        self.timeout = timeout
+
+    def context(self, payload) -> str:
+        return str(payload.n)
+
+    async def predict(self, contexts: Sequence[str]) -> Sequence[float]:
+        return await self.inner.predict(contexts)
 
 
 def _tree(*payloads: Toy) -> SchedulerState[Toy]:
@@ -60,27 +64,27 @@ def _tree(*payloads: Toy) -> SchedulerState[Toy]:
 # -- the default serializer -----------------------------------------------------------
 
 
-class EchoingReward(RewardModel):
+class EchoingReward(Critic):
     """Keeps whatever it was handed, and scores by its length -- so a test can see
     *how* the payload was rendered, not just that some number came back."""
 
     def __init__(self) -> None:
         self.seen: list[str] = []
 
-    def score(self, context: str) -> RewardResult:
-        self.seen.append(context)
-        return RewardResult(score=float(len(context)))
+    async def predict(self, contexts: Sequence[str]) -> list[float]:
+        self.seen.extend(contexts)
+        return [float(len(context)) for context in contexts]
 
 
 @pytest.mark.asyncio
 async def test_a_rollout_payload_needs_no_serializer_from_either_caller() -> None:
-    """Rollouts are the payload in production, so `rollout_text` is the default."""
+    """Rollouts are the payload in production; their transcript is the default."""
     payload = replace(rollout(), messages=({"role": "user", "content": "hi"},))
-    rendered = rollout_text(payload)
+    rendered = format_transcript(payload.messages)
     assert "hi" in rendered
 
     bundled = EchoingReward()
-    scorer: NodeScorer[AnyRollout] = NodeScorer(model=bundled)
+    scorer: NodeScorer[AnyRollout] = NodeScorer(bundled)
     assert [(p.score, p.context) for p in await scorer.score([payload])] == [
         (float(len(rendered)), rendered)
     ]
@@ -90,7 +94,7 @@ async def test_a_rollout_payload_needs_no_serializer_from_either_caller() -> Non
 # -- bundled scoring: the scheduler scores what an expansion just produced -------------
 
 
-class TableReward(RewardModel):
+class TableReward(Critic):
     """Score from a ``payload.n -> score`` table, or ``default`` for anything unlisted.
 
     ``TableReward({}, default=x)`` is the constant-scoring case -- which must not be
@@ -102,8 +106,8 @@ class TableReward(RewardModel):
         self.table = table
         self.default = default
 
-    def score(self, context: str) -> RewardResult:
-        return RewardResult(score=self.table.get(context, self.default))
+    async def predict(self, contexts: Sequence[str]) -> list[float]:
+        return [self.table.get(context, self.default) for context in contexts]
 
 
 class StepExpander(Expander[Toy]):
@@ -118,8 +122,8 @@ class StepExpander(Expander[Toy]):
         return [Toy(payload.n + i + 1) for i in range(self._width)], {}
 
 
-def _scorer(model: RewardModel) -> NodeScorer[Toy]:
-    return NodeScorer(model=model, serialize=_serialize)
+def _scorer(critic: Critic) -> NodeScorer[Toy]:
+    return NodeScorer(ToyCritic(critic))
 
 
 def test_a_short_score_list_is_refused_rather_than_filed_off_by_one() -> None:
@@ -147,11 +151,11 @@ async def test_a_miscounted_batch_is_refused_where_the_batch_is_fetched() -> Non
     `score`. Refused there, the run keeps its rollouts and counts the fault; refused at
     `write`, the same fault would take the whole search down with it.
     """
-    with pytest.raises(ValueError, match="returned 2 results for 3 payloads"):
+    with pytest.raises(ValueError, match="returned 2 predictions for 3 payloads"):
         await _scorer(ShortBatchReward()).score([Toy(0), Toy(1), Toy(2)])
 
 
-def _chain_scheduler(model: RewardModel, **kwargs) -> Scheduler[Toy]:
+def _chain_scheduler(model: Critic, **kwargs) -> Scheduler[Toy]:
     """One chain rollout, scored -- the shared shape of the bundled-scoring tests."""
     return Scheduler(
         expander=ChainExpander(),
@@ -233,7 +237,7 @@ async def test_a_stalled_reward_server_is_bounded_by_the_scorer_timeout() -> Non
     ``TimeoutError`` does not.
     """
     model = StalledReward()
-    scorer = NodeScorer(model=model, serialize=_serialize, timeout=0.01)
+    scorer: NodeScorer[Toy] = NodeScorer(ToyCritic(model, timeout=0.01))
 
     with pytest.raises(TimeoutError, match=r"scoring exceeded timeout=0\.01s"):
         await scorer.score([Toy(0), Toy(1)])
@@ -245,7 +249,7 @@ async def test_a_stalled_reward_server_is_bounded_by_the_scorer_timeout() -> Non
 async def test_a_scorer_timeout_is_a_scoring_failure_like_any_other() -> None:
     """A timeout reaches both callers through the ``except`` a 503 already reaches:
     the rollouts are kept and counted, only the estimate is missing."""
-    scorer = NodeScorer(model=StalledReward(), serialize=_serialize, timeout=0.01)
+    scorer: NodeScorer[Toy] = NodeScorer(ToyCritic(StalledReward(), timeout=0.01))
     sched = Scheduler(
         expander=ChainExpander(),
         termination=Budget(max_rollouts=1),

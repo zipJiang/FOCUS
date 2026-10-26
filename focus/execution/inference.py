@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from focus.codec import Message
 from focus.execution.budget import ResourceBudget
@@ -16,7 +17,9 @@ from focus.generation.interfaces import (
     _validate_continuation_result,
     aclose_client,
 )
-from focus.reward import RewardModel, RewardResult
+
+if TYPE_CHECKING:
+    from focus.critic import Critic
 
 
 @dataclass(frozen=True)
@@ -198,20 +201,21 @@ class ExecutionServices:
                 raise
         return result
 
-    async def score(
-        self, model: RewardModel, contexts: list[str], *, owner: Owner = DEFAULT_OWNER
-    ) -> list[RewardResult]:
+    async def predict(
+        self, critic: Critic, contexts: list[str], *, owner: Owner = DEFAULT_OWNER
+    ) -> Sequence[float]:
+        """Run one critic batch under the auxiliary admission pool."""
         usage = self.usage.setdefault(owner.episode, Usage())
         usage.calls += 1
         usage.value_batches += 1
         assert self.auxiliary is not None
 
-        async def invoke() -> list[RewardResult]:
-            owned = getattr(model, "ascore_owned", None)
+        async def invoke() -> Sequence[float]:
+            owned = getattr(critic, "predict_owned", None)
             if owned is not None:
-                result: list[RewardResult] = await owned(contexts, owner)
+                result: Sequence[float] = await owned(contexts, owner)
                 return result
-            return await model.ascore_batch(contexts)
+            return await critic.predict(contexts)
 
         try:
             return await self.auxiliary.run(invoke, owner=owner, resource="value")

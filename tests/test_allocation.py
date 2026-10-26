@@ -24,7 +24,6 @@ from focus.allocation import (
     retraining_gain,
 )
 from focus.harness import RolloutState
-from focus.reward.config import RewardConfig
 from focus.scheduler import (
     Budget,
     Expander,
@@ -34,6 +33,7 @@ from focus.scheduler import (
     SchedulerView,
 )
 from focus.statistics import RunningStats
+from focus.values import RewardConfig
 from tests.trees import region, root_state, stamp, stamped_child
 from tests.trees import search_payload as rollout
 

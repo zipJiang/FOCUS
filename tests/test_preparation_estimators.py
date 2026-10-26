@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import pickle
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from focus import DirectBranchTd, Grpo, prepare_samples
 from focus.allocation.evidence import RolloutLedger, evidence_of
 from focus.preparation import Edge
-from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerView
 from focus.scheduler.core.returns import edge_return
-from focus.values import tree_values
+from focus.values import RewardConfig, tree_values
 from tests.helpers import DemoValue, turn
 from tests.trees import search_payload, stamped_child
 from tests.trees import training_root_state as root_state
@@ -207,12 +207,13 @@ async def test_critic_export_reuses_exact_custom_scoring_inputs():
     leaf = stamped_child(state, 0, search_payload(turn([-1.0], reward=1, done=True)))
     seen: list[str] = []
 
-    def serialize(payload):
-        context = f"custom context call {len(seen)}"
-        seen.append(context)
-        return context
+    class CustomContext(DemoValue):
+        def context(self, rollout):
+            context = f"custom context call {len(seen)}"
+            seen.append(context)
+            return context
 
-    scorer = NodeScorer(model=DemoValue(), serialize=serialize)
+    scorer: NodeScorer[Any] = NodeScorer(CustomContext())
     nodes = [view.root, leaf]
     scores = await scorer.score([n.payload for n in nodes])
     scorer.write(nodes, scores)

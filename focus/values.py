@@ -10,14 +10,83 @@ targets read these values instead of recomputing them.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from focus.allocation.evidence import EVIDENCE_KEY, RolloutEvidence
-from focus.harness import AnyRollout
-from focus.reward.config import RewardConfig
-from focus.scheduler.core.returns import edge_return
-from focus.scheduler.core.tree import SchedulerView
+# A leaf at import time: search, allocation, and preparation all import RewardConfig
+# from here, so the tree machinery is imported inside ``tree_values``.
+if TYPE_CHECKING:
+    from focus.harness import AnyRollout
+    from focus.harness.env import StepResult
+    from focus.harness.turn import Turn
+    from focus.scheduler.core.tree import SchedulerView
+
+
+@dataclass(frozen=True, kw_only=True)
+class RewardConfig:
+    """How raw rewards become one training number -- frozen for a whole batch.
+
+    The envs store ``reward_outcome`` and ``reward_step`` unmixed, so every downstream
+    statistic has to say which weighting it used. This record *is* that statement, and
+    preparation refuses a tree whose evidence was collected under another one. Frozen
+    per batch, which is what makes an estimate collected before a decision and one
+    collected after it commensurable.
+
+    Keyword-only: the fields are a bag of
+    independent knobs in no meaningful order, so a positional caller is writing down an
+    order that is not part of the design -- and reordering two floats would then change
+    what an existing call *means* rather than failing it.
+    """
+
+    #: Per-transition discount applied along a turn chain.
+    gamma: float = 1.0
+    #: Pseudo-observations assigned to the network checkpoint value.
+    value_prior_strength: float = 1.0
+    #: What one unit of shaping reward is worth against one unit of outcome reward.
+    beta_step: float = 1.0
+    component_weights: dict[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if (
+            not math.isfinite(self.value_prior_strength)
+            or self.value_prior_strength <= 0
+        ):
+            raise ValueError("value_prior_strength must be positive and finite")
+
+    def train_reward(self, transition: StepResult[object]) -> float:
+        """One transition's reward under this weighting."""
+        return transition.reward_outcome + self.beta_step * transition.reward_step
+
+    def shaping(self, turn: Turn[object]) -> float:
+        """Protocol reward components do not advance task discount time."""
+        return self.beta_step * turn.compaction_penalty + sum(
+            self.component_weights.get(name, 1.0) * value
+            for name, value in turn.reward_components.items()
+        )
+
+    def configured_return(self, turns: Sequence[Turn[object]], start: int = 0) -> float:
+        """Discounted return over a turn chain, or a suffix of one from ``start``.
+
+        Discounting is per *env transition*, and a turn carries at most one -- so the
+        discount no longer depends on how the rollout happened to be cut into regions,
+        which is what made this arithmetic fragile when a region was the unit.
+
+        A fold turn (``transition is None``) contributes its explicit compaction
+        penalty and **no discount step**. Folding rewrites the working context; it
+        does not act on the world, so
+        it is not a time step and must not shrink the weight of the task work that
+        follows it. A rollout that folded twice discounts exactly like one that never
+        folded.
+        """
+        total, discount = 0.0, 1.0
+        for turn in turns[start:]:
+            total += discount * self.shaping(turn)
+            if turn.transition is None:
+                continue
+            total += discount * self.train_reward(turn.transition)
+            discount *= self.gamma
+        return total
 
 
 @dataclass(frozen=True)
@@ -69,6 +138,9 @@ def tree_values(view: SchedulerView[AnyRollout], reward: RewardConfig) -> TreeVa
     value blends the critic prior with that mean at pseudo-count :math:`\\kappa`
     (Eq. refined); an unexpanded checkpoint keeps its prior. No tree state is mutated.
     """
+    from focus.allocation.evidence import EVIDENCE_KEY, RolloutEvidence
+    from focus.scheduler.core.returns import edge_return
+
     stored = view.root.metadata.get(EVIDENCE_KEY)
     observed = stored.observations if isinstance(stored, RolloutEvidence) else {}
     kappa = reward.value_prior_strength
@@ -119,4 +191,4 @@ def tree_values(view: SchedulerView[AnyRollout], reward: RewardConfig) -> TreeVa
     return TreeValues(view, reward, values)
 
 
-__all__ = ["NodeValues", "TreeValues", "tree_values"]
+__all__ = ["NodeValues", "RewardConfig", "TreeValues", "tree_values"]

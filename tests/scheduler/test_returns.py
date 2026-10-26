@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerView
 from focus.scheduler.core.returns import (
     edge_return,
     finished_below,
     finished_through,
 )
+from focus.values import RewardConfig
 from tests.helpers import rollout as _rollout
 from tests.trees import region as _region
 from tests.trees import root_state

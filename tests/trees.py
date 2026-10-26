@@ -35,8 +35,8 @@ def training_root_state(
     state = SchedulerState.root(payload, gating=WidthGating(width))
     if isinstance(payload, RolloutState):
         from focus.allocation.evidence import RolloutLedger
-        from focus.reward.config import RewardConfig
         from focus.scheduler import SchedulerView
+        from focus.values import RewardConfig
 
         RolloutLedger(reward_config or RewardConfig()).bind(SchedulerView(state))
         state.nodes[0].metadata["test_training_fixture"] = True

@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from focus.allocation import RolloutLedger
 from focus.config import RolloutConfig, SearchPass
+from focus.critic import Critic
 from focus.execution import Usage
 from focus.harness import AnyRollout, RolloutState, Runner
 from focus.harness.workspace import Workspace
 from focus.preparation import Estimator, PreparedBatch, prepare_samples
-from focus.reward import RewardModel
 from focus.scheduler.core.critic import NodeScorer
 from focus.scheduler.core.execution import PASS_KEY, RolloutExpander
 from focus.scheduler.core.gating import ConcurrencyGating
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Runtime:
-    """Connect a runner, optional scorers, and a search configuration.
+    """Connect a runner, an optional critic, and a search configuration.
 
     Construction preserves each collaborator's configuration and service ownership.
     Each search creates its own tree and workspace.
@@ -40,11 +40,7 @@ class Runtime:
 
     runner: Runner[Any, Any]
     #: Predicts remaining return at checkpoints.
-    value_model: RewardModel | None = None
-    #: Renders a checkpoint for the value model; None uses rollout_text.
-    value_serialize: Callable[[AnyRollout], str] | None = None
-    #: Maximum seconds for one critic batch; None leaves it unbounded.
-    score_timeout: float | None = None
+    critic: Critic | None = None
     config: RolloutConfig = field(default_factory=RolloutConfig)
 
 
@@ -61,14 +57,9 @@ def _expander(
 
 def _value_head(runtime: Runtime) -> NodeScorer[AnyRollout] | None:
     """Build this runtime's value head, sharing the runner's execution services."""
-    if runtime.value_model is None:
+    if runtime.critic is None:
         return None
-    return NodeScorer(
-        model=runtime.value_model,
-        serialize=runtime.value_serialize,
-        timeout=runtime.score_timeout,
-        services=runtime.runner.services,
-    )
+    return NodeScorer(runtime.critic, services=runtime.runner.services)
 
 
 def _budget(state: SchedulerState[AnyRollout], pass_turns: int) -> Budget[AnyRollout]:

@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from focus.codec import ChatCodec, Message
+from focus.critic import Critic
 from focus.generation import (
     GenerateResult,
     Policy,
@@ -43,19 +44,15 @@ from focus.harness import (
     Workspace,
     regions,
 )
-from focus.reward import RewardModel, RewardResult
 
 VERSION = "policy"
 
 
-class DemoValue(RewardModel):
-    """A deterministic zero-valued model for core integration tests."""
+class DemoValue(Critic):
+    """A deterministic zero-valued critic for core integration tests."""
 
-    def score(self, context: str) -> RewardResult:
-        return RewardResult(score=0.0)
-
-    async def ascore_batch(self, contexts: Sequence[str]) -> list[RewardResult]:
-        return [self.score(context) for context in contexts]
+    async def predict(self, contexts: Sequence[str]) -> list[float]:
+        return [0.0] * len(contexts)
 
 
 def test_format() -> PolicyFormat[str]:
@@ -428,33 +425,31 @@ class SubmitEnv(ToolEnv[SubmitState]):
 # -- backends that fail: the three shapes a run has to survive ------------------------
 
 
-class DeadReward(RewardModel):
-    """A reward server that is down: every call raises.
+class DeadReward(Critic):
+    """A critic server that is down: every call raises.
 
     One of the two per-expansion faults the scheduler degrades rather than raises on --
     the generation is the expensive half, and a missing estimate is a coarser advantage,
     not a dead rollout.
     """
 
-    def score(self, context: str) -> RewardResult:
+    async def predict(self, contexts: Sequence[str]) -> list[float]:
         raise RuntimeError("reward server unreachable")
 
 
-class StalledReward(RewardModel):
-    """A reward server that took the request and never answered.
+class StalledReward(Critic):
+    """A critic server that took the request and never answered.
 
     Counts the cancellations rather than only the calls: "the timeout fired" and "the
     request was actually let go" are two claims, and only the second one says a stalled
     socket is not still held when the pass moves on.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, timeout: float | None = None) -> None:
         self.cancelled = 0
+        self.timeout = timeout
 
-    def score(self, context: str) -> RewardResult:  # pragma: no cover - never reached
-        raise AssertionError("unreachable")
-
-    async def ascore_batch(self, contexts: Sequence[str]) -> list[RewardResult]:
+    async def predict(self, contexts: Sequence[str]) -> list[float]:
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
@@ -463,18 +458,15 @@ class StalledReward(RewardModel):
         raise AssertionError("unreachable")  # pragma: no cover
 
 
-class ShortBatchReward(RewardModel):
-    """A reward server that answers a batch with one result too few.
+class ShortBatchReward(Critic):
+    """A critic server that answers a batch with one result too few.
 
     Not a hypothetical shape: the vLLM backend returns one result per entry of the
     pooling response's ``data``, so a truncated or partial response is exactly this.
     """
 
-    def score(self, context: str) -> RewardResult:
-        return RewardResult(score=1.0)
-
-    async def ascore_batch(self, contexts: Sequence[str]) -> list[RewardResult]:
-        return [self.score(c) for c in contexts[:-1]]
+    async def predict(self, contexts: Sequence[str]) -> list[float]:
+        return [1.0] * (len(contexts) - 1)
 
 
 class StalledGenerator(Policy[Any]):

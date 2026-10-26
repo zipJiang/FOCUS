@@ -28,8 +28,8 @@ from focus import (
 from focus.harness import RolloutState, StepResult, Turn
 from focus.harness.packing import regions
 from focus.harness.workspace import NullWorkspace
-from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerView
+from focus.values import RewardConfig
 from tests.trees import stamped_child
 from tests.trees import training_root_state as root_state
 

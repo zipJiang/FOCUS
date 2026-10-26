@@ -31,7 +31,7 @@ class StepResult[S_co]:
     #: transition. Kept apart from :attr:`reward_step` because the two are weighted
     #: against each other by a *frozen* coefficient at training time -- an env that
     #: pre-mixed them would bake in a weight nothing downstream could revisit. See
-    #: :class:`~focus.reward.config.RewardConfig`.
+    #: :class:`~focus.values.RewardConfig`.
     reward_outcome: float = 0.0
     #: Per-transition shaping: progress, tool success, format compliance. Dense, and
     #: only meaningful relative to a chosen ``beta_step``.
@@ -46,7 +46,7 @@ class StepResult[S_co]:
 
         Deliberately *not* a stored field: the two components have to reach a training
         statistic separately, so anything weighting them goes through a
-        :class:`~focus.reward.config.RewardConfig` and records which weight it
+        :class:`~focus.values.RewardConfig` and records which weight it
         used. This is the unweighted convenience view, where only ordering matters.
         """
         return self.reward_outcome + self.reward_step

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from focus.harness import AnyRollout
-from focus.reward.config import RewardConfig
 from focus.scheduler.core.tree import Node, SchedulerView
+from focus.values import RewardConfig
 
 
 def value_baseline(node: Node[AnyRollout]) -> float:

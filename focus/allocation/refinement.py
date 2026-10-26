@@ -19,10 +19,10 @@ from focus.allocation.evidence import (
     ScoredSession,
 )
 from focus.harness import AnyRollout
-from focus.reward.config import RewardConfig
 from focus.scheduler.core.allocation import AllocationSession
 from focus.scheduler.core.returns import value_baseline
 from focus.scheduler.core.tree import Node, SchedulerView
+from focus.values import RewardConfig
 
 logger = logging.getLogger(__name__)
 

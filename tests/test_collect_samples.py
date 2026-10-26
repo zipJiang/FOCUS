@@ -40,7 +40,7 @@ def runtime(*, storage=False, version="snapshot-7"):
             parser=HermesToolCallParser(),
             version=version,
         ),
-        value_model=DemoValue(),
+        critic=DemoValue(),
         config=RolloutConfig(
             passes=(SearchPass(FifoAllocator(), budget=2, gating=WidthGating(1)),),
             reward_config=RewardConfig(beta_step=0.5),
@@ -124,7 +124,7 @@ async def test_collection_preserves_failure_statistics_for_the_callers_decision(
     from tests.helpers import DeadReward
 
     run = runtime()
-    run.value_model = DeadReward()
+    run.critic = DeadReward()
     async with run.runner.services:
         batch = await collect_samples("question", run, estimator=None)
     assert batch.stats["score_failures"] > 0
@@ -141,7 +141,7 @@ async def test_two_policy_snapshots_share_services_and_keep_their_own_logprobs()
         generator = ScriptedGenerator(["go", "go", "stop"], logprobs=logprob)
         return Runtime(
             runner=toy_runner(generator, services=services),
-            value_model=DemoValue(),
+            critic=DemoValue(),
             config=RolloutConfig(
                 passes=(SearchPass(FifoAllocator(), budget=4, gating=WidthGating(2)),),
                 max_concurrency=2,

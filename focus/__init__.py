@@ -13,6 +13,7 @@ from focus.config import (
     RolloutSpec,
     SearchPass,
 )
+from focus.critic import Critic, VLLMCritic
 from focus.execution import AdmissionPool, ExecutionServices, LocalInferenceExecutor
 from focus.execution.budget import ResourceBudget
 from focus.export import format_edges, format_tree, to_samples
@@ -72,13 +73,6 @@ from focus.preparation import (
 )
 from focus.preparation.records import ActorSample, CriticSample, PreparedBatch
 from focus.protocols import AppendOnly, ContextProtocol, Summary
-from focus.reward import (
-    AsyncRewardModel,
-    RewardModel,
-    RewardResult,
-    VLLMRewardModel,
-)
-from focus.reward.config import RewardConfig
 from focus.scheduler import (
     ConcurrencyGating,
     GatingPolicy,
@@ -94,6 +88,7 @@ from focus.scheduler.core.allocation import (
 )
 from focus.scheduler.core.entropy import TokenEntropySession
 from focus.tiktoken_chat import TiktokenChatTokenizer
+from focus.values import RewardConfig
 
 # Grouped by the concern a reader has when they reach for the name, and sorted inside
 # each group. The groups are the documentation: they are the order the docs introduce
@@ -135,6 +130,8 @@ __all__ = [
     "BaseTool",
     "Env",
     "RewardConfig",
+    "Critic",
+    "VLLMCritic",
     "Policy",
     "PolicyFormat",
     "PreparedPrompt",
@@ -180,10 +177,6 @@ __all__ = [
     "TokenId",
     "VLLMPolicy",
     # Scoring a finished rollout with a reward model.
-    "AsyncRewardModel",
-    "RewardModel",
-    "RewardResult",
-    "VLLMRewardModel",
     # The shape of the search: how far an expansion rolls, how wide, under which law.
     "GatingPolicy",
     "ConcurrencyGating",

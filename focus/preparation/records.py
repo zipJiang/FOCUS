@@ -11,8 +11,8 @@ from typing import Any, Literal
 from focus.harness import AnyRollout
 from focus.harness.packing import PackedSequence, regions
 from focus.harness.turn import Turn
-from focus.reward.config import RewardConfig
 from focus.scheduler.core.tree import Node, SchedulerView
+from focus.values import RewardConfig
 
 #: Which head a sample trains. Two, and only two: the actor's scalar is a weight to
 #: push a generation up or down, the critic's is a return to regress on, and a third

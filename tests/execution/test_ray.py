@@ -26,7 +26,7 @@ def service():
         capacity=1,
         max_pending=8,
         lease_seconds=0.6,
-        rewards={"value": {"_target_": "tests.helpers.DemoValue"}},
+        critics={"value": {"_target_": "tests.helpers.DemoValue"}},
     )
     actor = create_ray_service(config)
     ray.get(actor.describe.remote())
@@ -82,7 +82,7 @@ async def test_cancel_loss_and_coordinator_failure(service):
 
 
 async def test_real_worker_loss_and_shared_value_scoring(service):
-    from focus.execution.ray import RayRewardModel
+    from focus.execution.ray import RayCritic
     from tests.execution.ray_support import LostWorker
 
     config, actor = service
@@ -99,12 +99,12 @@ async def test_real_worker_loss_and_shared_value_scoring(service):
             await asyncio.sleep(0.05)
     client = RayInferenceExecutor(config.name, config.namespace)
     try:
-        value = RayRewardModel(client, "value")
+        value = RayCritic(client, "value")
         results = await asyncio.gather(
-            value.ascore("state"),
+            value.predict(["state"]),
             client.submit(InferenceRequest("custom:policy:test", "test", (1,))),
         )
-        assert results[0].score == 0
+        assert results[0] == [0.0]
         assert (await actor.stats.remote())["peak_active"] == 1
     finally:
         await client.aclose()

@@ -41,8 +41,8 @@ from focus.harness import (
 from focus.harness.packing import PackedSequence
 from focus.harness.turn import logprob, trainable_logprobs
 from focus.preparation.records import spans_of
-from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerState, SchedulerView
+from focus.values import RewardConfig
 from tests.estimators import FixedWeight, RootReturn
 from tests.helpers import rollout, turn
 from tests.trees import stamped_child

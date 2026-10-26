@@ -8,8 +8,8 @@ from typing import Any
 
 from focus.allocation import Allocator
 from focus.generation import SamplingParams
-from focus.reward.config import RewardConfig
 from focus.scheduler.core.gating import GatingPolicy
+from focus.values import RewardConfig
 
 
 @dataclass(frozen=True)

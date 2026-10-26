@@ -25,8 +25,8 @@ from focus.preparation.records import (
     PreparedBatch,
     edge_spans,
 )
-from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerView
+from focus.values import RewardConfig
 from tests.estimators import FixedWeight, RootReturn
 from tests.helpers import rollout, turn
 from tests.trees import stamped_child

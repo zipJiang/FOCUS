@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from focus.harness import StepResult, Turn
-from focus.reward.config import RewardConfig
+from focus.values import RewardConfig
 from tests.helpers import rollout, turn
 
 

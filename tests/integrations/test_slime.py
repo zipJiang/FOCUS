@@ -46,7 +46,7 @@ from tests.helpers import (
 
 def _runtime(**fields: Any) -> Runtime:
     """A runtime with a stand-in runner: nothing here ever runs a rollout."""
-    fields.setdefault("value_model", DemoValue())
+    fields.setdefault("critic", DemoValue())
     return Runtime(
         runner=cast(
             Runner[Any, Any], SimpleNamespace(policy=SimpleNamespace(version="policy"))
@@ -136,7 +136,7 @@ async def test_concurrent_args_keep_the_runtime_that_generated_each_tree(
             logprobs=args.logprob,
         )
         return Runtime(
-            value_model=DemoValue(),
+            critic=DemoValue(),
             runner=toy_runner(
                 generator,
                 env=SubmitEnv([]),
@@ -224,7 +224,7 @@ def _storage_generate(**kwargs: Any) -> Any:
             )
         ),
         runtime_factory=lambda args: Runtime(
-            value_model=DemoValue(),
+            critic=DemoValue(),
             runner=toy_runner(
                 gen, env=SubmitEnv([StorageTool()]), parser=HermesToolCallParser()
             ),
@@ -301,7 +301,7 @@ async def test_an_env_with_no_workspace_tools_needs_no_factory() -> None:
             )
         ),
         runtime_factory=lambda args: Runtime(
-            value_model=DemoValue(),
+            critic=DemoValue(),
             runner=toy_runner(gen, env=SubmitEnv([]), parser=HermesToolCallParser()),
         ),
         estimator=DirectBranchTd(),
@@ -344,12 +344,7 @@ def test_the_spec_carries_no_live_objects() -> None:
 #: on one -- how long *that* server may take is a fact about the server, so it is set
 #: where the server is (as `Runner.generate_timeout` already is), not in a spec that
 #: travels to actors holding different endpoints.
-LIVE_FIELDS = {
-    "runner",
-    "value_model",
-    "value_serialize",
-    "score_timeout",
-}
+LIVE_FIELDS = {"runner", "critic"}
 
 
 def test_a_runtime_is_the_live_objects_and_the_authored_config_and_nothing_else() -> (
@@ -410,7 +405,7 @@ async def test_the_spec_s_config_replaces_the_factory_s_and_the_live_objects_sta
     generate = make_generate(
         spec,
         runtime_factory=lambda args: _runtime(
-            value_model=cast(Any, value_model),
+            critic=cast(Any, value_model),
             config=RolloutConfig(
                 max_concurrency=99,
                 passes=(SearchPass(FifoAllocator(), budget=99, gating=WidthGating(3)),),
@@ -422,7 +417,7 @@ async def test_the_spec_s_config_replaces_the_factory_s_and_the_live_objects_sta
     await generate(object(), object())
 
     assert seen[0].config is spec.config
-    assert seen[0].value_model is value_model
+    assert seen[0].critic is value_model
 
 
 # -- what a config file turns into ----------------------------------------------------

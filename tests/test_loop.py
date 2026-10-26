@@ -30,6 +30,7 @@ from focus.allocation import (
 )
 from focus.codec import ChatCodec
 from focus.config import RolloutConfig
+from focus.critic import Critic
 from focus.generation import (
     GenerateResult,
     Policy,
@@ -50,7 +51,6 @@ from focus.integrations.slime import to_samples
 from focus.loop import Runtime, _budget
 from focus.preparation.records import PreparedBatch
 from focus.protocols import Summary
-from focus.reward import RewardModel, RewardResult
 from focus.scheduler import (
     PASS_KEY,
     SchedulerState,
@@ -159,9 +159,7 @@ def _runner(
 
 #: What a runtime *holds* -- plus the bound on the endpoint it holds -- rather than what
 #: it is configured with: the only kwargs below that are not `RolloutConfig` knobs.
-LIVE_FIELDS = frozenset(
-    {"runner", "scorer", "value_model", "value_serialize", "score_timeout"}
-)
+LIVE_FIELDS = frozenset({"runner", "critic"})
 
 
 def _runtime(**kwargs) -> Runtime:
@@ -180,7 +178,7 @@ def _runtime(**kwargs) -> Runtime:
     }
     defaults.update({k: v for k, v in kwargs.items() if k not in LIVE_FIELDS})
     live = {k: v for k, v in kwargs.items() if k in LIVE_FIELDS}
-    live.setdefault("value_model", ConstantReward(0.0))
+    live.setdefault("critic", ConstantReward(0.0))
     runner = live.pop("runner", None) or _runner()
     return Runtime(runner=runner, config=RolloutConfig(**defaults), **live)
 
@@ -830,7 +828,7 @@ async def test_one_value_head_is_built_for_the_whole_call(monkeypatch) -> None:
 # -- the value baseline ---------------------------------------------------------------
 
 
-class LengthReward(RewardModel):
+class LengthReward(Critic):
     """A value head with an opinion: a longer context scores higher.
 
     Deterministic and *not* constant, so a run's baselines differ node by node -- a
@@ -841,24 +839,19 @@ class LengthReward(RewardModel):
     def __init__(self) -> None:
         self.seen: list[str] = []
 
-    def score(self, context: str) -> RewardResult:
-        self.seen.append(context)
-        return RewardResult(score=len(context) / 100.0)
+    async def predict(self, contexts: Sequence[str]) -> list[float]:
+        self.seen.extend(contexts)
+        return [len(context) / 100.0 for context in contexts]
 
 
-class ConstantReward(RewardModel):
+def ConstantReward(value: float) -> Critic:
     """The same estimate everywhere -- so a baseline's effect is one known number."""
-
-    def __init__(self, value: float) -> None:
-        self.value = value
-
-    def score(self, context: str) -> RewardResult:
-        return RewardResult(score=self.value)
+    return Critic.constant(value)
 
 
-def _value_runtime(model: RewardModel, **kwargs: Any) -> Runtime:
-    """A runtime with a value head: the model alone, no channel to repeat."""
-    return _runtime(value_model=model, **kwargs)
+def _value_runtime(critic: Critic, **kwargs: Any) -> Runtime:
+    """A runtime with a value head."""
+    return _runtime(critic=critic, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -892,12 +885,12 @@ async def test_later_passes_score_what_they_add_too() -> None:
 async def test_network_prior_changes_td_through_the_refined_values() -> None:
     base = await prepared(
         "solve it",
-        _runtime(value_model=ConstantReward(0.0)),
+        _runtime(critic=ConstantReward(0.0)),
         estimator=DirectBranchTd(),
     )
     shifted = await prepared(
         "solve it",
-        _runtime(value_model=ConstantReward(0.5)),
+        _runtime(critic=ConstantReward(0.5)),
         estimator=DirectBranchTd(),
     )
     assert any(
@@ -923,8 +916,8 @@ async def test_the_value_head_carries_the_runtime_s_bound_on_its_reward_server()
     the head the loop actually builds: a stalled server costs the baseline (one counted
     scoring failure) and nothing else.
     """
-    model = StalledReward()
-    runtime = _value_runtime(model, score_timeout=0.01)
+    model = StalledReward(timeout=0.01)
+    runtime = _value_runtime(model)
 
     result = await asyncio.wait_for(
         prepared("solve it", runtime, estimator=FixedWeight()), timeout=30
@@ -1233,7 +1226,7 @@ async def test_a_pure_allocator_grows_the_tree_and_claims_no_export_slot() -> No
 @pytest.mark.asyncio
 async def test_refinement_sits_out_a_run_with_no_value_head() -> None:
     runtime = _runtime(
-        value_model=None,
+        critic=None,
         passes=(
             SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
             SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),

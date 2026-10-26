@@ -5,8 +5,7 @@ import pickle
 import pytest
 
 from focus import DirectBranchTd, prepare_samples
-from focus.reward.config import RewardConfig
-from focus.values import tree_values
+from focus.values import RewardConfig, tree_values
 from tests.helpers import turn
 from tests.test_preparation_estimators import score, setup
 from tests.trees import search_payload, stamped_child

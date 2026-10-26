@@ -18,11 +18,10 @@ from focus.preparation.records import (
     _trainable_edges,
     edge_spans,
 )
-from focus.reward.config import RewardConfig
 from focus.scheduler.core.execution import PASS_KEY
 from focus.scheduler.core.returns import edge_return, finished_through
 from focus.scheduler.core.tree import SchedulerState, SchedulerView
-from focus.values import TreeValues, tree_values
+from focus.values import RewardConfig, TreeValues, tree_values
 
 logger = logging.getLogger(__name__)
 

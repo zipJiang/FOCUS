@@ -10,6 +10,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, cast
 from uuid import uuid4
 
+from focus.critic import Critic
 from focus.execution.inference import (
     InferenceRequest,
     LocalInferenceExecutor,
@@ -17,7 +18,6 @@ from focus.execution.inference import (
 )
 from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, CapacityError, Owner
 from focus.generation import GenerateResult, Policy
-from focus.reward import AsyncRewardModel, RewardResult
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ class RayServiceConfig:
     resource_limits: dict[str, int] = field(default_factory=dict)
     lease_seconds: float = 10
     request_seconds: float = 300
-    rewards: dict[str, dict[str, Any]] = field(default_factory=dict)
+    critics: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _construct(config: dict[str, Any]) -> Any:
@@ -59,7 +59,7 @@ class _Coordinator:
         for backend in config.backends:
             self.executor.bind(_construct(backend))
         self.clients: dict[str, float] = {}
-        self.rewards = {name: _construct(cfg) for name, cfg in config.rewards.items()}
+        self.critics = {name: _construct(cfg) for name, cfg in config.critics.items()}
 
     async def describe(self) -> RayServiceConfig:
         return self.config
@@ -81,16 +81,20 @@ class _Coordinator:
             ),
         )
 
-    async def score(
+    async def predict(
         self, client: str, backend: str, contexts: tuple[str, ...], owner: Owner
-    ) -> list[RewardResult]:
-        model = self.rewards[backend]
+    ) -> list[float]:
+        critic = self.critics[backend]
+
+        async def predict() -> list[float]:
+            return [float(v) for v in await critic.predict(contexts)]
+
         return await self._leased(
             client,
             self.executor.pool.run(
-                lambda: model.ascore_batch(contexts),
+                predict,
                 owner=owner,
-                resource="reward:" + backend,
+                resource="critic:" + backend,
                 execution_timeout=self.config.request_seconds,
             ),
         )
@@ -123,11 +127,8 @@ class _Coordinator:
 
     async def shutdown(self) -> None:
         await self.executor.aclose()
-        for model in self.rewards.values():
-            if hasattr(model, "aclose"):
-                await model.aclose()
-            else:
-                await asyncio.to_thread(model.close)
+        for critic in self.critics.values():
+            await critic.aclose()
 
 
 def create_ray_service(config: RayServiceConfig) -> Any:
@@ -188,16 +189,16 @@ class RayInferenceExecutor:
         finally:
             self._outstanding -= 1
 
-    async def score(
+    async def predict(
         self, backend: str, contexts: Sequence[str], owner: Owner = DEFAULT_OWNER
-    ) -> list[RewardResult]:
+    ) -> list[float]:
         self._reserve()
         try:
             await self._start()
-            ref: Any = self.actor.score.remote(
+            ref: Any = self.actor.predict.remote(
                 self.client, backend, tuple(contexts), owner
             )
-            return cast(list[RewardResult], await self._result(ref))
+            return cast(list[float], await self._result(ref))
         finally:
             self._outstanding -= 1
 
@@ -243,19 +244,24 @@ class RayInferenceExecutor:
             await asyncio.gather(self._pulse, return_exceptions=True)
 
 
-class RayRewardModel(AsyncRewardModel):
-    """Value scoring through the same coordinator and aggregate inference pool."""
+class RayCritic(Critic):
+    """A critic served by the coordinator, sharing its aggregate admission pool.
 
-    def __init__(self, executor: RayInferenceExecutor, backend: str):
+    ``backend`` names an entry of ``RayServiceConfig.critics``.
+    """
+
+    def __init__(
+        self,
+        executor: RayInferenceExecutor,
+        backend: str,
+        *,
+        timeout: float | None = None,
+    ) -> None:
         self.executor, self.backend = executor, backend
+        self.timeout = timeout
 
-    async def ascore(self, context: str) -> RewardResult:
-        return (await self.ascore_batch([context]))[0]
+    async def predict(self, contexts: Sequence[str]) -> list[float]:
+        return await self.executor.predict(self.backend, contexts)
 
-    async def ascore_batch(self, contexts: Sequence[str]) -> list[RewardResult]:
-        return await self.executor.score(self.backend, contexts)
-
-    async def ascore_owned(
-        self, contexts: Sequence[str], owner: Owner
-    ) -> list[RewardResult]:
-        return await self.executor.score(self.backend, contexts, owner)
+    async def predict_owned(self, contexts: Sequence[str], owner: Owner) -> list[float]:
+        return await self.executor.predict(self.backend, contexts, owner)

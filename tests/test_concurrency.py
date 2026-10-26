@@ -49,6 +49,7 @@ from focus.allocation import (
 )
 from focus.codec import ChatCodec
 from focus.config import RolloutConfig
+from focus.critic import Critic
 from focus.export import to_samples
 from focus.generation import (
     GenerateResult,
@@ -69,8 +70,6 @@ from focus.harness.turn import Turn
 from focus.loop import Runtime
 from focus.preparation.records import PreparedBatch
 from focus.protocols import Summary
-from focus.reward import RewardModel, RewardResult
-from focus.reward.config import RewardConfig
 from focus.scheduler import (
     Budget,
     Expander,
@@ -82,6 +81,7 @@ from focus.scheduler import (
     SchedulerView,
     Termination,
 )
+from focus.values import RewardConfig
 from tests.estimators import FixedWeight
 from tests.helpers import FakeChatTokenizer, prepared
 
@@ -538,12 +538,11 @@ def _name(payload: Step) -> str:
     return f"n{payload.n}"
 
 
-class FlakyReward(RewardModel):
-    """A reward server that answers late and 503s one batch in five.
+class FlakyReward(Critic):
+    """A critic server that answers late and 503s one batch in five.
 
-    Batched-only on purpose: the default :meth:`RewardModel.ascore_batch` offloads to a
-    worker *thread*, which would make the interleaving the OS scheduler's rather than
-    the seed's -- and this module's whole claim is that a failure replays.
+    Asynchronous on purpose: the interleaving must be the seed's rather than the OS
+    scheduler's -- this module's whole claim is that a failure replays.
     """
 
     def __init__(self, rng: random.Random, *, fail: float = 0.2) -> None:
@@ -555,10 +554,7 @@ class FlakyReward(RewardModel):
         self.batches = 0
         self.failures = 0
 
-    def score(self, context: str) -> RewardResult:  # pragma: no cover - batched only
-        raise AssertionError("this model is only ever asked for batches")
-
-    async def ascore_batch(self, contexts: Sequence[str]) -> list[RewardResult]:
+    async def predict(self, contexts: Sequence[str]) -> list[float]:
         self.batches += 1
         self.calls.update(contexts)
         await _jitter(self._rng)
@@ -566,7 +562,7 @@ class FlakyReward(RewardModel):
             self.failures += 1
             self.dropped.update(contexts)
             raise RuntimeError("reward server 503")
-        return [RewardResult(score=len(context) / 10.0) for context in contexts]
+        return [len(context) / 10.0 for context in contexts]
 
 
 def _reason_above(state: SchedulerState[Any], node: Node[Any]) -> bool:
@@ -691,7 +687,7 @@ class _PreferDepth(Allocator):
 def _runtime(
     generator: JitterGenerator,
     *,
-    value_model: RewardModel | None = None,
+    critic: Critic | None = None,
     max_concurrency: int = 8,
 ) -> Runtime:
     """The whole loop over the fakes: folding runner, every-turn strategy, both
@@ -713,7 +709,7 @@ def _runtime(
     )
     return Runtime(
         runner=runner,
-        value_model=value_model,
+        critic=critic,
         config=RolloutConfig(
             max_concurrency=max_concurrency,
             passes=(
@@ -766,8 +762,8 @@ async def test_the_whole_loop_exports_records_that_match_the_tree_they_came_off(
     five: the records must name real nodes, and the account that ships with them must
     be the tree's own -- turns summed off the edges, failures matching their reasons."""
     generator = JitterGenerator(random.Random(seed))
-    value_model = FlakyReward(random.Random(seed + 500))
-    runtime = _runtime(generator, value_model=value_model)
+    critic = FlakyReward(random.Random(seed + 500))
+    runtime = _runtime(generator, critic=critic)
 
     result = await prepared("solve it", runtime, estimator=FixedWeight())
 
@@ -785,7 +781,7 @@ async def test_the_whole_loop_exports_records_that_match_the_tree_they_came_off(
     assert result.failures == tuple(state.failures)
     # a scoring failure is a kept rollout with a missing estimate, so it is counted
     # apart from the dead ones -- and every one of them came from the flaky server
-    assert result.stats["score_failures"] == float(value_model.failures)
+    assert result.stats["score_failures"] == float(critic.failures)
     for record in result.actor:
         node = state.nodes[record.node_id]
         assert node.parent_id == record.group_id
@@ -803,7 +799,7 @@ async def test_the_same_seed_without_jitter_exports_the_same_samples(
     for _ in range(2):
         runtime = _runtime(
             JitterGenerator(random.Random(seed), jitter=0),
-            value_model=FlakyReward(random.Random(seed + 500)),
+            critic=FlakyReward(random.Random(seed + 500)),
             max_concurrency=4,
         )
         runs.append(
@@ -832,7 +828,7 @@ async def test_cancelling_a_loaded_run_leaves_nothing_behind(
     gate slot is kept, and the lock is free so the state can still be read."""
     rng = random.Random(seed)
     generator = JitterGenerator(random.Random(seed), delay=0.0015)
-    runtime = _runtime(generator, value_model=FlakyReward(random.Random(seed + 500)))
+    runtime = _runtime(generator, critic=FlakyReward(random.Random(seed + 500)))
     before = asyncio.all_tasks()
 
     if rng.random() < 0.5:

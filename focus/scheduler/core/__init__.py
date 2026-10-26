@@ -19,7 +19,6 @@ from focus.scheduler.core.allocation import (
 )
 from focus.scheduler.core.critic import (
     NodeScorer,
-    rollout_text,
 )
 from focus.scheduler.core.entropy import TokenEntropySession, token_entropies
 from focus.scheduler.core.execution import (
@@ -76,7 +75,6 @@ __all__ = [
     "edge_return",
     "finished_below",
     "finished_through",
-    "rollout_text",
     "token_entropies",
     "value_baseline",
 ]

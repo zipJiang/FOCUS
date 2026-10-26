@@ -7,13 +7,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from focus.harness import AnyRollout
-from focus.reward.config import RewardConfig
 from focus.scheduler.core.allocation import (
     AllocationLedger,
     Observations,
     RankedSession,
 )
 from focus.scheduler.core.tree import Node, SchedulerView
+from focus.values import RewardConfig
 
 EVIDENCE_KEY = "rollout_evidence"
 

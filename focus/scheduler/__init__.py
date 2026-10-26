@@ -34,7 +34,6 @@ from focus.scheduler.core import (
     edge_return,
     finished_below,
     finished_through,
-    rollout_text,
     value_baseline,
 )
 from focus.scheduler.core.allocation import (
@@ -71,6 +70,5 @@ __all__ = [
     "edge_return",
     "finished_below",
     "finished_through",
-    "rollout_text",
     "value_baseline",
 ]
