@@ -59,7 +59,8 @@ def make_generate(
         async with creation:
             if cached is None or cached[0] is not args:
                 cached = (args, collector_factory(args))
-                owned.append(cached[1])
+                if own:
+                    owned.append(cached[1])
             collector = cached[1]
         # Another call may replace the cache while this call awaits search.
         index = getattr(sample, "index", 0)
@@ -91,15 +92,15 @@ def make_generate(
     async def aclose() -> None:
         nonlocal cached
         async with creation:
-            collectors = list({id(c): c for c in owned}.values()) if own else []
+            # Collectors built for different args may share one execution service;
+            # close each service once, through a collector that uses it.
+            closing = {id(c.agent.services): c for c in owned}.values()
             owned.clear()
             cached = None
             failures: list[Exception] = []
-            # Collectors built for different args may share one execution service.
-            services = {id(c.agent.services): c.agent.services for c in collectors}
-            for service in services.values():
+            for collector in closing:
                 try:
-                    await service.aclose()
+                    await collector.aclose()
                 except Exception as exc:
                     failures.append(exc)
             if failures:

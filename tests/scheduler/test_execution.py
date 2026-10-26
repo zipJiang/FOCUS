@@ -116,7 +116,7 @@ class ScriptedRunner(Agent[None, Any]):
 
     def __init__(self, *tags: TurnTag, max_steps: int = 8, done_at_end: bool = True):
         self.execution = Execution()
-        self.protocol = AppendOnly()
+        self.context = AppendOnly()
         self._tags = tags
         self._max_steps = max_steps
         self._finish_prompt = "answer"

@@ -14,6 +14,7 @@ checkpoint should not be continued.
 
 from __future__ import annotations
 
+import logging
 import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -32,8 +33,13 @@ from focus.statistics import RunningStats
 if TYPE_CHECKING:
     from focus.allocation.evidence import RolloutLedger
     from focus.generation import SamplingParams
-    from focus.harness import AnyRollout
+    from focus.harness import Agent, AnyRollout
+    from focus.scheduler.core.critic import NodeScorer
+    from focus.scheduler.core.policies import Budget
+    from focus.scheduler.core.tree import SchedulerState
     from focus.values import RewardConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -198,6 +204,59 @@ class Search:
     def requires_critic(self) -> bool:
         return any(phase.priority.requires_critic for phase in self.phases)
 
+    async def run(
+        self,
+        tree: SchedulerState[AnyRollout],
+        agent: Agent[Any, Any],
+        *,
+        ledger: RolloutLedger,
+        scorer: NodeScorer[AnyRollout] | None = None,
+    ) -> None:
+        """Run every phase over ``tree``, continuing checkpoints with ``agent``.
+
+        Each phase regates the tree with its caps and spends its budget on top of
+        what earlier phases already spent. A phase whose priority needs critic
+        predictions is skipped when every prediction failed.
+        """
+        from focus.scheduler.core.execution import PASS_KEY, RolloutExpander
+        from focus.scheduler.core.scheduler import Scheduler
+
+        view = SchedulerView(tree)
+        for index, phase in enumerate(self.phases):
+            name = phase.priority.name
+            if phase.budget == 0:
+                logger.info("search skipped phase=%d priority=%s budget=0", index, name)
+                continue
+            if phase.priority.requires_critic and not any(
+                node.critic is not None for node in view.nodes()
+            ):
+                logger.warning(
+                    "search skipped phase=%d priority=%s: every critic prediction "
+                    + "failed",
+                    index,
+                    name,
+                )
+                continue
+            async with tree.lock:
+                tree.regate(_PhaseGating(phase))
+            spent_before = dict(tree.stats)
+            await Scheduler(
+                expander=RolloutExpander(
+                    agent, sampling_params=phase.sampling, annotation={PASS_KEY: index}
+                ),
+                allocation=_PrioritySession(phase.priority, ledger),
+                termination=_budget(tree, phase.budget),
+                scorer=scorer,
+                max_concurrency=self.max_concurrency,
+            ).run_on(tree)
+            logger.info(
+                "search finished phase=%d priority=%s budget=%d spent=%s",
+                index,
+                name,
+                phase.budget,
+                {k: v - spent_before.get(k, 0.0) for k, v in tree.stats.items()},
+            )
+
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(phases={self.phases!r}, "
@@ -237,6 +296,21 @@ class Selective(Search):
         )
 
 
+def _budget(state: SchedulerState[AnyRollout], phase_turns: int) -> Budget[AnyRollout]:
+    """A cap for one phase: what the tree has already spent, plus this phase's share.
+
+    "Spent" counts realized turns *plus* failures, since a dead expansion is charged a
+    turn so a broken backend depletes a budget instead of being retried forever. A
+    phase ends by draining its in-flight expansions, so it can land a few turns past
+    its own cap; because the next cap is read off the tree's realized spend, that
+    overshoot is already in the baseline and the next phase still gets its full share.
+    """
+    from focus.scheduler.core.policies import Budget
+
+    spent = Budget.turns_spent(SchedulerView(state))
+    return Budget(max_turns=int(spent) + phase_turns)
+
+
 class _PhaseGating(GatingPolicy):
     def __init__(self, phase: Phase) -> None:
         self._max_children = phase.max_children
@@ -255,11 +329,14 @@ class _PrioritySession(RankedSession["AnyRollout"]):
         self._reward = ledger.reward_config
 
     def score(self, view: SchedulerView[AnyRollout], node: Node[AnyRollout]) -> float:
+        # Read without inserting: an unvisited node has no outcomes yet, and the
+        # ledger is stored on the tree, so scanning must not grow it.
+        observed = self.ledger.observations.get(node.id)
         info = NodeInfo(
             node,
             view,
             self._reward,
-            self.ledger.counts(node),
+            observed if observed is not None else Observations(),
             view.arrival(node),
         )
         value = self.priority(info)

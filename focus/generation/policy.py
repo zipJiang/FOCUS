@@ -225,7 +225,7 @@ class Policy[A]:
     def validate_context(self, messages: Sequence[Message]) -> None:
         """Reject unusable edited history before commit, without making a request.
 
-        Native policies enforce their tool-call/response contract. Context protocols
+        Native policies enforce their tool-call/response contract. Context managers
         validate their own prefix-preservation requirements.
         """
         return None

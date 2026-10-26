@@ -47,7 +47,7 @@ class Checkpointer(ABC):
     """Save complete states and load isolated copies, in commit order.
 
     One writer drives each branch; different branches may share a store. The caller
-    must supply compatible policy, protocol, environment and runtime on recovery.
+    must supply a compatible policy, context manager, and environment on recovery.
     Backends implement atomic insertion and newest-first lookup; serialization and
     validation are shared. No live agents, model clients or tasks are persisted.
     """

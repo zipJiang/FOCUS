@@ -531,9 +531,7 @@ def build_world(case: Case, cfg: RunConfig) -> World:
         policy=cfg.policy,
         env=env,
         system_prompt=build_system_prompt(cfg.tools),
-        # Fold on the token budget, or once the round's tool budget is spent: exactly
-        # the composition `build_budget` names, over the `RoundBudget` counters
-        # `DeonticState` mixes in and `ToolEnv` charges.
+        # Fold once the prompt exceeds the token budget.
         context=AppendOnly() if cfg.no_compact else build_deontic_context(cfg),
         max_steps=cfg.max_steps,
         finish_prompt=finish_prompt(case),

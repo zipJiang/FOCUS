@@ -1,8 +1,8 @@
 """Collect checkpoint suffix evidence where reducing value error looks useful.
 
-The score estimates the marginal MSE benefit of a blended value target. Under
-refined TD this is an allocation heuristic, not a proof of reduced actor-gradient
-error: successor-value error affects the actor's return estimate directly.
+The score estimates the marginal MSE benefit of a blended value target. It is an
+allocation heuristic, not a proof of reduced actor-gradient error: successor-value
+error affects the actor's return estimate directly.
 The default BetaBernoulli calibration model requires returns in [0, 1].
 """
 

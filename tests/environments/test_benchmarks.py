@@ -156,8 +156,8 @@ async def test_browsercomp_navigation_and_runner_share_archive() -> None:
     assert opened["lines"][0]["text"].startswith("Alice")
     assert found["matches"][0]["line"] == 0
 
-    agent, _, workspace, prompt, _, schemas = make_agent(
-        BrowserCase("query", "Who is the answer?", ("Alice",)),
+    case = BrowserCase("query", "Who is the answer?", ("Alice",))
+    agent = make_agent(
         policy(
             call("browser.search", query="answer"),
             call("submit", answer="Alice"),
@@ -166,10 +166,10 @@ async def test_browsercomp_navigation_and_runner_share_archive() -> None:
         no_compact=True,
         max_steps=4,
     )
-    result = await agent.run_from(prompt, workspace=workspace)
+    result = await agent.run_from(case.question)
     assert result.done
     assert result.state.answer == "Alice"
-    assert [schema["function"]["name"] for schema in schemas] == [
+    assert [schema["function"]["name"] for schema in agent.tools] == [
         "browser.search",
         "browser.open",
         "browser.find",

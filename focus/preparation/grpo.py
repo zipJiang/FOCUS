@@ -6,7 +6,7 @@ import math
 from collections.abc import Sequence
 
 from focus.preparation.base import Advantage, Edge, Estimator
-from focus.scheduler.core.returns import finished_below
+from focus.scheduler.core.returns import edge_return, finished_below
 from focus.statistics import RunningStats
 from focus.values import TreeValues
 
@@ -34,10 +34,7 @@ class Grpo(Estimator):
                 "branching below the root is unsupported"
             )
         returns = {
-            node.id: reward.configured_return(
-                node.payload.turns, len(view.root.payload.turns)
-            )
-            for node in view.terminals()
+            node.id: edge_return(node, view.root, reward) for node in view.terminals()
         }
         if not returns:
             return [Advantage(0.0) for _ in edges]

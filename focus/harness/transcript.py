@@ -3,7 +3,7 @@
 The rollout's source of truth is a list of **message strings**, and the loop's own
 direction of travel is forward -- render them to token ids and generate. This module is
 the *other* direction: :func:`format_transcript` renders messages back into flat text
-for another model to read (a compactor's fold, a reward model's view of a rollout).
+for another model to read (a summarizing fold, a critic's view of a rollout).
 
 It is deliberately dialect-free -- it matches only the outer ``<tool_call>`` tag, which
 every dialect the harness speaks shares -- so nothing that merely wants to *show* a
@@ -27,10 +27,10 @@ _CALL_CHARS = 200
 def flatten_tool_calls(content: str) -> str:
     """One message's text with its ``<tool_call>`` blocks flattened to inert lines.
 
-    Anywhere a transcript is re-shown to a model -- the compactor's fold, a reward
-    model's view of a rollout -- a call rendered *verbatim* is read as content rather
-    than as a thing that happened: the compactor imitates the puts it can see, and a
-    reward model asked to score an answer is handed raw markup instead. Matched with
+    Anywhere a transcript is re-shown to a model -- a summarizing fold, a critic's
+    view of a rollout -- a call rendered *verbatim* is read as content rather than as
+    a thing that happened: the fold imitates the puts it can see, and a critic asked
+    to score an answer is handed raw markup instead. Matched with
     :data:`~focus.generation.parsing.base.TOOL_CALL`, whose outer tag both
     dialects
     share (Hermes' JSON body and Qwen3.5's ``<function=...>`` XML alike), so one pass

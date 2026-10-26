@@ -24,7 +24,7 @@ class SamplingParams:
     # object handed to a backend never carries one, because `merge_sampling_params`
     # fills it from the defaults it was merged onto (or from the constants above). The
     # distinction exists because every non-`None` field of an overlay wins, so an
-    # overlay built to say one thing -- a proposal's temperature, a fold's
+    # overlay built to say one thing -- a phase's temperature, a fold's
     # `max_tokens` -- would otherwise also pin the sampling law to this class's defaults
     # and quietly undo whatever the backend was configured with.
     temperature: float | None = DEFAULT_TEMPERATURE

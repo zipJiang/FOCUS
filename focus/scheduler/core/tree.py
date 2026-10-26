@@ -76,16 +76,9 @@ class Node[P: Payload]:
     #: Branching control -- minted by the ``GatingPolicy`` the moment the node is added,
     #: so it is always present once the node is in the tree (hence excluded from init).
     gate: Gate = field(init=False)
-    #: Ancestor return bookkeeping (a :class:`AllocationSession` maintains these; unused
-    #: by default).
-    visits: int = 0
-    #: Running mean of the *realized* return over the rollouts that finished through
-    #: this node -- a Monte-Carlo statistic, not a value function. Prefix-inclusive
-    #: (every observation is a whole-episode return, so nodes at different depths stay
-    #: comparable) and raw: no ``gamma``, no ``beta_step``.
-    mean_return: float = 0.0
     #: The critic's estimate of the return still *to come* (a suffix), or ``None``
-    #: until the node is scored -- a different quantity from :attr:`mean_return`.
+    #: until the node is scored. Observed outcomes live in the search's evidence
+    #: ledger, not here.
     critic: float | None = None
     #: The serialized context the critic scored; the input of its training target.
     value_context: str | None = None

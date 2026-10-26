@@ -2,9 +2,9 @@
 
 Every quantity the paper names at a checkpoint lives here: the critic prediction
 :math:`V_\\phi`, the direct-branch backup mean :math:`\\bar G` over its :math:`n` direct
-children, the refined value :math:`\\tilde V`, and the observed continuation outcomes
-(:math:`N` and their mean) that selective allocation reads. Estimators and critic
-targets read these values instead of recomputing them.
+children, and the refined value :math:`\\tilde V`. Estimators and critic targets read
+these values instead of recomputing them; selective allocation reads observed outcomes
+from the search's evidence ledger instead.
 """
 
 from __future__ import annotations
@@ -106,10 +106,6 @@ class NodeValues:
     backup: float | None
     #: :math:`\\tilde V`, the prior blended with the backup at strength :math:`\\kappa`.
     refined: float | None
-    #: :math:`N`, completed continuation outcomes observed through this checkpoint.
-    observations: int
-    #: The mean of those outcomes; ``None`` when there are none.
-    observed_mean: float | None
 
 
 @dataclass(frozen=True)
@@ -140,24 +136,18 @@ def tree_values(
     value blends the critic prior with that mean at pseudo-count :math:`\\kappa`
     (Eq. refined); an unexpanded checkpoint keeps its prior. No tree state is mutated.
     """
-    from focus.allocation.evidence import EVIDENCE_KEY, RolloutEvidence
-    from focus.scheduler.core.returns import edge_return
+    from focus.scheduler.core.returns import edge_duration, edge_return
     from focus.scheduler.core.tree import SchedulerView
 
     view = tree if isinstance(tree, SchedulerView) else SchedulerView(tree)
 
-    stored = view.root.metadata.get(EVIDENCE_KEY)
-    observed = stored.observations if isinstance(stored, RolloutEvidence) else {}
     kappa = reward.value_prior_strength
     values: dict[int, NodeValues] = {}
     for node in sorted(view.nodes(), key=lambda n: n.depth, reverse=True):
-        counts = observed.get(node.id)
-        n_obs = counts.returns.n if counts is not None else 0
-        mean_obs = counts.returns.mean if counts is not None and n_obs else None
         if node.payload.done:
             if node.children:
                 raise ValueError(f"terminal checkpoint {node.id} has children")
-            values[node.id] = NodeValues(None, 0, None, 0.0, n_obs, mean_obs)
+            values[node.id] = NodeValues(None, 0, None, 0.0)
             continue
         prior = node.critic
         if prior is not None and not math.isfinite(prior):
@@ -171,11 +161,9 @@ def tree_values(
             if successor is None or contributions is None:
                 contributions = None
                 continue
-            duration = sum(
-                t.transition is not None for t in child.payload.edge(node.payload)
-            )
+            discount = reward.gamma ** edge_duration(child, node)
             contributions.append(
-                edge_return(child, node, reward) + reward.gamma**duration * successor
+                edge_return(child, node, reward) + discount * successor
             )
         count = len(node.children)
         backup: float | None = None
@@ -192,7 +180,7 @@ def tree_values(
             backup is not None and not math.isfinite(backup)
         ):
             raise ValueError(f"checkpoint {node.id} has non-finite branch values")
-        values[node.id] = NodeValues(prior, count, backup, refined, n_obs, mean_obs)
+        values[node.id] = NodeValues(prior, count, backup, refined)
     return TreeValues(view, reward, values)
 
 

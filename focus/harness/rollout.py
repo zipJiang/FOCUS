@@ -80,7 +80,7 @@ class RolloutState[S]:
     Holds everything needed to *continue* a rollout: ``messages`` (the live
     conversation, the source of truth -- the token prefix is re-rendered from it, not
     stored); ``seed`` (the system + first user turn, what a fold folds back to -- see
-    :meth:`Compactor.compact` for the shape); the env ``state``; the ``workspace``
+    :class:`~focus.harness.context.Compaction`); the env ``state``; the ``workspace``
     (durable scratch); and ``turns`` -- the append-only log of
     :class:`~focus.harness.turn.Turn` s.
 

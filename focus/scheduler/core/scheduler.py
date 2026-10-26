@@ -41,8 +41,7 @@ registered, one expansion is *expand then score*: children come back already sco
 a node's critic value is on it before selection can ever see it on the frontier. That
 ordering is the point -- a value-guided selection needs it, and a separate scoring loop
 cannot give it, since it races the selection that reads it. Scores go to
-``node.critic``; ``node.mean_return`` remains the :class:`AllocationSession`'s, fed by
-the realized return alone.
+``node.critic``; realized returns go to the allocation ledger.
 """
 
 from __future__ import annotations
@@ -129,7 +128,7 @@ class Scheduler[P: Payload]:
             raise ValueError(
                 "selection reads node.critic but no scorer is registered, so critic "
                 + "values stay empty and selection degenerates; pass a scorer such as "
-                + "NodeScorer(model=..., serialize=..., version=...)."
+                + "NodeScorer(critic)."
             )
 
     async def run(self, root: P) -> SchedulerState[P]:

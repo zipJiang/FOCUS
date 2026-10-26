@@ -31,10 +31,10 @@ from focus.scheduler.core import (
     SchedulerView,
     Termination,
     WidthGating,
+    edge_duration,
     edge_return,
     finished_below,
     finished_through,
-    value_baseline,
 )
 from focus.scheduler.core.allocation import (
     AllocationLedger,
@@ -65,8 +65,8 @@ __all__ = [
     "SchedulerView",
     "Termination",
     "WidthGating",
+    "edge_duration",
     "edge_return",
     "finished_below",
     "finished_through",
-    "value_baseline",
 ]

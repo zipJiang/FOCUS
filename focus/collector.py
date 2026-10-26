@@ -12,8 +12,8 @@ often shares them across collectors.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from dataclasses import asdict
+from types import EllipsisType
 from typing import Any
 
 from focus.allocation.evidence import RolloutLedger
@@ -23,32 +23,19 @@ from focus.harness import Agent, AnyRollout, RolloutState
 from focus.harness.workspace import Workspace
 from focus.preparation import Batch, DirectBranchTd, Estimator, prepare_samples
 from focus.scheduler.core.critic import NodeScorer
-from focus.scheduler.core.execution import PASS_KEY, RolloutExpander
 from focus.scheduler.core.gating import ConcurrencyGating
-from focus.scheduler.core.policies import Budget
-from focus.scheduler.core.scheduler import Scheduler
 from focus.scheduler.core.tree import (
-    STAT_FAILURES,
     STAT_SCORE_FAILURES,
-    STAT_TURNS,
     SchedulerState,
     SchedulerView,
 )
-from focus.search import Search, _PhaseGating, _PrioritySession
+from focus.search import Search
 from focus.values import RewardConfig
 
 logger = logging.getLogger(__name__)
 
 #: A settled search tree: every checkpoint, its critic prediction, and the edges.
 Tree = SchedulerState
-
-
-class _Default:
-    def __repr__(self) -> str:
-        return "DirectBranchTd()"
-
-
-_PAPER_RECIPE: Any = _Default()
 
 
 class Collector:
@@ -69,7 +56,7 @@ class Collector:
         *,
         search: Search,
         critic: Critic | None = None,
-        estimator: Estimator | None = _PAPER_RECIPE,
+        estimator: Estimator | None = DirectBranchTd(),  # noqa: B008 (stateless)
         reward: RewardConfig | None = None,
         own: bool = True,
     ) -> None:
@@ -84,9 +71,7 @@ class Collector:
         self.agent = agent
         self.search_config = search
         self.critic = critic
-        self.estimator: Estimator | None = (
-            DirectBranchTd() if estimator is _PAPER_RECIPE else estimator
-        )
+        self.estimator = estimator
         self.reward = reward if reward is not None else RewardConfig()
         self.own = own
 
@@ -113,13 +98,17 @@ class Collector:
         return self.prepare(await self.search(prompt, workspace=workspace))
 
     def prepare(
-        self, tree: Tree[AnyRollout], *, estimator: Any = _PAPER_RECIPE
+        self,
+        tree: Tree[AnyRollout],
+        *,
+        estimator: Estimator | EllipsisType | None = ...,
     ) -> Batch:
         """Prepare actor and critic samples from a settled tree.
 
-        ``estimator`` overrides the collector's recipe for this call.
+        ``estimator`` overrides the collector's recipe for this call; ``None``
+        prepares critic targets only.
         """
-        chosen = self.estimator if estimator is _PAPER_RECIPE else estimator
+        chosen = self.estimator if estimator is ... else estimator
         return prepare_samples(tree, estimator=chosen, reward_config=self.reward)
 
     async def search(
@@ -145,61 +134,12 @@ class Collector:
         )
         await _score_root(scorer, state)
         ledger = RolloutLedger(self.reward)
-        view = SchedulerView(state)
-        ledger.bind(view)
-        for index, phase in enumerate(self.search_config.phases):
-            name = phase.priority.name
-            if phase.budget == 0:
-                logger.info("search skipped phase=%d priority=%s budget=0", index, name)
-                continue
-            if phase.priority.requires_critic and not any(
-                node.critic is not None for node in view.nodes()
-            ):
-                logger.warning(
-                    "search skipped phase=%d priority=%s: every critic prediction "
-                    + "failed",
-                    index,
-                    name,
-                )
-                continue
-            async with state.lock:
-                state.regate(_PhaseGating(phase))
-            spent_before = dict(state.stats)
-            await Scheduler(
-                expander=RolloutExpander(
-                    agent,
-                    sampling_params=phase.sampling,
-                    annotation={PASS_KEY: index},
-                ),
-                allocation=_PrioritySession(phase.priority, ledger),
-                termination=_budget(state, phase.budget),
-                scorer=scorer,
-                max_concurrency=self.search_config.max_concurrency,
-            ).run_on(state)
-            logger.info(
-                "search finished phase=%d priority=%s budget=%d spent=%s",
-                index,
-                name,
-                phase.budget,
-                _spent(spent_before, state.stats),
-            )
+        ledger.bind(SchedulerView(state))
+        await self.search_config.run(state, agent, ledger=ledger, scorer=scorer)
         current = asdict(agent.services.usage.get(root.episode_id, Usage()))
         for key, value in current.items():
             state.stats["resource_" + key] = float(value - before[key])
         return state
-
-
-def _budget(state: SchedulerState[AnyRollout], phase_turns: int) -> Budget[AnyRollout]:
-    """A cap for one phase: what the tree has already spent, plus this phase's share.
-
-    "Spent" counts realized turns *plus* failures, since a dead expansion is charged a
-    turn so a broken backend depletes a budget instead of being retried forever. A
-    phase ends by draining its in-flight expansions, so it can land a few turns past
-    its own cap; because the next cap is read off the tree's realized spend, that
-    overshoot is already in the baseline and the next phase still gets its full share.
-    """
-    spent = state.stats.get(STAT_TURNS, 0.0) + state.stats.get(STAT_FAILURES, 0.0)
-    return Budget(max_turns=int(spent) + phase_turns)
 
 
 async def _score_root(
@@ -221,11 +161,6 @@ async def _score_root(
         logger.warning("root scoring failed node=%d error=%r", node.id, exc)
         return
     scorer.write([node], scores)
-
-
-def _spent(before: Mapping[str, float], after: Mapping[str, float]) -> dict[str, float]:
-    """What one phase added to each running statistic."""
-    return {key: value - before.get(key, 0.0) for key, value in after.items()}
 
 
 __all__ = ["Collector", "Tree"]

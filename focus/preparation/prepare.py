@@ -19,13 +19,15 @@ from focus.preparation.records import (
     edge_spans,
 )
 from focus.scheduler.core.execution import PASS_KEY
-from focus.scheduler.core.returns import edge_return, finished_through
+from focus.scheduler.core.returns import (
+    edge_duration,
+    edge_return,
+    finished_through,
+)
 from focus.scheduler.core.tree import SchedulerState, SchedulerView
 from focus.values import RewardConfig, TreeValues, tree_values
 
 logger = logging.getLogger(__name__)
-
-_PAPER_RECIPE = DirectBranchTd()
 
 
 def critic_targets(values: TreeValues) -> list[CriticSample]:
@@ -64,11 +66,61 @@ def critic_targets(values: TreeValues) -> list[CriticSample]:
     return result
 
 
+def _actor_samples(
+    view: SchedulerView[AnyRollout], values: TreeValues, estimator: Estimator
+) -> list[ActorSample]:
+    """One sample per trainable searched edge, weighted by ``estimator``."""
+    reward = values.reward
+    edges: list[Edge] = []
+    spans_by_edge = []
+    for node, parent in _trainable_edges(view):
+        if estimator.requires_completed_paths and not finished_through(view, node):
+            continue
+        spans = edge_spans(node, parent)
+        if not spans:
+            continue
+        if any(not span.exact for span in spans):
+            raise ValueError(
+                f"edge into node {node.id} is not trainable: inexact generated tokens"
+            )
+        logprob(node.payload.edge(parent.payload))  # behavior logprobs are required
+        edges.append(
+            Edge(
+                node,
+                parent,
+                edge_return(node, parent, reward),
+                edge_duration(node, parent),
+            )
+        )
+        spans_by_edge.append(spans)
+    weights = estimator.advantages(tuple(edges), values)
+    if len(weights) != len(edges):
+        raise ValueError(
+            f"estimator {estimator.name!r} returned {len(weights)} advantages "
+            + f"for {len(edges)} edges"
+        )
+    samples = []
+    for edge, spans, weight in zip(edges, spans_by_edge, weights, strict=True):
+        advantage = weight if isinstance(weight, Advantage) else Advantage(weight)
+        samples.append(
+            ActorSample(
+                node_id=edge.node.id,
+                spans=spans,
+                group_id=edge.parent.id,
+                estimator=estimator.name,
+                weight=float(advantage.value),
+                diagnostics=MappingProxyType(dict(advantage.diagnostics)),
+                search_pass=edge.node.metadata.get(PASS_KEY),
+            )
+        )
+    return samples
+
+
 def prepare_samples(
     state: SchedulerState[AnyRollout],
     *,
     reward_config: RewardConfig,
-    estimator: Estimator | None = _PAPER_RECIPE,
+    estimator: Estimator | None = DirectBranchTd(),  # noqa: B008 (stateless)
 ) -> Batch:
     """Compute one actor recipe and the critic's branch-mean targets.
 
@@ -79,58 +131,8 @@ def prepare_samples(
     view = SchedulerView(state)
     evidence_of(view, reward_config)  # refuses trees searched under other rewards
     values = tree_values(view, reward_config)
-    actor: list[ActorSample] = []
-    edges: list[Edge] = []
-    for node, parent in _trainable_edges(view) if estimator is not None else ():
-        if (
-            estimator is not None
-            and estimator.requires_completed_paths
-            and not finished_through(view, node)
-        ):
-            continue
-        spans = edge_spans(node, parent)
-        if not spans:
-            continue
-        if any(not span.exact for span in spans):
-            raise ValueError(
-                f"edge into node {node.id} is not trainable: inexact generated tokens"
-            )
-        logprob(node.payload.edge(parent.payload))  # behavior logprobs are required
-        if estimator is not None:
-            actor.append(
-                ActorSample(
-                    node_id=node.id,
-                    spans=spans,
-                    group_id=parent.id,
-                    estimator=estimator.name,
-                    search_pass=node.metadata.get(PASS_KEY),
-                )
-            )
-            edges.append(
-                Edge(
-                    node,
-                    parent,
-                    edge_return(node, parent, reward_config),
-                    sum(
-                        t.transition is not None
-                        for t in node.payload.edge(parent.payload)
-                    ),
-                )
-            )
+    actor = _actor_samples(view, values, estimator) if estimator is not None else []
     critic = critic_targets(values)
-    if estimator is not None:
-        weights = estimator.advantages(tuple(edges), values)
-        if len(weights) != len(actor):
-            raise ValueError(
-                f"estimator {estimator.name!r} returned {len(weights)} advantages "
-                + f"for {len(actor)} edges"
-            )
-        for record, weight in zip(actor, weights, strict=True):
-            if isinstance(weight, Advantage):
-                record.weight = weight.value
-                record.diagnostics = MappingProxyType(dict(weight.diagnostics))
-            else:
-                record.weight = float(weight)
     for record in actor:
         _refuse_non_finite(record)
     for target in critic:

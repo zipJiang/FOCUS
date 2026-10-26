@@ -25,8 +25,14 @@ from typing import TYPE_CHECKING, Any
 from focus.codec import Message
 from focus.execution import Usage
 from focus.generation import GenerateResult, PreparedPrompt
-from focus.generation.parsing.base import ToolTurn
-from focus.harness.checkpoint import Effect
+from focus.generation.continuation import TokenChunkParser
+from focus.generation.parsing.base import ActionParser, ToolTurn
+from focus.harness.checkpoint import (
+    BranchPoints,
+    Effect,
+    EveryDecision,
+    SparseCheckpoints,
+)
 from focus.harness.env import StepResult
 from focus.harness.rollout import AnyRollout
 from focus.harness.tools.dispatch import tool_reply
@@ -35,6 +41,7 @@ from focus.harness.turn import Turn
 from focus.harness.workspace import Workspace
 
 if TYPE_CHECKING:
+    from focus.generation.policy import Policy
     from focus.harness.agent import Agent
 
 
@@ -129,11 +136,32 @@ class ContextManager[S]:
 
     #: When to compact; ``None`` never compacts.
     trigger: Trigger[S] | None = None
+    #: Generated tokens allowed per request; ``None`` leaves the limit to sampling.
+    max_tokens: int | None = None
+    #: Whether a rollout out of steps takes a final-answer turn by default.
+    final_answer: bool = True
 
     @property
     def manages_context(self) -> bool:
-        """Whether this manager may rewrite the context during a rollout."""
+        """Whether this manager may rewrite the context during a rollout.
+
+        A manager that does not never compacts, so the agent skips rendering for it.
+        """
         return self.trigger is not None
+
+    def branch_points(self) -> BranchPoints:
+        """Where search may continue when the agent is given no branch points."""
+        return SparseCheckpoints()
+
+    def action_parser(self) -> ActionParser[Any] | None:
+        """The parser a format resolved from the model name should use.
+
+        ``None`` follows the environment's :attr:`~focus.harness.env.Env.action`.
+        """
+        return None
+
+    def check_policy(self, policy: Policy[Any]) -> None:
+        """Refuse a policy this manager cannot render for; the agent calls it once."""
 
     def should_compact(self, rs: AnyRollout, prompt: Sequence[int]) -> bool:
         """Whether to compact before generating from ``prompt``."""
@@ -221,15 +249,14 @@ class AppendOnly(ContextManager[Any]):
     def __init__(self, *, continuation: bool = False) -> None:
         self.continuation = continuation
 
-    def _check_policy(self, agent: Agent[Any, Any]) -> None:
+    def check_policy(self, policy: Policy[Any]) -> None:
         if self.continuation and (
-            not agent.policy.provides_exact_tokens
-            or agent.policy.provides_native_tool_calls
+            not policy.provides_exact_tokens or policy.provides_native_tool_calls
         ):
             raise ValueError("Token continuation requires an exact token-input policy")
 
     async def initialize(self, rs: AnyRollout, agent: Agent[Any, Any]) -> AnyRollout:
-        self._check_policy(agent)
+        self.check_policy(agent.policy)
         return rs
 
     def _boundary(self, messages: Sequence[Message], agent: Agent[Any, Any]) -> int:
@@ -272,7 +299,7 @@ class AppendOnly(ContextManager[Any]):
         """Render chat context, or append exact segments to the initial prompt."""
         if not self.continuation:
             return super().prepare(rs, agent, tools=tools)
-        self._check_policy(agent)
+        self.check_policy(agent.policy)
         boundary = self._boundary(rs.messages, agent)
         initial = agent.policy.prepare(
             rs.messages[:boundary], tools=agent.tools if tools is None else tools
@@ -316,11 +343,20 @@ class Segments(AppendOnly):
     input and parse segments as :class:`~focus.generation.TokenChunk` actions.
     """
 
+    final_answer = False
+
     def __init__(self, tokens: int) -> None:
         if type(tokens) is not int or tokens < 1:
             raise ValueError("Segments.tokens must be a positive integer")
         super().__init__(continuation=True)
         self.tokens = tokens
+        self.max_tokens = tokens
+
+    def branch_points(self) -> BranchPoints:
+        return EveryDecision()
+
+    def action_parser(self) -> ActionParser[Any]:
+        return TokenChunkParser()
 
 
 class ContextTools(ContextManager[Any]):

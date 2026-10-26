@@ -13,7 +13,6 @@ import pytest
 from focus import Collector, DirectBranchTd, ErrorReduction, Fifo, Phase, Search
 from focus.allocation import Observations
 from focus.codec import ChatCodec
-from focus.collector import _budget
 from focus.critic import Critic
 from focus.export import to_samples
 from focus.extend import NodeInfo, Priority
@@ -43,6 +42,7 @@ from focus.scheduler import (
     WidthGating,
 )
 from focus.scheduler.core.tree import STAT_FAILURES, STAT_TURNS
+from focus.search import _budget
 from focus.values import RewardConfig
 from tests.estimators import FixedWeight
 from tests.helpers import (

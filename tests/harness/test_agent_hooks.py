@@ -16,6 +16,7 @@ from focus.harness import (
     ContextManager,
     IncompleteCompactionError,
     InMemoryWorkspace,
+    StepResult,
     StorageTool,
     Turn,
 )
@@ -81,7 +82,7 @@ async def test_final_turn_tools_and_role_are_the_task_s() -> None:
 async def test_context_limit_clamps_the_reply_and_refuses_an_overfull_prompt() -> None:
     gen = ScriptedGenerator(["go"])
     probe = toy_runner(gen)
-    prompt = len(probe.protocol.prepare(await probe.start("hi"), probe).tokens)
+    prompt = len(probe.context.prepare(await probe.start("hi"), probe).tokens)
 
     runner = toy_runner(
         gen,
@@ -113,11 +114,26 @@ class Failing(ContextManager[ToyState]):
     trigger = WhenTrigger(lambda prompt, state: state.n > 0)
 
     async def compact(self, compaction: Compaction[ToyState]) -> CompactionResult[Any]:
+        # Generated in the fold's own world: task-tagged, with its transitions.
         turns: tuple[Turn[Any], ...] = tuple(
-            Turn(prefix=(1,), tokens=(2,), logprobs=(-0.1,), tag="fold")
+            Turn(
+                prefix=(1,),
+                tokens=(2,),
+                logprobs=(-0.1,),
+                transition=StepResult(next_state=compaction.state),
+            )
             for _ in range(2)
         )
         raise IncompleteCompactionError(turns=turns, reasons=("reply_cap",))
+
+
+class Keeps(Failing):
+    async def compact(self, compaction: Compaction[ToyState]) -> CompactionResult[Any]:
+        try:
+            await super().compact(compaction)
+        except IncompleteCompactionError as exc:
+            return CompactionResult(compaction.seed, compaction.state, turns=exc.turns)
+        raise AssertionError("unreachable")
 
 
 class Records(ToyEnv):
@@ -138,11 +154,22 @@ async def test_a_rejected_fold_ends_the_episode_when_asked() -> None:
     assert ended.reward_outcome == 0.0
     assert ended.state.n == -1  # the task recorded why
     assert [t.tag for t in ended.turns[-3:]] == ["fold", "fold", "task"]
+    assert ended.turns[-3].transition is None  # the fold's own world stays out
     assert ended.turns[-1].tokens == ()  # the ending generated nothing
 
     raising = toy_runner(ScriptedGenerator(["go"]), compactor=Failing())
     with pytest.raises(IncompleteCompactionError):
         await raising.advance(await raising.advance(await raising.start("hi")))
+
+
+async def test_the_agent_records_a_folds_turns_as_transition_free_fold_turns() -> None:
+    runner = toy_runner(ScriptedGenerator(["go"]), compactor=Keeps())
+    stepped = await runner.advance(await runner.start("hi"))
+    folded = await runner.advance(stepped)
+    added = folded.turns[len(stepped.turns) :]
+    assert [t.tag for t in added] == ["fold", "fold"]
+    assert all(t.transition is None for t in added)
+    assert folded.turns_taken == stepped.turns_taken  # a fold is not a task step
 
 
 def test_agent_arguments_are_checked() -> None:

@@ -3,7 +3,7 @@
 A verifier-free selection criterion, ported from the pre-rewrite traversal engine
 (``windowed_token_entropy`` there). It ranks a frontier node by how uncertain the model
 was while generating that node's *children*, so the search spends its budget where the
-policy's own distribution says the outcome is still open -- no reward model, no ground
+policy's own distribution says the outcome is still open -- no critic, no ground
 truth, nothing but the logprobs generation already returned.
 
 The per-token value is ARES-style ``p * -log p`` over the **sampled** token only. It is

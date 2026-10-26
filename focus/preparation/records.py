@@ -22,13 +22,13 @@ type Lane = Literal["actor", "critic"]
 #: Metadata key naming which head a sample trains: ``"actor"`` or ``"critic"``.
 LANE_KEY = "lane"
 
-#: Metadata key naming the registered estimator that computed an actor sample's scalar.
+#: Metadata key naming the estimator that computed an actor sample's scalar.
 ESTIMATOR_KEY = "estimator"
 
 
 #: What an estimator that explains nothing publishes. A proxy rather than a fresh
 #: ``{}``: the default is shared by every record whose recipe wrote no diagnostics, and
-#: a writable one would let a single ``assign`` rewrite all of them.
+#: a writable one would let a single record's edit rewrite all of them.
 _NO_DIAGNOSTICS: Mapping[str, float] = MappingProxyType({})
 
 
@@ -54,9 +54,9 @@ class ActorSample:
     spans: tuple[PackedSequence, ...]
     #: The node the edge leaves -- the fork this record belongs to for sibling grouping.
     group_id: int
-    #: Which registered estimator owns this record.
+    #: The name of the estimator that weighted this record.
     estimator: str
-    #: The actor weight :math:`w` -- written by ``assign``, used as-is.
+    #: The actor weight :math:`w` from :meth:`Estimator.advantages`, used as-is.
     weight: float = 0.0
     #: Whatever the estimator wants said about how it reached :attr:`weight` -- e.g.
     #: ``{"advantage": A, "baseline": V}``. Metadata, not arithmetic: it is carried into
@@ -239,7 +239,7 @@ def _refuse_non_finite(record: ActorSample | CriticSample) -> None:
     estimator that produced it, not in a loss that went ``nan`` three steps later.
     """
     if isinstance(record, CriticSample):
-        scalars = [("target", record.target, "the refined checkpoint value")]
+        scalars = [("target", record.target, "the direct-branch backup")]
         scalars.extend(
             (name, value, "critic diagnostic")
             for name, value in record.diagnostics.items()
@@ -263,5 +263,5 @@ def _refuse_non_finite(record: ActorSample | CriticSample) -> None:
             raise ValueError(
                 f"{source} produced a non-finite {name} ({value}) on the edge into "
                 + f"node {record.node_id}. Export will not write a zero in its place: "
-                + "check the env's rewards and the value channel."
+                + "check the env's rewards and the critic's predictions."
             )

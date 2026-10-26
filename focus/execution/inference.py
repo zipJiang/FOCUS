@@ -53,6 +53,8 @@ class LocalInferenceExecutor:
     def __init__(self, pool: AdmissionPool | None = None, *, own_clients: bool = False):
         self.pool = pool or AdmissionPool()
         self.policies: dict[str, Policy[Any]] = {}
+        # Key by identity; ``policies`` keeps each policy alive, so ids stay unique.
+        self._keys: dict[int, str] = {}
         self.own_clients = own_clients
         self._closed = False
 
@@ -63,14 +65,15 @@ class LocalInferenceExecutor:
         same label (one collecting while the other's successor is being trained) get
         distinct keys rather than colliding.
         """
+        if (key := self._keys.get(id(policy))) is not None:
+            return key
         name = policy_key(policy)
         key, suffix = name, 1
-        while (existing := self.policies.get(key)) is not None:
-            if existing is policy:
-                return key
+        while key in self.policies:
             suffix += 1
             key = f"{name}#{suffix}"
         self.policies[key] = policy
+        self._keys[id(policy)] = key
         return key
 
     async def submit(self, request: InferenceRequest) -> GenerateResult:
@@ -211,11 +214,7 @@ class ExecutionServices:
         assert self.auxiliary is not None
 
         async def invoke() -> Sequence[float]:
-            owned = getattr(critic, "predict_owned", None)
-            if owned is not None:
-                result: Sequence[float] = await owned(contexts, owner)
-                return result
-            return await critic.predict(contexts)
+            return await critic.predict_owned(contexts, owner)
 
         try:
             return await self.auxiliary.run(invoke, owner=owner, resource="value")

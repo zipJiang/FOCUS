@@ -7,15 +7,6 @@ from focus.scheduler.core.tree import Node, SchedulerView
 from focus.values import RewardConfig
 
 
-def value_baseline(node: Node[AnyRollout]) -> float:
-    """:math:`V_{\\mathrm{base}}(h)` -- the critic's estimate at this node.
-
-    Absent means zero, not "skip this node": an advantage against a missing baseline is
-    just the raw return, which is a coarser but honest estimate rather than a hole.
-    """
-    return 0.0 if node.critic is None else node.critic
-
-
 def edge_return(
     node: Node[AnyRollout], parent: Node[AnyRollout], config: RewardConfig
 ) -> float:
@@ -27,6 +18,11 @@ def edge_return(
     quietly includes the shared history a fork's siblings all have.
     """
     return config.configured_return(node.payload.turns, len(parent.payload.turns))
+
+
+def edge_duration(node: Node[AnyRollout], parent: Node[AnyRollout]) -> int:
+    """:math:`d`, the task transitions on the edge into ``node``: its discount time."""
+    return node.payload.turns_taken - parent.payload.turns_taken
 
 
 def finished_below(
@@ -51,7 +47,7 @@ def finished_through(view: SchedulerView[AnyRollout], node: Node[AnyRollout]) ->
 
 
 __all__ = [
+    "edge_duration",
     "finished_below",
     "finished_through",
-    "value_baseline",
 ]

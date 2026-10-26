@@ -37,10 +37,10 @@ from focus.scheduler.core.policies import (
     Termination,
 )
 from focus.scheduler.core.returns import (
+    edge_duration,
     edge_return,
     finished_below,
     finished_through,
-    value_baseline,
 )
 from focus.scheduler.core.scheduler import Scheduler
 from focus.scheduler.core.tree import (
@@ -71,9 +71,9 @@ __all__ = [
     "SchedulerView",
     "Termination",
     "WidthGating",
+    "edge_duration",
     "edge_return",
     "finished_below",
     "finished_through",
     "token_entropies",
-    "value_baseline",
 ]

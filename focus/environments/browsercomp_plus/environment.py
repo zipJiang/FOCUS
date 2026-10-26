@@ -24,9 +24,6 @@ from focus.harness import (
 from focus.harness.compaction.agentic import DEFAULT_INSTRUCTION
 from focus.harness.context import (
     AppendOnly,
-    Compaction,
-    CompactionResult,
-    IncompleteCompactionError,
 )
 from focus.harness.env import StepResult
 from focus.harness.tools.dispatch import tool_reply
@@ -145,33 +142,6 @@ class State(SubmitFields, RoundBudget):
     compaction_failure: tuple[str, ...] = ()
 
 
-class _CappedSummarize(Summarize[State]):
-    """Summarize, with this task's compaction penalties capped per episode.
-
-    Penalties on malformed compaction attempts sum to at most 0.05 over an episode,
-    whether the fold succeeds or is rejected.
-    """
-
-    async def compact(self, compaction: Compaction[State]) -> CompactionResult[State]:
-        previous = compaction.checkpoint.turns if compaction.checkpoint else ()
-        try:
-            result = await super().compact(compaction)
-        except IncompleteCompactionError as exc:
-            exc.turns = _cap_compaction_penalties(previous, exc.turns)
-            raise
-        return replace(result, turns=_cap_compaction_penalties(previous, result.turns))
-
-
-def _cap_compaction_penalties(previous, turns):
-    remaining = max(0.0, 0.05 + sum(t.compaction_penalty for t in previous))
-    capped = []
-    for turn in turns:
-        penalty = -min(remaining, max(0.0, -turn.compaction_penalty))
-        remaining = max(0.0, remaining + penalty)
-        capped.append(replace(turn, compaction_penalty=penalty))
-    return tuple(capped)
-
-
 class SearchEnv(ToolEnv[State]):
     def __init__(
         self,
@@ -238,7 +208,6 @@ class SearchEnv(ToolEnv[State]):
 
 
 def make_agent(
-    case,
     policy: Policy[ToolTurn],
     prompt_limit=14336,
     call_budget=10,
@@ -255,7 +224,8 @@ def make_agent(
     compactor_top_p=0.95,
     context_limit=98304,
     compaction_failure="raise",
-):
+) -> Agent[State, ToolTurn]:
+    """The browsing agent; run it on a case's question."""
     env = SearchEnv(
         archive,
         call_budget=call_budget,
@@ -264,8 +234,9 @@ def make_agent(
         read_chars=read_chars,
         task_limit=max_steps,
     )
-    compactor = _CappedSummarize(
+    compactor = Summarize[State](
         trigger=AnyOf(PromptTokens(prompt_limit), StateCounter()),
+        penalty_cap=0.05,
         max_reply_tokens=compactor_max_tokens,
         summary_target_tokens=min(summary_target_tokens, compactor_max_tokens),
         require_complete_reply=True,
@@ -281,7 +252,7 @@ def make_agent(
 
     if compaction_failure not in ("raise", "terminal_zero"):
         raise ValueError("Unknown compaction failure policy")
-    agent = Agent(
+    return Agent(
         policy=policy,
         env=env,
         system_prompt=SYSTEM,
@@ -294,4 +265,3 @@ def make_agent(
         if compaction_failure == "terminal_zero"
         else "raise",
     )
-    return agent, policy, NullWorkspace(), case.question, compactor, env.schemas

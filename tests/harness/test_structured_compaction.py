@@ -68,9 +68,7 @@ async def test_retry_keeps_original_context_and_exact_failed_generations():
     assert failed.compaction_issue
     assert good.compaction_penalty == 0
     assert failed.tokens == tuple(map(ord, "<think>unfinished"))
-    assert all(
-        t.exact and t.transition is None and t.tag == "fold" for t in result.turns
-    )
+    assert all(t.exact for t in result.turns)
     assert failed.logprobs == (-0.25,) * len(failed.tokens)
     retry_prompt = request.agent.policy.decode(gen.prefixes[-1])
     assert "original evidence" in retry_prompt

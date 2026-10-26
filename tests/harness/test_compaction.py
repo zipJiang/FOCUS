@@ -545,17 +545,14 @@ async def test_fold_rewrites_the_request_turn_whatever_shape_the_seed_has(
 
 
 @pytest.mark.asyncio
-async def test_a_fold_returns_tagged_transition_free_turns() -> None:
+async def test_a_fold_returns_one_turn_per_generation() -> None:
     ws = InMemoryWorkspace()
     gen = ScriptedGenerator([_turn(_store("log", "detail")), _reply("kept summary")])
     c = _compaction([{"role": "user", "content": "grown context"}], ws, gen)
 
     result = await Summarize[None](max_interactions=8).compact(c)
 
-    assert len(result.turns) == 2  # one per generate
-    assert all(t.tag == "fold" for t in result.turns)
-    # a fold rewrites context; it takes no env step, so it is not a time step
-    assert all(t.transition is None for t in result.turns)
+    assert len(result.turns) == 2  # the agent retags them as fold turns
 
 
 @pytest.mark.asyncio
@@ -568,7 +565,6 @@ async def test_a_folds_generations_are_trainable_and_its_transcript_is_masked() 
 
     codec = ChatCodec(FakeChatTokenizer())
     packed = regions(result.turns)
-    assert all(seq.tag == "fold" for seq in packed)
     decoded = "".join(
         codec.decode(
             [t for t, keep in zip(seq.tokens, seq.trainable, strict=True) if keep]

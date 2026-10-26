@@ -32,8 +32,8 @@ class ValuePrediction:
 class NodeScorer[P: Payload]:
     """Batch a critic's predictions for new checkpoints through the execution services.
 
-    Predictions land in ``node.critic`` and *only* there -- never in
-    ``node.mean_return``, which is backup bookkeeping over the realized return.
+    Predictions land in ``node.critic`` and *only* there, separate from the realized
+    returns the evidence ledger records.
 
     ``critic.timeout`` bounds one prediction batch. When it fires the batch is a
     scoring failure on the ordinary terms (counted in ``stats[score_failures]``, the

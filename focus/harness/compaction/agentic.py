@@ -128,8 +128,12 @@ class Summarize(ContextManager[S]):
     the three things that are genuinely strategy: *when* (a composable
     :class:`~...compaction.triggers.Trigger`), *what to say* (the instruction and the
     folded continuation), and *how long* (``max_interactions``). Everything it generates
-    comes back as ordinary turns, retagged ``"fold"``, and the rollout's log absorbs
-    them; there is no compaction-shaped record anywhere.
+    comes back as ordinary turns, which the agent retags ``"fold"`` and absorbs into
+    the rollout's log; there is no compaction-shaped record anywhere.
+
+    A malformed structured summary carries a small negative ``compaction_penalty``;
+    ``penalty_cap`` bounds their sum over an episode, whether the fold succeeds or is
+    rejected.
 
     It owns only its strategy in the other sense too -- the machine comes from the
     :class:`Compaction` (the rollout's own agent), not this object, so a fold speaks
@@ -171,6 +175,7 @@ class Summarize(ContextManager[S]):
         state_renderer: Callable[[S], str] | None = None,
         resume_instruction: str = _ASSISTANT_RESUME,
         include_folded_guidance: bool = True,
+        penalty_cap: float | None = None,
     ) -> None:
         # `max_prompt_tokens` stays as the sugar for the overwhelmingly common trigger,
         # so the simple case never has to name a Trigger class at all.
@@ -206,8 +211,26 @@ class Summarize(ContextManager[S]):
         self._state_renderer = state_renderer
         self._resume_instruction = resume_instruction
         self._include_folded_guidance = include_folded_guidance
+        if penalty_cap is not None and penalty_cap < 0:
+            raise ValueError("penalty_cap must be nonnegative")
+        self._penalty_cap = penalty_cap
 
     async def compact(self, compaction: Compaction[S]) -> CompactionResult[S]:
+        """Fold, capping malformed-summary penalties at ``penalty_cap`` per episode."""
+        if self._penalty_cap is None:
+            return await self._compact_with_repair(compaction)
+        previous = compaction.checkpoint.turns if compaction.checkpoint else ()
+        try:
+            result = await self._compact_with_repair(compaction)
+        except IncompleteCompactionError as exc:
+            exc.turns = _cap_penalties(previous, exc.turns, self._penalty_cap)
+            raise
+        turns = _cap_penalties(previous, result.turns, self._penalty_cap)
+        return replace(result, turns=turns)
+
+    async def _compact_with_repair(
+        self, compaction: Compaction[S]
+    ) -> CompactionResult[S]:
         if not self._structured_summary:
             return await self._compact_once(compaction)
         failed: tuple[Turn[object], ...] = ()
@@ -302,7 +325,7 @@ class Summarize(ContextManager[S]):
             )
         rs = await fold.run(rs)
         if self._structured_summary:
-            turns = tuple(replace(t, tag="fold", transition=None) for t in rs.turns)
+            turns = rs.turns
             last = turns[-1] if turns else None
             try:
                 if last is None:
@@ -371,12 +394,7 @@ class Summarize(ContextManager[S]):
                 if failed
             )
             if reasons:
-                raise IncompleteCompactionError(
-                    turns=tuple(
-                        replace(turn, tag="fold", transition=None) for turn in rs.turns
-                    ),
-                    reasons=reasons,
-                )
+                raise IncompleteCompactionError(turns=rs.turns, reasons=reasons)
         # What the fold cost and what it produced, in sizes only: the kept text is the
         # rollout's own data and never goes to a log. A fold that spends its whole
         # interaction budget, or one that stored nothing, shows up here.
@@ -389,13 +407,11 @@ class Summarize(ContextManager[S]):
                 _tool_calls(rs.turns),
                 len(rs.state.kept),
             )
-        # Retag on the way out: inside the fold these were the task, and the FoldEnv's
-        # transitions are about the fold's own bookkeeping, not the rollout's world.
-        turns = tuple(replace(turn, tag="fold", transition=None) for turn in rs.turns)
+        # The agent retags these as "fold" turns without the FoldEnv's transitions.
         return CompactionResult(
             self._continue_from(compaction, rs.state.kept),
             self.trigger.relieve(compaction.state),
-            turns=turns,
+            turns=rs.turns,
         )
 
     def _continue_from(
@@ -468,3 +484,16 @@ def _tool_calls(turns: Sequence[Turn[FoldState]]) -> int:
 
 
 __all__ = ["DEFAULT_INSTRUCTION", "Summarize"]
+
+
+def _cap_penalties(
+    previous: Sequence[Turn[object]], turns: Sequence[Turn[object]], cap: float
+) -> tuple[Turn[object], ...]:
+    """``turns`` with penalties trimmed so the episode's total stays within ``cap``."""
+    remaining = max(0.0, cap + sum(t.compaction_penalty for t in previous))
+    capped = []
+    for turn in turns:
+        penalty = -min(remaining, max(0.0, -turn.compaction_penalty))
+        remaining = max(0.0, remaining + penalty)
+        capped.append(replace(turn, compaction_penalty=penalty))
+    return tuple(capped)
