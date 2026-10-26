@@ -14,7 +14,6 @@ def test_helper_turns_are_never_trainable():
         tokens=(3,),
         actor=False,
         invocation_id="helper",
-        policy_id="fixed",
         exact=False,
     )
     rs = rollout(actor, helper)

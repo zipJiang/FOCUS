@@ -278,7 +278,7 @@ class Summarize(ContextManager[S]):
             if repair:
                 instruction += REPAIR_INSTRUCTION
         # `derive`, not a fresh Agent: same model, same codec, same tool dialect,
-        # same policy-version tag -- only the world, the prompts and the budget differ.
+        # same policy object -- only the world, the prompts and the budget differ.
         # The same call-time-workspace mechanism as the rollout, too: the tools take no
         # captured store; the agent forwards this fold's workspace per call.
         fold = compaction.agent.derive(

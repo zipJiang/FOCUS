@@ -232,7 +232,6 @@ async def test_nested_prefixes_share_the_ids_they_agree_on() -> None:
                 "custom", ChatCodec(BigIdTokenizer()), TextActionParser()
             ),
             complete=(BigIdGenerator(["go"] * 12)).agenerate_tokens,
-            version="policy",
         ),
         env=ToyEnv(done_at=12),
         system_prompt="s" * 200,  # a system prompt worth re-rendering

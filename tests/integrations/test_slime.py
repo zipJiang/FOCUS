@@ -36,7 +36,6 @@ from tests.helpers import (
 def _collector(
     generator: ScriptedGenerator,
     *,
-    version: str = "policy",
     tools: list[Any] | None = None,
     phases: int = 2,
     width: int = 3,
@@ -47,7 +46,6 @@ def _collector(
             generator,
             env=SubmitEnv(tools or []),
             parser=HermesToolCallParser(),
-            version=version,
         ),
         critic=DemoValue(),
         search=Search([Phase(Fifo(), phases, max_children=width)], max_concurrency=1),
@@ -119,7 +117,7 @@ async def test_concurrent_args_keep_the_collector_that_generated_each_tree(
 
     async def paused_search(self, prompt, *, workspace=None):
         state = await search(self, prompt, workspace=workspace)
-        if self.agent.policy.version == "v1":
+        if prompt == "first":
             first_ready.set()
             await release_first.wait()
         return state
@@ -129,19 +127,15 @@ async def test_concurrent_args_keep_the_collector_that_generated_each_tree(
             ["r</think>" + tool_call("submit", answer="42")],
             logprobs=args.logprob,
         )
-        return _collector(generator, version=args.version, phases=1, width=1)
+        return _collector(generator, phases=1, width=1)
 
     monkeypatch.setattr(Collector, "search", paused_search)
     generate = make_generate(factory)
     async with asyncio.TaskGroup() as tasks:
-        first = tasks.create_task(
-            generate(SimpleNamespace(version="v1", logprob=-0.1), "first")
-        )
+        first = tasks.create_task(generate(SimpleNamespace(logprob=-0.1), "first"))
         await asyncio.wait_for(first_ready.wait(), timeout=5)
         try:
-            second = await generate(
-                SimpleNamespace(version="v2", logprob=-0.2), "second"
-            )
+            second = await generate(SimpleNamespace(logprob=-0.2), "second")
         finally:
             release_first.set()
 

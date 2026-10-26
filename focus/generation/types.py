@@ -38,7 +38,7 @@ class SamplingParams:
     prompt_logprobs: int | None = None
     repetition_penalty: float | None = None
     # A request-local draw seed. ``None`` leaves sampling to the backend. Keeping it
-    # with the other sampling controls lets a data collector version every rollout
+    # with the other sampling controls keeps a rollout's sampling settings together
     # without subclassing a transport merely to add one wire field.
     seed: int | None = None
 

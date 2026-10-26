@@ -117,7 +117,6 @@ class EveryTurnCompactor(ContextManager[CountState]):
 
 def _runner(
     generator: Policy[Any] | None = None,
-    version: str = "policy",
     **kwargs: Any,
 ) -> Agent[CountState, str]:
     """The folding toy runner every collector here drives.
@@ -134,7 +133,6 @@ def _runner(
             complete=generator.agenerate_tokens,
             exact=generator.provides_exact_tokens,
             native=generator.provides_native_tool_calls,
-            version=version,
         ),
         env=CountEnv(),
         system_prompt="sys",
@@ -307,7 +305,6 @@ def _unfolding_collector(**kwargs) -> Collector:
             complete=(CyclingGenerator(["go"])).agenerate_tokens,
             exact=(CyclingGenerator(["go"])).provides_exact_tokens,
             native=(CyclingGenerator(["go"])).provides_native_tool_calls,
-            version="policy",
         ),
         env=CountEnv(),
         system_prompt="sys",
@@ -653,9 +650,9 @@ async def test_a_single_trajectory_on_an_untrainable_policy_is_untouched() -> No
 
 
 @pytest.mark.asyncio
-async def test_a_labelled_policy_s_logprobs_reach_the_trainer() -> None:
-    """A policy's label is a diagnostic; its logprobs are the behavior column."""
-    collector = _collector(runner=_runner(version="pi-7"))
+async def test_behavior_logprobs_reach_the_trainer() -> None:
+    """Generated probabilities remain aligned through preparation and export."""
+    collector = _collector(runner=_runner())
     state = await collector.search("solve it")
 
     result = prepare_samples(
@@ -666,7 +663,6 @@ async def test_a_labelled_policy_s_logprobs_reach_the_trainer() -> None:
 
     assert result.actor
     assert all(all(span.logprobs for span in r.spans) for r in result.actor)
-    assert {span.policy_id for r in result.actor for span in r.spans} == {"pi-7"}
     samples = to_samples(result, 0)
     assert samples
     assert all(
@@ -888,26 +884,6 @@ async def test_the_value_head_carries_the_runtime_s_bound_on_its_reward_server()
     assert result.stats["score_failures"] > 0.0
     assert result.stats["failures"] == 0.0  # a scoring fault is not an expansion death
     assert model.cancelled > 0  # each stalled request was cancelled, not left running
-
-
-@pytest.mark.asyncio
-async def test_the_run_stamps_and_reads_the_runner_s_own_behavior_channel() -> None:
-    """The export reads a turn's logprobs from the channel the *runner* wrote them to.
-
-    One name, and it is the runner's, so a runner filing under ``pi-7`` is exported
-    under ``pi-7``. Two authored strings -- a ``behavior_version`` on the collector
-    beside ``Policy.version`` -- would raise nothing when they disagreed: every span
-    would come out with its tokens, its mask and an *empty* logprob list, stamped with a
-    provenance claiming the channel it was missing.
-    """
-    collector = _collector()
-    collector.agent = _runner(version="pi-7")
-
-    result = await prepared("solve it", collector, estimator=DirectBranchTd())
-
-    assert result.actor
-    # and the logprobs are there, not an empty column beside a claim that they are
-    assert all(all(span.logprobs for span in r.spans) for r in result.actor)
 
 
 @pytest.mark.asyncio

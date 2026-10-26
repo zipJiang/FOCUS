@@ -681,7 +681,6 @@ def _runtime(
             complete=(generator).agenerate_tokens,
             exact=(generator).provides_exact_tokens,
             native=(generator).provides_native_tool_calls,
-            version="policy",
         ),
         env=RoundEnv(),
         system_prompt="sys",

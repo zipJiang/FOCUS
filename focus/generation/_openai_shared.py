@@ -116,7 +116,6 @@ class NativePolicy(Policy[Any]):
         *,
         model: str,
         format: PolicyFormat[Any] | None = None,
-        version: str = "policy",
         default_params: SamplingParams | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
@@ -129,7 +128,6 @@ class NativePolicy(Policy[Any]):
         super().__init__(
             model=model,
             format=resolved,
-            version=version,
             default_params=default_params,
             exact=False,
             native=True,

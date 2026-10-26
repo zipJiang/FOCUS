@@ -93,7 +93,6 @@ class TinkerPolicy(Policy[Any]):
         model: str,
         format: PolicyFormat[Any] | None = None,
         profile: str | None = None,
-        version: str = "policy",
         default_params: SamplingParams | None = None,
     ):
         self._client = sampling_client
@@ -104,7 +103,6 @@ class TinkerPolicy(Policy[Any]):
             raise ValueError("Tinker format must use the sampling client's tokenizer")
         super().__init__(
             model=model,
-            version=version,
             format=format
             or PolicyFormat.resolve(model, tokenizer=tokenizer, profile=profile),
             default_params=default_params,

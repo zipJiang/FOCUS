@@ -78,7 +78,6 @@ class PackedSequence:
     retain_for_training: bool = False
     actor: bool = True
     invocation_id: str = "root"
-    policy_id: str = ""
     format_id: str = ""
 
 
@@ -141,7 +140,6 @@ def regions(turns: Sequence[Turn[object]]) -> tuple[PackedSequence, ...]:
                 tokens=tokens,
                 actor=turns[spans[0][0]].actor,
                 invocation_id=turns[spans[0][0]].invocation_id,
-                policy_id=turns[spans[0][0]].policy_id,
                 format_id=turns[spans[0][0]].format_id,
                 trainable=tuple(trainable),
                 logprobs=logprobs,
@@ -161,13 +159,11 @@ def regions(turns: Sequence[Turn[object]]) -> tuple[PackedSequence, ...]:
         chains = len(turn.prefix) >= n and turn.prefix[:n] == tokens
         identity_changed = previous is not None and (
             turn.invocation_id,
-            turn.policy_id,
             turn.format_id,
             turn.actor,
             turn.context_version,
         ) != (
             previous.invocation_id,
-            previous.policy_id,
             previous.format_id,
             previous.actor,
             previous.context_version,

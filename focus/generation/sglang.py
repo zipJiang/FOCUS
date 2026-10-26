@@ -216,7 +216,6 @@ class SGLangPolicy(Policy[Any]):
         base_url: str,
         format: PolicyFormat[Any] | None = None,
         profile: str | None = None,
-        version: str = "policy",
         default_params: SamplingParams | None = None,
         api_key: str | None = None,
         headers: Mapping[str, str] | None = None,
@@ -226,7 +225,6 @@ class SGLangPolicy(Policy[Any]):
             raise ValueError("Supply either format or profile")
         super().__init__(
             model=model,
-            version=version,
             format=format or PolicyFormat.resolve(model, profile=profile),
             default_params=default_params,
         )

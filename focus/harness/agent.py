@@ -396,15 +396,9 @@ class Agent[S, A]:
     ) -> Agent[T, A]:
         """The same agent over a different world: same policy, new env and prompt.
 
-        A nested rollout -- a model-driven fold, and anything else shaped like it -- is
-        not a second agent: it is *this* agent, generating with the same weights through
-        the same codec and speaking the same tool dialect, on a world of its own. So it
-        is built by deriving from this agent rather than by assembling a fresh one from
-        the pieces, which is what forced a caller to smuggle a generator, a codec, a
-        parser and a version string across the seam and then guess a parser when one was
-        missing. It is now one field: the dialect (Hermes JSON vs Qwen XML vs a
-        backend's own structure) is a property of the :class:`Policy`, decided once at
-        the top and inherited whole.
+        A compaction sub-rollout shares this agent's policy and execution services.
+        It uses the new environment's action parser and tools, with its own prompt
+        and step limit. Model clients stay with the caller.
 
         The derived agent uses AppendOnly: the fold is the thing
         being run, and a fold that folds is a loop with no floor. ``tools``
@@ -700,7 +694,6 @@ class Agent[S, A]:
             sampling_params=sampling_params,
             tag="task",
             invocation_id=rs.invocation_id,
-            policy_id=self._policy.version,
             format_id=self._policy.format.name,
             context_version=rs.context_version,
             actor=self.actor,

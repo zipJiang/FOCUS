@@ -49,7 +49,6 @@ def policy(*completions: str) -> Policy[ToolTurn]:
             "test", ChatCodec(FakeChatTokenizer()), QwenXMLToolCallParser()
         ),
         complete=generator.agenerate_tokens,
-        version="environment-test",
     )
 
 

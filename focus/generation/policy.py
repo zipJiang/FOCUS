@@ -157,7 +157,6 @@ class Policy[A]:
         format: PolicyFormat[A],
         model: str = "custom",
         served_model: str | None = None,
-        version: str = "policy",
         default_params: SamplingParams | None = None,
         complete: Completion | None = None,
         exact: bool = True,
@@ -170,7 +169,6 @@ class Policy[A]:
         self._format = format
         self._model = model
         self._served_model = served_model or model
-        self._version = version
         self._complete = complete
         self.default_params = deepcopy(default_params or SamplingParams())
         self.provides_exact_tokens = exact
@@ -187,10 +185,6 @@ class Policy[A]:
     @property
     def served_model(self) -> str:
         return self._served_model
-
-    @property
-    def version(self) -> str:
-        return self._version
 
     @property
     def trainable(self) -> bool:

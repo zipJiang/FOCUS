@@ -317,7 +317,6 @@ def toy_policy(
     gen: ScriptedGenerator,
     *,
     parser: ActionParser[Any] | None = None,
-    version: str = "policy",
 ) -> Policy[Any]:
     """The fakes as one model: the fake tokenizer's codec, a text parser by default."""
     return Policy(
@@ -329,7 +328,6 @@ def toy_policy(
         complete=(gen).agenerate_tokens,
         exact=(gen).provides_exact_tokens,
         native=(gen).provides_native_tool_calls,
-        version=version,
     )
 
 
@@ -338,7 +336,6 @@ def toy_runner(
     *,
     env: Env[Any, Any] | None = None,
     parser: ActionParser[Any] | None = None,
-    version: str = "policy",
     **kwargs: Any,
 ) -> Agent[Any, Any]:
     """A runner over the fakes, wired the way every harness test wires one.
@@ -360,7 +357,7 @@ def toy_runner(
         kwargs["execution"] = Execution(**execution)
     # A test that names a parser means it: the agent uses it as given.
     return Agent(
-        policy=toy_policy(gen, parser=parser, version=version),
+        policy=toy_policy(gen, parser=parser),
         env=env if env is not None else ToyEnv(),
         system_prompt="sys",
         parser=parser,

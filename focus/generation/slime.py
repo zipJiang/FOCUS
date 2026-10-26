@@ -44,7 +44,6 @@ class SlimePolicy(Policy[Any]):
         model: str,
         format: PolicyFormat[Any] | None = None,
         profile: str | None = None,
-        version: str = "policy",
         default_params: SamplingParams | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> None:
@@ -55,7 +54,6 @@ class SlimePolicy(Policy[Any]):
         super().__init__(
             model=model,
             format=format or PolicyFormat.resolve(model, profile=profile),
-            version=version,
             default_params=default_params,
         )
         # Passed through as ``**``: a host whose ``post`` takes no ``headers`` keyword

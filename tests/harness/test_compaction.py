@@ -67,7 +67,7 @@ def _folding_runner(
     """The rollout a compaction is folding.
 
     Only what :meth:`Agent.derive` carries matters here -- the generator, the codec,
-    the tool dialect and the policy-version tag. The fold runs on its own ``FoldEnv``,
+    the tool dialect and the policy object. The fold runs on its own ``FoldEnv``,
     so this runner's env is never stepped.
     """
     return toy_runner(gen, parser=parser or HermesToolCallParser())
@@ -679,7 +679,6 @@ async def test_a_rollout_folds_by_deriving_the_runner_it_is_already_using() -> N
         gen,
         parser=HermesToolCallParser(),
         compactor=Summarize[None](max_prompt_tokens=1, max_interactions=4),
-        version="v7",
     )
 
     rs = await runner.start("Question: q", workspace=ws)
@@ -689,8 +688,7 @@ async def test_a_rollout_folds_by_deriving_the_runner_it_is_already_using() -> N
     assert ws.read("author") == "Christie"  # the fold ran the workspace's own tools
     assert [t.tag for t in folded.turns] == ["fold", "fold"]
     assert "kept summary" in folded.messages[-1]["content"]
-    # the derived runner kept the rollout's policy label on the fold's turns
-    assert all(t.policy_id == "v7" for t in folded.turns)
+    assert all(t.format_id == runner.policy.format.name for t in folded.turns)
 
 
 def test_the_default_trigger_only_fires_past_the_token_budget() -> None:

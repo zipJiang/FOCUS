@@ -77,29 +77,6 @@ async def test_backend_limits_and_active_deadline_do_not_leak_permits():
     assert pool.stats.active == pool.stats.pending == 0
 
 
-async def test_owned_clients_all_close_even_if_one_fails():
-    from focus.execution import LocalInferenceExecutor
-    from focus.generation import Policy
-    from tests.helpers import test_format
-
-    closed = []
-
-    class Client(Policy[str]):
-        async def aclose(self):
-            closed.append(self.model)
-            if self.model == "bad":
-                raise RuntimeError("close failed")
-
-    executor = LocalInferenceExecutor(own_clients=True)
-    executor.bind(Client(format=test_format(), model="bad"))
-    executor.bind(Client(format=test_format(), model="good"))
-    with pytest.raises(ExceptionGroup, match="cleanup failed"):
-        await executor.aclose()
-    assert closed == ["bad", "good"]
-    await executor.aclose()
-    assert len(closed) == 2
-
-
 async def test_invocations_rotate_within_a_branch():
     pool = AdmissionPool(1)
     release = asyncio.Event()
@@ -121,3 +98,42 @@ async def test_invocations_rotate_within_a_branch():
     await asyncio.gather(first, *tasks)
     assert order == [1, 3, 2, 4]
     await pool.aclose()
+
+
+async def test_generation_and_critic_share_capacity_without_routing():
+    from focus import Critic
+    from focus.execution import ExecutionServices
+    from focus.generation import GenerateResult, Policy, PreparedPrompt
+    from tests.helpers import test_format
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def generate(tokens, params):
+        calls.append("actor")
+        entered.set()
+        await release.wait()
+        return GenerateResult(tokens=(2,), logprobs=[-0.4])
+
+    async def predict(contexts):
+        calls.append("critic")
+        return [0.7 for _ in contexts]
+
+    policy = Policy(format=test_format(), complete=generate)
+    critic = Critic.from_fn(predict)
+    services = ExecutionServices(pool=AdmissionPool(capacity=1))
+    async with services:
+        actor = asyncio.create_task(
+            services.generate(policy, PreparedPrompt((1,), policy.format, (), ()), None)
+        )
+        await entered.wait()
+        value = asyncio.create_task(services.predict(critic, ["state"]))
+        await asyncio.sleep(0)
+        assert calls == ["actor"]
+        assert services.pool.stats.pending == 1
+        release.set()
+        reply, prediction = await asyncio.gather(actor, value)
+    assert reply.logprobs == [-0.4]
+    assert prediction == [0.7]
+    assert calls == ["actor", "critic"]
+    assert services.pool.stats.peak_active == 1

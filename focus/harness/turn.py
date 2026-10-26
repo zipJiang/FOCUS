@@ -82,8 +82,6 @@ class Turn[S_co]:
     #: Nonempty for malformed attempts, including after the episode penalty cap.
     compaction_issue: str = ""
     invocation_id: str = "root"
-    #: The generating policy's label, for diagnostics; see ``Policy.version``.
-    policy_id: str = ""
     format_id: str = ""
     context_version: int = 0
     actor: bool = True

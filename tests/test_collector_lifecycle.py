@@ -15,7 +15,7 @@ from focus.preparation import Estimator
 from tests.helpers import DemoValue, ScriptedGenerator, SubmitEnv, tool_call, toy_runner
 
 
-def collector(*, storage=False, version="snapshot-7", **kwargs):
+def collector(*, storage=False, **kwargs):
     script = (
         [tool_call("storage", operate="put", key="note", value="evidence")]
         if storage
@@ -31,7 +31,6 @@ def collector(*, storage=False, version="snapshot-7", **kwargs):
             generator,
             env=SubmitEnv([StorageTool()] if storage else []),
             parser=HermesToolCallParser(),
-            version=version,
         ),
         search=Search([Phase(Fifo(), 2, max_children=1)], max_concurrency=1),
         reward=RewardConfig(beta_step=0.5),
@@ -163,24 +162,29 @@ async def test_collection_preserves_failure_statistics_for_the_callers_decision(
 
 async def test_two_policy_snapshots_share_services_and_keep_their_own_logprobs():
     """One-batch asynchronous training collects with the previous snapshot while the
-    next one is published. Both snapshots carry the same model name and label, share
+    next one is published. Both snapshots carry the same model name, share
     one execution service, and each batch exports its own behavior logprobs."""
     services = ExecutionServices()
 
-    def snapshot(logprob: float) -> Collector:
+    def snapshot(logprob: float, prior: float) -> Collector:
         generator = ScriptedGenerator(["go", "go", "stop"], logprobs=logprob)
         return Collector(
             toy_runner(generator, services=services),
-            critic=DemoValue(),
+            critic=Critic.constant(prior),
             search=Search([Phase(Fifo(), 4, max_children=2)], max_concurrency=2),
             own=False,
         )
 
-    old, new = snapshot(-0.25), snapshot(-0.75)
-    assert old.agent.policy.version == new.agent.policy.version
+    from focus import Critic
+
+    old, new = snapshot(-0.25, 0.2), snapshot(-0.75, 0.8)
+    assert old.agent.policy is not new.agent.policy
     async with services:
         batches = await asyncio.gather(old.collect("old"), new.collect("new"))
-    for batch, expected in zip(batches, (-0.25, -0.75), strict=True):
+    for batch, expected, prior in zip(batches, (-0.25, -0.75), (0.2, 0.8), strict=True):
+        critics = [s for s in batch.to_records(0) if s["metadata"]["lane"] == "critic"]
+        assert critics
+        assert {s["metadata"]["diagnostics"]["prior"] for s in critics} == {prior}
         actor = [s for s in batch.to_records(0) if s["metadata"]["lane"] == "actor"]
         assert actor
         assert {

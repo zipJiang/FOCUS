@@ -172,15 +172,9 @@ class Batch:
     def __getstate__(self) -> dict[str, Any]:
         """Pickle with a plain dict where the live record holds a read-only proxy.
 
-        A ``MappingProxyType`` has no pickle support at all, so without this a result
-        could not be pickled *at any value of* :attr:`stats` -- the empty default
-        included. That matters because this record is the one thing a worker might hand
-        back whole: shipped from a Ray actor for analysis, written to disk to replay a
-        batch, cached between a rollout pass and a trainer that reads it later.
-
-        The proxy is a property of the live object, not of the wire format, so it is
-        put back on the way in and a restored result is as unwritable as the one that
-        was sent.
+        ``MappingProxyType`` cannot be pickled. Store its contents as a dict so
+        callers can save a batch or pass it to a trainer in another process.
+        Restore the read-only proxy when loading the record.
         """
         return {**self.__dict__, "stats": dict(self.stats)}
 

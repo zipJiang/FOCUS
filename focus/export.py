@@ -240,7 +240,6 @@ def _dict_sample(
         LANE_KEY: lane,
         "tag": span.tag,
         "invocation_id": span.invocation_id,
-        "policy_id": span.policy_id,
         "format_id": span.format_id,
         **extra,
     }

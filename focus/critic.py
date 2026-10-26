@@ -17,7 +17,6 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from focus.execution.pool import Owner
     from focus.harness.rollout import AnyRollout
 
 type PredictFn = Callable[[Sequence[str]], Sequence[float] | Awaitable[Sequence[float]]]
@@ -48,15 +47,6 @@ class Critic(ABC):
         from focus.harness.transcript import format_transcript
 
         return format_transcript(rollout.messages)
-
-    async def predict_owned(
-        self, contexts: Sequence[str], owner: Owner
-    ) -> Sequence[float]:
-        """Predict on behalf of ``owner``; remote critics account the request to it.
-
-        The default ignores ``owner`` and calls :meth:`predict`.
-        """
-        return await self.predict(contexts)
 
     async def aclose(self) -> None:
         """Release clients; the default holds none."""

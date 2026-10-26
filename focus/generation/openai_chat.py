@@ -45,7 +45,6 @@ class OpenAIChatPolicy(NativePolicy):
         *,
         model: str,
         format: PolicyFormat[Any] | None = None,
-        version: str = "policy",
         default_params: SamplingParams | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
@@ -55,7 +54,6 @@ class OpenAIChatPolicy(NativePolicy):
         super().__init__(
             model=model,
             format=format,
-            version=version,
             default_params=default_params,
             api_key=api_key,
             base_url=base_url,

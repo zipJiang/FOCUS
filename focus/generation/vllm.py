@@ -60,7 +60,6 @@ class VLLMPolicy(Policy[Any]):
         format: PolicyFormat[Any] | None = None,
         profile: str | None = None,
         served_model: str | None = None,
-        version: str = "policy",
         base_url: str,
         api_key: str,
         default_params: SamplingParams | None = None,
@@ -81,7 +80,6 @@ class VLLMPolicy(Policy[Any]):
         super().__init__(
             model=model,
             served_model=served_model,
-            version=version,
             format=format or PolicyFormat.resolve(model, profile=profile),
             default_params=default_params,
         )

@@ -467,7 +467,7 @@ def test_a_result_survives_the_trip_back_from_a_worker() -> None:
 
     A ``mappingproxy`` has no pickle support at all, so a proxy on this field made the
     *whole* record unshippable at every value of ``stats``, the empty default included:
-    a result could not come back from a Ray actor, be written to disk to replay a
+    a result could not come back from a worker process, be written to disk to replay a
     batch, or be `deepcopy`d.
     """
     import pickle

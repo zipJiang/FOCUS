@@ -52,7 +52,6 @@ def backend():
         format=test_format(),
         model="test-model",
         served_model="served-model",
-        version="policy-7",
         default_params=SamplingParams(temperature=0.3),
     )
 
@@ -111,10 +110,9 @@ async def test_custom_parser_and_model_identity_are_independent_of_continuation(
     result = GenerateResult(tokens=(42,), logprobs=[-0.2], stop_reason="stop")
     policy._complete = AsyncMock(return_value=result)
     policy.format.parser.parse = Mock(return_value="custom action")
-    assert (policy.model, policy.served_model, policy.version) == (
+    assert (policy.model, policy.served_model) == (
         "test-model",
         "served-model",
-        "policy-7",
     )
     prompt = prepare(policy, [{"role": "user", "content": "problem"}])
     assert (

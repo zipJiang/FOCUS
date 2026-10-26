@@ -1,118 +1,22 @@
-"""Serializable inference requests and shared local dispatch."""
+"""Local request admission, continuation validation, and usage accounting."""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
-from focus.codec import Message
 from focus.execution.budget import ResourceBudget
 from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, Owner
 from focus.generation import GenerateResult, Policy, PreparedPrompt, SamplingParams
 from focus.generation.interfaces import (
     _continuation_params,
     _validate_continuation_result,
-    aclose_client,
 )
 
 if TYPE_CHECKING:
     from focus.critic import Critic
-
-
-@dataclass(frozen=True)
-class InferenceRequest:
-    backend: str
-    format_id: str
-    tokens: tuple[int, ...]
-    messages: tuple[Message, ...] = ()
-    tools: tuple[dict[str, Any], ...] = ()
-    params: SamplingParams | None = None
-    owner: Owner = DEFAULT_OWNER
-    queue_timeout: float | None = None
-    execution_timeout: float | None = None
-
-
-@runtime_checkable
-class InferenceExecutor(Protocol):
-    def bind(self, policy: Policy[Any]) -> str: ...
-
-    async def submit(self, request: InferenceRequest) -> GenerateResult: ...
-
-    async def aclose(self) -> None: ...
-
-
-def policy_key(policy: Policy[Any]) -> str:
-    """The name a remote coordinator routes a policy's requests by."""
-    return f"{policy.model}:{policy.version}:{policy.format.name}"
-
-
-class LocalInferenceExecutor:
-    def __init__(self, pool: AdmissionPool | None = None, *, own_clients: bool = False):
-        self.pool = pool or AdmissionPool()
-        self.policies: dict[str, Policy[Any]] = {}
-        # Key by identity; ``policies`` keeps each policy alive, so ids stay unique.
-        self._keys: dict[int, str] = {}
-        self.own_clients = own_clients
-        self._closed = False
-
-    def bind(self, policy: Policy[Any]) -> str:
-        """Register ``policy`` and return the key its requests carry.
-
-        Policies are told apart by object identity: two snapshots of one model with the
-        same label (one collecting while the other's successor is being trained) get
-        distinct keys rather than colliding.
-        """
-        if (key := self._keys.get(id(policy))) is not None:
-            return key
-        name = policy_key(policy)
-        key, suffix = name, 1
-        while key in self.policies:
-            suffix += 1
-            key = f"{name}#{suffix}"
-        self.policies[key] = policy
-        self._keys[id(policy)] = key
-        return key
-
-    async def submit(self, request: InferenceRequest) -> GenerateResult:
-        policy = self.policies[request.backend]
-        if policy.format.name != request.format_id:
-            raise ValueError("request format differs from registered policy")
-
-        async def generate() -> GenerateResult:
-            prompt = PreparedPrompt(
-                request.tokens, policy.format, request.messages, request.tools
-            )
-            return await policy.agenerate(prompt, request.params)
-
-        return await self.pool.run(
-            generate,
-            owner=request.owner,
-            resource=request.backend,
-            queue_timeout=request.queue_timeout,
-            execution_timeout=request.execution_timeout,
-        )
-
-    async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        await self.pool.aclose()
-        errors: list[Exception] = []
-        if self.own_clients:
-            for policy in {id(p): p for p in self.policies.values()}.values():
-                try:
-                    close = getattr(policy, "aclose", None)
-                    if close is not None:
-                        await close()
-                    else:
-                        await aclose_client(policy)
-                except Exception as exc:
-                    errors.append(exc)
-        if errors:
-            raise ExceptionGroup("backend cleanup failed", errors)
 
 
 @dataclass
@@ -129,18 +33,9 @@ class Usage:
 class ExecutionServices:
     """Explicitly shared services; derived agents inherit this same object."""
 
-    inference: InferenceExecutor = field(default_factory=LocalInferenceExecutor)
-    auxiliary: AdmissionPool | None = None
+    pool: AdmissionPool = field(default_factory=AdmissionPool)
     usage: dict[str, Usage] = field(default_factory=dict)
     budgets: dict[tuple[str, str], ResourceBudget] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if self.auxiliary is None:
-            self.auxiliary = (
-                self.inference.pool
-                if isinstance(self.inference, LocalInferenceExecutor)
-                else AdmissionPool()
-            )
 
     def attach_budget(self, owner: Owner, budget: ResourceBudget) -> None:
         self.budgets.setdefault((owner.episode, owner.branch), budget)
@@ -172,24 +67,23 @@ class ExecutionServices:
                     "Token continuation requires an exact token-input policy"
                 )
             params = _continuation_params(policy.default_params, params)
-        key = self.inference.bind(policy)
         usage = self.usage.setdefault(owner.episode, Usage())
         self.charge(owner, model_calls=1, prompt_tokens=len(prompt.tokens))
         usage.calls += 1
         usage.prompt_tokens += len(prompt.tokens)
-        request = InferenceRequest(
-            key,
-            prompt.format.name,
-            prompt.tokens,
-            tuple(prompt.messages),
-            tuple(prompt.tools),
-            deepcopy(params),
-            owner,
-            execution_timeout=timeout,
-            queue_timeout=queue_timeout,
-        )
+        params = deepcopy(params)
+
+        async def generate() -> GenerateResult:
+            return await policy.agenerate(prompt, params)
+
         try:
-            result = await self.inference.submit(request)
+            result = await self.pool.run(
+                generate,
+                owner=owner,
+                resource="generation",
+                queue_timeout=queue_timeout,
+                execution_timeout=timeout,
+            )
         except BaseException:
             usage.failures += 1
             raise
@@ -207,17 +101,16 @@ class ExecutionServices:
     async def predict(
         self, critic: Critic, contexts: list[str], *, owner: Owner = DEFAULT_OWNER
     ) -> Sequence[float]:
-        """Run one critic batch under the auxiliary admission pool."""
+        """Run one critic batch under the shared admission pool."""
         usage = self.usage.setdefault(owner.episode, Usage())
         usage.calls += 1
         usage.value_batches += 1
-        assert self.auxiliary is not None
 
         async def invoke() -> Sequence[float]:
-            return await critic.predict_owned(contexts, owner)
+            return await critic.predict(contexts)
 
         try:
-            return await self.auxiliary.run(invoke, owner=owner, resource="value")
+            return await self.pool.run(invoke, owner=owner, resource="value")
         except BaseException:
             usage.failures += 1
             raise
@@ -237,12 +130,5 @@ class ExecutionServices:
         return self.usage.pop(episode, None)
 
     async def aclose(self) -> None:
-        assert self.auxiliary is not None
-        results = await asyncio.gather(
-            self.inference.aclose(),
-            self.auxiliary.aclose(),
-            return_exceptions=True,
-        )
-        errors = [r for r in results if isinstance(r, Exception)]
-        if errors:
-            raise ExceptionGroup("execution service cleanup failed", errors)
+        """Cancel owned requests. Policy and critic clients belong to the caller."""
+        await self.pool.aclose()

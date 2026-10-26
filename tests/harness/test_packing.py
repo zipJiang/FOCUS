@@ -278,7 +278,6 @@ async def test_a_template_that_strips_think_splits_the_run_into_exact_packs() ->
             complete=(ScriptedGenerator([first, second])).agenerate_tokens,
             exact=(ScriptedGenerator([first, second])).provides_exact_tokens,
             native=(ScriptedGenerator([first, second])).provides_native_tool_calls,
-            version="policy",
         ),
         env=ToyEnv(),
         system_prompt="s",

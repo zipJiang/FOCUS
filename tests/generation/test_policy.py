@@ -82,7 +82,6 @@ def test_a_policy_is_trainable_only_when_both_halves_hold(
         complete=(generator).agenerate_tokens,
         exact=(generator).provides_exact_tokens,
         native=(generator).provides_native_tool_calls,
-        version="policy",
     )
 
     assert policy.trainable is trainable
@@ -104,7 +103,6 @@ def test_a_native_parser_on_a_channel_less_backend_is_refused_at_binding() -> No
             complete=(ScriptedGenerator(["x"])).agenerate_tokens,
             exact=(ScriptedGenerator(["x"])).provides_exact_tokens,
             native=(ScriptedGenerator(["x"])).provides_native_tool_calls,
-            version="policy",
         )
 
 
@@ -113,13 +111,6 @@ def test_every_in_band_dialect_parser_declares_itself_trainable() -> None:
     assert QwenXMLToolCallParser().trainable
     assert TextActionParser().trainable
     assert not NativeToolCallParser().trainable
-
-
-def test_the_version_is_the_channel_the_runner_files_its_generations_under() -> None:
-    """One name, on the policy, read back through the runner -- never authored twice."""
-    runner = toy_runner(ScriptedGenerator(["go"]), version="pi-7")
-
-    assert runner.policy.version == "pi-7"
 
 
 # -- what the runner does with it -----------------------------------------------------
@@ -276,7 +267,7 @@ def test_a_policy_is_a_value_and_is_shared_rather_than_copied() -> None:
 
     assert runner.policy is policy
     with pytest.raises(AttributeError):
-        policy.version = "other"  # type: ignore[misc]
+        policy.model = "other"  # type: ignore[misc]
 
 
 def _hermes_policy() -> Any:
@@ -325,12 +316,10 @@ def test_the_parser_follows_the_declared_action_kinds() -> None:
 async def test_an_agent_never_copies_its_policy() -> None:
     """Choosing a parser leaves the policy's identity, routing, and accounting alone."""
     from focus import Agent
-    from focus.execution.inference import policy_key
     from focus.harness.compaction import FoldEnv
     from tests.helpers import ToyEnv
 
     policy = _hermes_policy()
-    key = policy_key(policy)
     agent = Agent(policy=policy, env=ToyEnv(), system_prompt="sys", max_steps=1)
     fold = agent.derive(
         env=FoldEnv(()), system_prompt="s", max_steps=1, finish_prompt=None
@@ -339,7 +328,7 @@ async def test_an_agent_never_copies_its_policy() -> None:
     assert fold.policy is policy
     result = await agent.run_from("hi")
     assert {turn.format_id for turn in result.turns} == {policy.format.name}
-    assert agent.services.inference.bind(agent.policy) == key
+    assert fold.services is agent.services
 
 
 def test_an_explicit_parser_wins_and_a_missing_dialect_is_refused() -> None:
