@@ -74,6 +74,8 @@ async def test_from_fn_accepts_sync_and_async_functions_and_a_context() -> None:
     custom = Critic.from_fn(lengths, context=lambda rs: "fixed")
     assert custom.context(state) == "fixed"
     assert Critic.constant(1.0, context=lambda rs: "c").context(state) == "c"
+    served = VLLMCritic(base_url="http://x", model="m", context=lambda rs: "v")
+    assert served.context(state) == "v"
 
 
 async def test_vllm_predictions_reduce_and_keep_request_order() -> None:

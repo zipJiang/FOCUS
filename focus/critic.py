@@ -29,16 +29,21 @@ class Critic(ABC):
     #: A timeout counts as a scoring failure: the rollouts are kept, the estimate is
     #: missing.
     timeout: float | None = None
+    #: Renders a checkpoint as the critic's input; ``None`` uses the transcript.
+    render: Callable[[AnyRollout], str] | None = None
 
     @abstractmethod
     async def predict(self, contexts: Sequence[str]) -> Sequence[float]:
         """Predict the remaining return for each context, in order."""
 
     def context(self, rollout: AnyRollout) -> str:
-        """Render a checkpoint as the critic's input: its ``role: content`` transcript.
+        """Render a checkpoint as the critic's input.
 
-        Override to give the critic its own chat template or a task-specific view.
+        Uses :attr:`render` when set, otherwise the ``role: content`` transcript.
+        Critic training records carry the same text.
         """
+        if self.render is not None:
+            return self.render(rollout)
         from focus.harness.transcript import format_transcript
 
         return format_transcript(rollout.messages)
@@ -82,18 +87,13 @@ class _FunctionCritic(Critic):
     ) -> None:
         self._fn = fn
         self.timeout = timeout
-        self._context = context
+        self.render = context
 
     async def predict(self, contexts: Sequence[str]) -> Sequence[float]:
         result = self._fn(contexts)
         if inspect.isawaitable(result):
             result = await result
         return result
-
-    def context(self, rollout: AnyRollout) -> str:
-        if self._context is None:
-            return super().context(rollout)
-        return self._context(rollout)
 
 
 #: How to fold a pooling output into one scalar.
@@ -123,6 +123,8 @@ class VLLMCritic(Critic):
     it to one prediction.
 
         critic = VLLMCritic(base_url="http://host:8000", model="<value model>")
+
+    ``context`` renders each checkpoint as the model's input text.
     """
 
     def __init__(
@@ -134,6 +136,7 @@ class VLLMCritic(Critic):
         reduce: str = "last",
         http_timeout: float = 60.0,
         timeout: float | None = None,
+        context: Callable[[AnyRollout], str] | None = None,
         client: Any = None,
     ) -> None:
         if reduce not in _REDUCERS:
@@ -146,6 +149,7 @@ class VLLMCritic(Critic):
         self._reduce = reduce
         self._http_timeout = http_timeout
         self.timeout = timeout
+        self.render = context
         self._client = client  # injectable (duck-typed httpx.AsyncClient) for tests
 
     def _headers(self) -> dict[str, str] | None:
