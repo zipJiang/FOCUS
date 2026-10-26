@@ -192,10 +192,13 @@ async def test_the_runner_sends_its_schemas_without_claiming_the_sampling_law() 
     gen = ScriptedGenerator(["done"])
     runner = toy_runner(gen, env=SubmitEnv([]), parser=HermesToolCallParser())
 
+    runner.policy.default_params = SamplingParams(max_tokens=6144, temperature=0.3)
     await complete(runner, "q", max_steps=1)
 
     sent = gen.params[0]
-    assert sent is None
+    assert sent is not None
+    assert sent.max_tokens == 6144
+    assert sent.temperature == 0.3
     prepared = runner.policy.prepare([], tools=SubmitEnv([]).schemas)
     assert prepared.tools[0]["function"]["name"] == "submit"
 

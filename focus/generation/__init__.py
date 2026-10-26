@@ -7,7 +7,6 @@ structured messages and report estimated IDs as inexact, suitable for evaluation
 from focus.generation.continuation import (
     TokenChunk,
     TokenChunkParser,
-    TokenContinuationPolicy,
 )
 from focus.generation.openai_chat import OpenAIChatPolicy
 from focus.generation.openai_responses import OpenAIResponsesPolicy
@@ -43,7 +42,6 @@ __all__ = [
     "SamplingParams",
     "TokenChunk",
     "TokenChunkParser",
-    "TokenContinuationPolicy",
     "TokenId",
     "register_policy",
 ]

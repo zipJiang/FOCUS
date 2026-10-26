@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from focus.codec import ChatCodec, HFTokenizer, Message
-from focus.generation.interfaces import run_async
+from focus.generation.interfaces import prepare_generation, run_async
 from focus.generation.types import GenerateResult, SamplingParams, TokenId
 from focus.registry import registrable, registrar
 
@@ -20,13 +20,99 @@ if TYPE_CHECKING:
 class PolicyFormat[A]:
     """Explicit, immutable tokenizer/template/parser binding for one model artifact.
 
-    Custom templates and action types supply this profile directly. Known model
-    families resolve through :meth:`resolve`; arbitrary templates are never guessed.
+    Set ``continuation=True`` to resume one assistant response from its original
+    token IDs. Use it with exact token-input backends and ``AppendOnly``. The codec
+    renders the initial prompt; the parser independently defines the action type.
+    Known model families resolve through :meth:`resolve`.
     """
 
     name: str
     codec: ChatCodec
     parser: ActionParser[A]
+    continuation: bool = False
+
+    def _boundary(self, messages: Sequence[Message]) -> int:
+        if not self.continuation:
+            return len(messages)
+        boundary = next(
+            (
+                i
+                for i, message in enumerate(messages)
+                if "focus_continuation_tokens" in message
+            ),
+            len(messages),
+        )
+        for message in messages[boundary:]:
+            if (
+                message.get("role") != "assistant"
+                or "focus_continuation_tokens" not in message
+            ):
+                raise ValueError(
+                    "Token continuation requires uninterrupted assistant output"
+                )
+            tokens = message["focus_continuation_tokens"]
+            if not isinstance(tokens, (tuple, list)) or any(
+                type(token) is not int for token in tokens
+            ):
+                raise ValueError("Continuation metadata must contain integer token IDs")
+            if message.get("content") != self.codec.decode(
+                tokens, skip_special_tokens=True
+            ):
+                raise ValueError(
+                    "Continuation text was edited; its token IDs are unchanged"
+                )
+        return boundary
+
+    def prepare(
+        self,
+        messages: Sequence[Message],
+        tools: Sequence[dict[str, Any]] = (),
+    ) -> PreparedPrompt:
+        """Render a chat prompt, or append exact segments to its initial tokens."""
+        history = deepcopy(tuple(messages))
+        schemas = deepcopy(tuple(tools))
+        boundary = self._boundary(history)
+        tokens = self.codec.render(history[:boundary], tools=schemas)
+        if self.continuation:
+            tokens += tuple(
+                token
+                for message in history[boundary:]
+                for token in message["focus_continuation_tokens"]
+            )
+        return PreparedPrompt(tokens, self, history, schemas)
+
+    def validate_context(self, messages: Sequence[Message]) -> None:
+        """Validate continuation metadata and uninterrupted assistant output."""
+        self._boundary(messages)
+
+    def record_reply(self, result: GenerateResult, messages: list[Message]) -> None:
+        """Append an assistant reply, retaining exact IDs for continuation."""
+        if self.continuation and (
+            not result.exact_generation
+            or result.native_tool_calls
+            or result.native_output
+        ):
+            raise ValueError("Token continuation requires an exact text completion")
+        if result.native_tool_calls is None:
+            result.text = self.codec.decode(result.tokens, skip_special_tokens=True)
+        message: Message = {"role": "assistant", "content": result.text}
+        if result.native_tool_calls:
+            message["tool_calls"] = [
+                {
+                    "id": call.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": call.arguments,
+                    },
+                }
+                for call in result.native_tool_calls
+            ]
+        if result.native_output:
+            message["native_output"] = deepcopy(result.native_output)
+        if self.continuation:
+            message["focus_continuation_tokens"] = tuple(result.tokens)
+        messages.append(message)
 
     @classmethod
     def resolve(
@@ -123,6 +209,8 @@ class Policy[A]:
             raise ValueError("model is required")
         if format.parser.requires_native_channel and not native:
             raise ValueError("This format requires a structured tool-call channel")
+        if format.continuation and (not exact or native):
+            raise ValueError("Token continuation requires an exact token-input policy")
         self._format = format
         self._model = model
         self._served_model = served_model or model
@@ -157,10 +245,7 @@ class Policy[A]:
         messages: Sequence[Message],
         tools: Sequence[dict[str, Any]] = (),
     ) -> PreparedPrompt:
-        history = deepcopy(tuple(messages))
-        schemas = deepcopy(tuple(tools))
-        tokens = self.format.codec.render(history, tools=schemas)
-        return PreparedPrompt(tokens, self.format, history, schemas)
+        return self.format.prepare(messages, tools)
 
     def _check_prompt(self, prompt: PreparedPrompt) -> None:
         if prompt.format is not self.format:
@@ -169,10 +254,10 @@ class Policy[A]:
     def validate_context(self, messages: Sequence[Message]) -> None:
         """Reject unusable edited history before commit, without making a request.
 
-        Token policies accept arbitrary rendered context. Native policies override
-        this hook to enforce their tool-call/response contract.
+        The format checks exact continuation history. Native policies also enforce
+        their tool-call/response contract.
         """
-        return None
+        self.format.validate_context(messages)
 
     async def agenerate(
         self,
@@ -197,9 +282,10 @@ class Policy[A]:
         """Explicit token-input path for exact rollouts, replay and scoring."""
         if self._complete is None:
             raise NotImplementedError("This policy does not support token input")
-        result = await self._complete(tokens, sampling_params)
+        prefix, params = self._prepare_generation(tokens, sampling_params)
+        result = await self._complete(prefix, params)
         result.exact_generation &= self.provides_exact_tokens
-        return result
+        return self._validate_generation(result, params)
 
     def generate_tokens(
         self,
@@ -225,24 +311,41 @@ class Policy[A]:
         return result.exact_generation and self.format.parser.trainable
 
     def record_reply(self, result: GenerateResult, messages: list[Message]) -> None:
-        if result.native_tool_calls is None:
-            result.text = self.decode(result.tokens, skip_special_tokens=True)
-        message: Message = {"role": "assistant", "content": result.text}
-        if result.native_tool_calls:
-            message["tool_calls"] = [
-                {
-                    "id": call.call_id,
-                    "type": "function",
-                    "function": {
-                        "name": call.name,
-                        "arguments": call.arguments,
-                    },
-                }
-                for call in result.native_tool_calls
-            ]
-        if result.native_output:
-            message["native_output"] = deepcopy(result.native_output)
-        messages.append(message)
+        self.format.record_reply(result, messages)
+
+    def _prepare_generation(
+        self,
+        tokens: Sequence[TokenId],
+        sampling_params: SamplingParams | None,
+    ) -> tuple[tuple[TokenId, ...], SamplingParams]:
+        prefix, params = prepare_generation(
+            self.default_params, tokens, sampling_params
+        )
+        if self.format.continuation:
+            limit = params.max_tokens
+            if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+                raise ValueError("max_tokens must be a positive integer")
+        return prefix, params
+
+    def _validate_generation(
+        self,
+        result: GenerateResult,
+        params: SamplingParams,
+    ) -> GenerateResult:
+        if self.format.continuation:
+            if not result.exact_generation:
+                raise ValueError(
+                    "Token continuation requires exact generated token IDs"
+                )
+            limit = params.max_tokens
+            assert limit is not None
+            if len(result.tokens) > limit:
+                raise ValueError(
+                    f"Generation exceeded the requested limit of {limit} tokens"
+                )
+            if result.stop_reason == "length" and len(result.tokens) != limit:
+                raise ValueError("Generation stopped before the requested token limit")
+        return result
 
     def startup_check(self) -> None:
         """Optional readiness check."""

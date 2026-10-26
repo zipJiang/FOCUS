@@ -9,7 +9,6 @@ from typing import Any
 from focus.generation.interfaces import (
     close_client,
     normalize_stop_reason,
-    prepare_generation,
     run_async,
     settled_knobs,
 )
@@ -262,25 +261,23 @@ class SGLangPolicy(Policy[Any]):
         prefix_tokens: Sequence[TokenId],
         sampling_params: SamplingParams | None = None,
     ) -> GenerateResult:
-        prefix, params = prepare_generation(
-            self.default_params, prefix_tokens, sampling_params
-        )
+        prefix, params = self._prepare_generation(prefix_tokens, sampling_params)
         try:
             response = self._client.post(self.url, json=_sglang_payload(prefix, params))
             response.raise_for_status()
             output = response.json()
         except Exception as exc:
             raise self._request_error(exc, prefix, params) from exc
-        return _parse_sglang_output(_mapping_response(output), prefix, params)
+        return self._validate_generation(
+            _parse_sglang_output(_mapping_response(output), prefix, params), params
+        )
 
     async def agenerate_tokens(
         self,
         prefix_tokens: Sequence[TokenId],
         sampling_params: SamplingParams | None = None,
     ) -> GenerateResult:
-        prefix, params = prepare_generation(
-            self.default_params, prefix_tokens, sampling_params
-        )
+        prefix, params = self._prepare_generation(prefix_tokens, sampling_params)
         try:
             response = await self._async_client().post(
                 self.url, json=_sglang_payload(prefix, params)
@@ -289,7 +286,9 @@ class SGLangPolicy(Policy[Any]):
             output = response.json()
         except Exception as exc:
             raise self._request_error(exc, prefix, params) from exc
-        return _parse_sglang_output(_mapping_response(output), prefix, params)
+        return self._validate_generation(
+            _parse_sglang_output(_mapping_response(output), prefix, params), params
+        )
 
     def startup_check(self) -> None:
         try:
