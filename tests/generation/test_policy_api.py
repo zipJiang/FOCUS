@@ -12,20 +12,19 @@ import pytest
 
 from focus import (
     Agent,
-    AgenticCompactor,
     NullWorkspace,
     OpenAIChatPolicy,
     OpenAIResponsesPolicy,
     Policy,
     PolicyFormat,
     SamplingParams,
+    Summarize,
     TinkerPolicy,
     VLLMPolicy,
 )
 from focus.generation import GenerateResult, NativeToolCall
 from focus.generation.parsing import TextActionParser
 from focus.harness import format_transcript
-from focus.protocols import Summary
 from tests.generation.test_openai_chat import (
     _response as chat_response,
 )
@@ -276,7 +275,7 @@ async def test_native_compaction_uses_same_policy_without_orphan_tool_history(
         policy=policy,
         env=SubmitEnv([]),
         system_prompt="sys",
-        context=Summary(AgenticCompactor(max_prompt_tokens=10000)),
+        context=Summarize(max_prompt_tokens=10000),
     )
     rs = await runner.start("q", workspace=NullWorkspace())
     folded = await runner.compact(rs)

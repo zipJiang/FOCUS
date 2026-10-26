@@ -30,10 +30,10 @@ from focus.generation.parsing import (
 from focus.harness import (
     SUBMIT,
     Agent,
-    AgenticCompactor,
     AnyOf,
+    AppendOnly,
     BaseTool,
-    Compactor,
+    ContextManager,
     Env,
     Execution,
     InMemoryWorkspace,
@@ -41,9 +41,11 @@ from focus.harness import (
     PromptTokens,
     RolloutState,
     RoundBudget,
+    Segments,
     StateCounter,
     StepResult,
     SubmitFields,
+    Summarize,
     ToolEnv,
     ToolError,
     Trigger,
@@ -61,7 +63,6 @@ from focus.preparation import (
     Grpo,
 )
 from focus.preparation.records import ActorSample, Batch, CriticSample
-from focus.protocols import AppendOnly, ContextProtocol, Summary
 from focus.search import (
     ErrorReduction,
     Fifo,
@@ -128,10 +129,11 @@ __all__ = [
     "QwenXMLToolCallParser",
     "ToolTurn",
     "SUBMIT",
-    "AgenticCompactor",
+    "Summarize",
     "AnyOf",
     "BaseTool",
-    "Compactor",
+    "ContextManager",
+    "Segments",
     "Env",
     "InMemoryWorkspace",
     "NullWorkspace",
@@ -152,7 +154,5 @@ __all__ = [
     "EveryDecision",
     "SparseCheckpoints",
     "AppendOnly",
-    "ContextProtocol",
-    "Summary",
     "TiktokenChatTokenizer",
 ]

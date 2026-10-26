@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 
-from focus import Fifo, Phase
+from focus import (
+    Fifo,
+    Phase,
+)
 from focus.scheduler import (
     AllocationLedger,
     Budget,

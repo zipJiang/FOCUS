@@ -95,7 +95,7 @@ def test_a_seam_whose_implementations_are_exported_exports_its_interface() -> No
     pairs = {
         "Estimator": ("ChildRelative", "register_estimator"),
         "Trigger": ("PromptTokens", "StateCounter"),
-        "Compactor": ("AgenticCompactor", "build_budget"),
+        "ContextManager": ("Summarize", "build_budget"),
         "ProposalPolicy": ("AnchorProposal", "MixtureProposal"),
         "GatingPolicy": ("WidthGating", "ConcurrencyGating"),
         "Allocator": ("FifoAllocator", "BestFirstAllocator", "TokenEntropyAllocator"),

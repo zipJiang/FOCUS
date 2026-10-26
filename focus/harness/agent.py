@@ -1,4 +1,4 @@
-"""Drive exact model generations through context protocols and model-free tasks.
+"""Drive exact model generations through context managers and model-free tasks.
 
 Agent owns trace ordering, continuation limits and checkpoint notifications. A context
 protocol owns prompt preparation and action effects. ExecutionServices owns shared
@@ -32,7 +32,18 @@ from focus.generation.interfaces import (
     merge_sampling_params,
 )
 from focus.generation.policy import Policy, PreparedPrompt
-from focus.harness.checkpoint import CheckpointPolicy, SparseCheckpoints
+from focus.harness.checkpoint import (
+    CheckpointPolicy,
+    Effect,
+    EveryDecision,
+    SparseCheckpoints,
+)
+from focus.harness.context import (
+    AppendOnly,
+    Compaction,
+    ContextManager,
+    Segments,
+)
 from focus.harness.env import Env
 from focus.harness.persistence import Checkpointer
 from focus.harness.rollout import RolloutState
@@ -41,7 +52,6 @@ from focus.harness.workspace import (
     NullWorkspace,
     Workspace,
 )
-from focus.protocols import AppendOnly, ContextProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +125,13 @@ class Execution:
             raise ValueError("retries must be nonnegative")
 
 
+class _Default:
+    """Marks an argument the agent fills in from its context manager."""
+
+
+_DEFAULT = _Default()
+
+
 class Agent[S, A]:
     """Generate actions, apply task transitions, and record a rollout.
 
@@ -135,10 +152,10 @@ class Agent[S, A]:
         policy: Policy[A],
         env: Env[S, A],
         system_prompt: str,
-        context: ContextProtocol | None = None,
+        context: ContextManager[S] | None = None,
         sampling_params: SamplingParams | None = None,
         max_steps: int = 32,
-        finish_prompt: str | None = DEFAULT_FINISH_PROMPT,
+        finish_prompt: str | _Default | None = _DEFAULT,
         tools: Sequence[dict[str, Any]] | None = None,
         branch_points: CheckpointPolicy | None = None,
         execution: Execution | None = None,
@@ -146,11 +163,26 @@ class Agent[S, A]:
     ) -> None:
         self.execution = execution if execution is not None else Execution()
         self.actor = actor
-        self._checkpoints = branch_points or SparseCheckpoints()
+        self.protocol: ContextManager[Any] = context or AppendOnly()
+        segments = isinstance(self.protocol, Segments)
+        if segments:
+            # One decision is one segment: branch after each, and end without a
+            # final-answer turn when the budget runs out mid-response.
+            assert isinstance(self.protocol, Segments)
+            sampling_params = merge_sampling_params(
+                sampling_params or SamplingParams(),
+                SamplingParams(max_tokens=self.protocol.tokens),
+            )
+            if not policy.provides_exact_tokens:
+                raise ValueError("Segments requires an exact token-input policy")
+        if isinstance(finish_prompt, _Default):
+            finish_prompt = None if segments else DEFAULT_FINISH_PROMPT
+        if branch_points is None:
+            branch_points = EveryDecision() if segments else SparseCheckpoints()
+        self._checkpoints = branch_points
         self._policy: Policy[A] = policy
         self._env: Env[S, A] = env
         self._system_prompt: str = system_prompt
-        self.protocol = context or AppendOnly()
         self._sampling_params: SamplingParams | None = sampling_params
         self._max_steps: int = max_steps
         self._finish_prompt: str | None = finish_prompt
@@ -422,11 +454,10 @@ class Agent[S, A]:
         rs.check_continuation()
         if rs.done or rs.truncated:
             return rs
-        prepared = await self.protocol.before(rs, self)
-        if len(prepared.turns) != len(rs.turns):
-            return self._mark(prepared)
-        rs = prepared
         cond = self.protocol.prepare(rs, self)
+        if self.protocol.should_compact(rs, cond.tokens):
+            # This decision is the compaction alone; generation resumes next time.
+            return self._mark(await self._fold(rs))
         return await self._generate_turn(
             rs, list(rs.messages), cond, sampling_params=sampling_params, ending=False
         )
@@ -638,7 +669,8 @@ class Agent[S, A]:
         # ending it had already earned. Folding here costs one summarization and makes
         # the budget arithmetic the same everywhere: prompt <= max_prompt_tokens at
         # every generate, this one included.
-        rs = await self.protocol.before(rs, self)
+        if self.protocol.should_compact(rs, self.protocol.prepare(rs, self).tokens):
+            rs = await self._fold(rs)
         if rs.done:
             return rs
         logger.debug(
@@ -671,7 +703,62 @@ class Agent[S, A]:
         rs.check_continuation()
         if rs.done or rs.truncated:
             raise ValueError("Cannot compact a finished rollout for continuation")
-        return self._mark(await self.protocol.compact(rs, self))
+        return self._mark(await self._fold(rs))
+
+    async def _fold(self, rs: RolloutState[S]) -> RolloutState[S]:
+        """Compact the context and record it: one decision, a new context version.
+
+        The context manager returns the context and task state to continue from, plus
+        any turns it generated; they are recorded as ``"fold"`` turns without task
+        transitions. A fold that generated nothing leaves one empty marker turn. A
+        ``"compaction"`` effect marks the boundary for branch-point policies.
+        """
+        self.services.attach_budget(rs.owner, rs.budget)
+        folded = await self.protocol.compact(
+            Compaction(
+                messages=rs.messages,
+                seed=rs.seed,
+                state=rs.state,
+                workspace=rs.workspace,
+                runner=self,
+                checkpoint=rs,
+            )
+        )
+        marker: Turn[Any] = Turn(
+            prefix=(),
+            tokens=(),
+            logprobs=(),
+            tag="fold",
+            actor=self.actor,
+            invocation_id=rs.invocation_id,
+            context_version=rs.context_version,
+        )
+        turns = tuple(replace(t, tag="fold", transition=None) for t in folded.turns)
+        added = turns or (marker,)
+        return replace(
+            rs,
+            budget=self.services.remaining(rs.owner),
+            messages=tuple(folded.messages),
+            context_refs=(None,) * len(folded.messages),
+            state=folded.state,
+            turns=(*rs.turns, *added),
+            context_version=rs.context_version + 1,
+            effects=(
+                *rs.effects,
+                Effect(
+                    "compaction",
+                    len(rs.turns),
+                    rs.context_version,
+                    rs.context_version + 1,
+                    invocation_id=rs.invocation_id,
+                    turn_end=len(rs.turns) + len(added),
+                ),
+            ),
+            advances=rs.advances + 1,
+            steps_remaining=None
+            if rs.steps_remaining is None
+            else max(0, rs.steps_remaining - 1),
+        )
 
     @property
     def max_steps(self) -> int:

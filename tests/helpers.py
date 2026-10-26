@@ -348,10 +348,9 @@ def toy_runner(
     scheduling names only the piece it is actually varying.
     """
     from focus.harness.agent import Execution
-    from focus.protocols import Summary
 
     if "compactor" in kwargs:
-        kwargs["context"] = Summary(kwargs.pop("compactor"))
+        kwargs["context"] = kwargs.pop("compactor")
     execution = {
         key: kwargs.pop(key)
         for key in ("services", "checkpointer", "resource_budget", "generate_timeout")

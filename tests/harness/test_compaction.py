@@ -15,12 +15,11 @@ from focus.generation.parsing import (
 )
 from focus.harness import (
     Agent,
-    AgenticCompactor,
     AnyOf,
     BaseTool,
     Compaction,
     CompactionResult,
-    Compactor,
+    ContextManager,
     FoldEnv,
     FoldState,
     InMemoryWorkspace,
@@ -30,6 +29,7 @@ from focus.harness import (
     StateCounter,
     StorageTool,
     SubmitFields,
+    Summarize,
     ToolEnv,
     Workspace,
     build_budget,
@@ -219,7 +219,7 @@ def test_any_of_fires_on_either_and_relieves_through_both() -> None:
     assert trigger.relieve(BudgetState(remaining=0)).remaining == 5
 
 
-# -- AgenticCompactor: the fold as a nested rollout ------------------------------------
+# -- Summarize: the fold as a nested rollout ------------------------------------
 
 
 @pytest.mark.asyncio
@@ -227,7 +227,7 @@ async def test_compact_stores_then_replies_with_what_to_keep() -> None:
     ws = InMemoryWorkspace()
     # offload via storage, then a no-tool reply ends it (the fold's own convention)
     gen = ScriptedGenerator([_turn(_store("log", "detail")), _reply("kept summary")])
-    compactor = AgenticCompactor[None](max_interactions=8)
+    compactor = Summarize[None](max_interactions=8)
     c = _compaction([{"role": "user", "content": "grown context"}], ws, gen)
 
     result = await compactor.compact(c)
@@ -257,7 +257,7 @@ async def test_memory_is_not_inlined_but_the_model_is_told_to_read_it() -> None:
     gen = ScriptedGenerator([_reply("kept summary")])
     c = _compaction([{"role": "user", "content": "grown context"}], ws, gen)
 
-    result = await AgenticCompactor[None](max_interactions=8).compact(c)
+    result = await Summarize[None](max_interactions=8).compact(c)
 
     compacting = _decode(gen.prefixes[0])
     folded = result.messages[-1]["content"]
@@ -275,7 +275,7 @@ async def test_the_workspace_supplies_what_both_prompts_say_about_it() -> None:
     gen = ScriptedGenerator([_reply("kept")])
     c = _compaction([{"role": "user", "content": "grown"}], ws, gen)
 
-    result = await AgenticCompactor[None]().compact(c)
+    result = await Summarize[None]().compact(c)
 
     assert ws.compaction_guidance() in _decode(gen.prefixes[0])
     assert ws.guidance() in result.messages[-1]["content"]
@@ -296,7 +296,7 @@ async def test_the_folded_context_claims_its_own_authorship() -> None:
     gen = ScriptedGenerator([_reply("kept summary")])
     c = _compaction([{"role": "user", "content": "grown"}], InMemoryWorkspace(), gen)
 
-    result = await AgenticCompactor[None]().compact(c)
+    result = await Summarize[None]().compact(c)
 
     folded = result.messages[-1]["content"]
     assert "You wrote the notes below yourself" in folded  # self-authored, moments ago
@@ -314,7 +314,7 @@ async def test_the_default_instruction_asks_for_notes_a_future_self_will_trust()
     only worth trusting if they were written to be -- figures copied, sources named."""
     gen = ScriptedGenerator([_reply("kept")])
 
-    await AgenticCompactor[None]().compact(
+    await Summarize[None]().compact(
         _compaction([{"role": "user", "content": "grown"}], InMemoryWorkspace(), gen)
     )
 
@@ -339,7 +339,7 @@ async def test_a_first_reply_that_stored_nothing_is_asked_once_to_store() -> Non
         ]
     )
 
-    result = await AgenticCompactor[None]().compact(
+    result = await Summarize[None]().compact(
         _compaction([{"role": "user", "content": "grown"}], ws, gen)
     )
 
@@ -354,7 +354,7 @@ async def test_the_store_first_nudge_is_sent_at_most_once() -> None:
     ws = InMemoryWorkspace()
     gen = ScriptedGenerator([_reply("kept")])  # never calls a tool, however often asked
 
-    result = await AgenticCompactor[None](max_interactions=8).compact(
+    result = await Summarize[None](max_interactions=8).compact(
         _compaction([{"role": "user", "content": "grown"}], ws, gen)
     )
 
@@ -373,7 +373,7 @@ async def test_a_compactor_that_read_memory_back_is_not_nudged() -> None:
         [_turn(tool_call("storage", operate="scan")), _reply("kept: see key author")]
     )
 
-    await AgenticCompactor[None]().compact(
+    await Summarize[None]().compact(
         _compaction([{"role": "user", "content": "grown"}], ws, gen)
     )
 
@@ -392,7 +392,7 @@ async def test_a_null_workspace_gets_no_storage_tool_and_no_memory_claim() -> No
     gen = ScriptedGenerator([_reply("kept summary")])
     c = _compaction([{"role": "user", "content": "grown"}], ws, gen)
 
-    result = await AgenticCompactor[None](max_interactions=8).compact(c)
+    result = await Summarize[None](max_interactions=8).compact(c)
 
     compacting = _decode(gen.prefixes[0])
     assert "storage" not in compacting.lower()  # no tool schema, no tool budget
@@ -417,7 +417,7 @@ async def test_null_fold_workspace_keeps_actor_workspace_unchanged() -> None:
     ws = InMemoryWorkspace()
     gen = ScriptedGenerator([_reply("kept summary")])
     c = _compaction([{"role": "user", "content": "grown"}], ws, gen)
-    result = await AgenticCompactor[None](fold_workspace=NullWorkspace()).compact(c)
+    result = await Summarize[None](fold_workspace=NullWorkspace()).compact(c)
     assert gen.calls == 1
     compacting = _decode(gen.prefixes[0])
     assert NullWorkspace().compaction_guidance() in compacting
@@ -431,7 +431,7 @@ async def test_null_fold_workspace_keeps_actor_workspace_unchanged() -> None:
 async def test_custom_transcript_serialization_bounds_historical_text() -> None:
     gen = ScriptedGenerator([_reply("kept")])
     c = _compaction([{"role": "user", "content": "old task"}], NullWorkspace(), gen)
-    await AgenticCompactor[None](
+    await Summarize[None](
         transcript_template=(
             "HISTORY_START\n{transcript}\nHISTORY_END\nSummarize only."
         )
@@ -475,7 +475,7 @@ async def test_a_toolless_fold_under_a_native_policy_keeps_its_reply() -> None:
         runner=_folding_runner(gen, parser=NativeToolCallParser()),
     )
 
-    result = await AgenticCompactor[None](max_interactions=8).compact(c)
+    result = await Summarize[None](max_interactions=8).compact(c)
 
     assert "kept summary" in result.messages[-1]["content"]
 
@@ -488,7 +488,7 @@ async def test_transcript_tool_calls_are_shown_inert() -> None:
     grown = [{"role": "assistant", "content": _turn(_store("author", "Christie"))}]
     c = _compaction(grown, ws, gen)
 
-    await AgenticCompactor[None]().compact(c)
+    await Summarize[None]().compact(c)
 
     prompt = _decode(gen.prefixes[0])
     assert "<tool_call>" not in prompt.split("</think>")[0]  # the transcript is inert
@@ -502,7 +502,7 @@ async def test_empty_reply_does_not_fold_to_an_empty_context() -> None:
     gen = ScriptedGenerator([_reply("")])  # e.g. a thinking model truncated mid-reason
     c = _compaction([{"role": "user", "content": "grown"}], ws, gen)
 
-    result = await AgenticCompactor[None]().compact(c)
+    result = await Summarize[None]().compact(c)
 
     assert _EMPTY_KEPT in result.messages[-1]["content"]  # no blank hole in the context
 
@@ -531,7 +531,7 @@ async def test_fold_rewrites_the_request_turn_whatever_shape_the_seed_has(
     grown = [{"role": "user", "content": "grown"}]
     c = replace(_compaction(grown, InMemoryWorkspace(), gen), seed=seed)
 
-    result = await AgenticCompactor[None]().compact(c)
+    result = await Summarize[None]().compact(c)
 
     # every turn before the request is untouched; the request turn carries the state
     assert result.messages[:carried] == seed[:carried]
@@ -550,7 +550,7 @@ async def test_a_fold_returns_tagged_transition_free_turns() -> None:
     gen = ScriptedGenerator([_turn(_store("log", "detail")), _reply("kept summary")])
     c = _compaction([{"role": "user", "content": "grown context"}], ws, gen)
 
-    result = await AgenticCompactor[None](max_interactions=8).compact(c)
+    result = await Summarize[None](max_interactions=8).compact(c)
 
     assert len(result.turns) == 2  # one per generate
     assert all(t.tag == "fold" for t in result.turns)
@@ -564,7 +564,7 @@ async def test_a_folds_generations_are_trainable_and_its_transcript_is_masked() 
     gen = ScriptedGenerator([_turn(_store("log", "detail")), _reply("kept summary")])
     c = _compaction([{"role": "user", "content": "grown context"}], ws, gen)
 
-    result = await AgenticCompactor[None](max_interactions=8).compact(c)
+    result = await Summarize[None](max_interactions=8).compact(c)
 
     codec = ChatCodec(FakeChatTokenizer())
     packed = regions(result.turns)
@@ -586,7 +586,7 @@ async def test_a_folds_generations_are_trainable_and_its_transcript_is_masked() 
 async def test_budget_forces_a_reply() -> None:
     ws = InMemoryWorkspace()
     gen = ScriptedGenerator([_turn(_store("p", "c"))])  # only ever calls a tool
-    compactor = AgenticCompactor[None](max_interactions=3)
+    compactor = Summarize[None](max_interactions=3)
 
     result = await compactor.compact(
         _compaction([{"role": "user", "content": "c"}], ws, gen)
@@ -604,7 +604,7 @@ async def test_a_custom_instruction_may_name_the_interaction_budget() -> None:
     template that wants to phrase it differently. Dropping it from the substitution
     turns such a template into a ``KeyError`` raised mid-rollout, at the first fold."""
     gen = ScriptedGenerator([_reply("kept summary")])
-    compactor = AgenticCompactor[None](
+    compactor = Summarize[None](
         max_interactions=3,
         instruction="Compact.{workspace}{budget} Budget: {k}.",
     )
@@ -619,7 +619,7 @@ async def test_a_custom_instruction_may_name_the_interaction_budget() -> None:
 @pytest.mark.asyncio
 async def test_compactor_reads_state_to_trigger_and_resets_it_on_compact() -> None:
     gen = ScriptedGenerator([_reply("kept")])
-    compactor = AgenticCompactor[BudgetState](
+    compactor = Summarize[BudgetState](
         trigger=AnyOf(PromptTokens(10_000), StateCounter("remaining", "maximum"))
     )
 
@@ -667,7 +667,7 @@ async def test_the_fold_speaks_the_rollout_s_tool_dialect() -> None:
         runner=_folding_runner(gen, QwenXMLToolCallParser()),
     )
 
-    await AgenticCompactor[None](max_interactions=4).compact(c)
+    await Summarize[None](max_interactions=4).compact(c)
 
     assert ws.read("author") == "Christie"
 
@@ -682,7 +682,7 @@ async def test_a_rollout_folds_by_deriving_the_runner_it_is_already_using() -> N
     runner: Agent[Any, Any] = toy_runner(
         gen,
         parser=HermesToolCallParser(),
-        compactor=AgenticCompactor[None](max_prompt_tokens=1, max_interactions=4),
+        compactor=Summarize[None](max_prompt_tokens=1, max_interactions=4),
         version="v7",
     )
 
@@ -698,7 +698,7 @@ async def test_a_rollout_folds_by_deriving_the_runner_it_is_already_using() -> N
 
 
 def test_the_default_trigger_only_fires_past_the_token_budget() -> None:
-    compactor = AgenticCompactor[None](max_prompt_tokens=5)
+    compactor = Summarize[None](max_prompt_tokens=5)
     assert not compactor.trigger.fires((1, 2, 3), None)
     assert compactor.trigger.fires(tuple(range(6)), None)
 
@@ -712,29 +712,23 @@ def test_workspace_exports_tools_and_null_exports_none() -> None:
     assert NullWorkspace().compaction_tools() == ()
 
 
-class _TriggerlessCompactor(Compactor[Any]):
-    """A compactor that forgot the half of itself that says *when*.
-
-    ``trigger`` is a bare annotation on the ABC, so nothing about the class body makes
-    this illegal -- which is the whole point of the test: the omission has to be caught
-    somewhere, and the only somewhere left is where a runner is handed one.
-    """
+class _TriggerlessCompactor(ContextManager[Any]):
+    """Compacts on request only: no trigger, so the agent never folds by itself."""
 
     async def compact(self, compaction: Compaction[Any]) -> CompactionResult[Any]:
-        return CompactionResult(compaction.messages, compaction.state)
+        return CompactionResult(compaction.seed, compaction.state)
 
 
-def test_a_compactor_without_a_trigger_is_refused_when_the_runner_is_built() -> None:
-    """The half a compactor cannot be missing is caught before a rollout is paid for.
+async def test_a_manager_without_a_trigger_folds_only_when_asked() -> None:
+    runner = toy_runner(ScriptedGenerator(["go"]), compactor=_TriggerlessCompactor())
+    root = await runner.start("hi")
+    stepped = await runner.advance(root)
+    assert stepped.folds == 0  # never on its own
 
-    ``should_compact`` used to be an ``@abstractmethod``, so a compactor with no *when*
-    could not be instantiated at all. Now that *when* is an attribute the runner reads,
-    the same omission constructs fine and raises ``AttributeError`` inside
-    :meth:`Agent.advance` -- which the scheduler catches as a dead expansion, so a run
-    configured this way produces no records and says only that every rollout failed.
-    """
-    with pytest.raises(TypeError, match="trigger"):
-        toy_runner(ScriptedGenerator(["x"]), compactor=_TriggerlessCompactor())
+    folded = await runner.compact(stepped)
+    assert folded.folds == 1
+    assert folded.messages == root.seed
+    assert folded.context_version == stepped.context_version + 1
 
 
 @dataclass(frozen=True)
@@ -911,7 +905,7 @@ async def test_the_fold_states_its_length_budget_and_is_held_to_it() -> None:
         return real_derive(**kwargs)
 
     compaction.runner.derive = spy  # type: ignore[method-assign]
-    compactor: AgenticCompactor[Any] = AgenticCompactor(max_reply_tokens=777)
+    compactor: Summarize[Any] = Summarize(max_reply_tokens=777)
 
     await compactor.compact(compaction)
 

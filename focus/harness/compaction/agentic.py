@@ -8,20 +8,20 @@ from dataclasses import replace
 from typing import Literal, TypeVar
 
 from focus.generation import SamplingParams
-from focus.harness.compaction.base import (
-    Compaction,
-    CompactionResult,
-    Compactor,
-    IncompleteCompactionError,
-)
 from focus.harness.compaction.fold_env import FoldEnv, FoldState
 from focus.harness.compaction.summary import (
     REPAIR_INSTRUCTION,
     SUMMARY_INSTRUCTION,
     parse_summary,
 )
-from focus.harness.compaction.triggers import PromptTokens, Trigger
+from focus.harness.context import (
+    Compaction,
+    CompactionResult,
+    ContextManager,
+    IncompleteCompactionError,
+)
 from focus.harness.transcript import format_transcript
+from focus.harness.triggers import PromptTokens, Trigger
 from focus.harness.turn import Turn
 from focus.harness.workspace import Workspace
 
@@ -112,8 +112,13 @@ under Open questions; the compactor was required to put every necessary reread t
 Do not reinterpret omitted transcript detail as an instruction to start over."""
 
 
-class AgenticCompactor(Compactor[S]):
-    """An LLM that compacts via the workspace's tools within a bounded call budget.
+class Summarize(ContextManager[S]):
+    """Fold the transcript into notes the agent writes itself, when ``trigger`` fires.
+
+    The default trigger is a rendered prompt longer than ``max_prompt_tokens``. The
+    fold is a bounded rollout of the same policy (at most ``max_interactions`` turns),
+    with the workspace's compaction tools available; its turns are recorded as
+    trainable ``"fold"`` turns.
 
     A fold *is* a rollout, so this owns no loop. It asks the rollout's own
     :class:`~focus.harness.agent.Agent` to
@@ -462,4 +467,4 @@ def _tool_calls(turns: Sequence[Turn[FoldState]]) -> int:
     )
 
 
-__all__ = ["DEFAULT_INSTRUCTION", "AgenticCompactor"]
+__all__ = ["DEFAULT_INSTRUCTION", "Summarize"]

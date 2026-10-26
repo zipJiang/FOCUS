@@ -12,26 +12,25 @@ from focus.generation import Policy, SamplingParams
 from focus.generation.parsing import ToolTurn
 from focus.harness import (
     Agent,
-    AgenticCompactor,
     BaseTool,
     NullWorkspace,
     PromptTokens,
     RolloutState,
     RoundBudget,
     StepResult,
+    Summarize,
     ToolEnv,
     ToolError,
     Workspace,
 )
 from focus.harness.compaction import DEFAULT_INSTRUCTION
-from focus.harness.compaction.base import IncompleteCompactionError
+from focus.harness.context import AppendOnly, IncompleteCompactionError
 from focus.harness.tools.submission import (
     SubmitTool,
     submission_payload,
     submitted_call,
 )
 from focus.harness.turn import Turn
-from focus.protocols import Summary
 
 from .calls import call_key
 from .dataset import Case
@@ -370,9 +369,9 @@ def render_environment_state(state: LocBenchState) -> str:
     )
 
 
-def build_locbench_compactor(config: RunConfig) -> AgenticCompactor[LocBenchState]:
+def build_locbench_compactor(config: RunConfig) -> Summarize[LocBenchState]:
     """Validated, token-triggered and tool-free production compaction."""
-    return AgenticCompactor(
+    return Summarize(
         trigger=PromptTokens(config.max_prompt_tokens),
         max_reply_tokens=config.fold_reply_tokens,
         summary_target_tokens=min(2048, config.fold_reply_tokens),
@@ -427,7 +426,7 @@ def build_world(case: Case, repo: Repository, config: RunConfig) -> World:
             "Rank distinct relevant files early; put the strongest candidates first."
         )
         + LOCALIZATION_GUIDANCE,
-        context=Summary(build_locbench_compactor(config) if config.compact else None),
+        context=(build_locbench_compactor(config) if config.compact else AppendOnly()),
         max_steps=config.max_steps,
         finish_prompt=(
             "Investigation budget exhausted. Call submit with your ranked locations "

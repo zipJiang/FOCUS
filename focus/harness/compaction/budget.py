@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from focus.harness.compaction.agentic import AgenticCompactor
-from focus.harness.compaction.triggers import (
+from focus.harness.compaction.agentic import Summarize
+from focus.harness.triggers import (
     AnyOf,
     PromptTokens,
     StateCounter,
@@ -24,8 +24,8 @@ def build_budget(
     maximum: str = "calls_max",
     max_prompt_tokens: int = 8192,
     **agentic_kwargs: object,
-) -> AgenticCompactor[Any]:
-    """An :class:`AgenticCompactor` that folds on prompt length *or* a spent counter.
+) -> Summarize[Any]:
+    """An :class:`Summarize` that folds on prompt length *or* a spent counter.
 
     ``**agentic_kwargs`` forwards the strategy knobs -- ``max_interactions``,
     ``sampling_params``, ``instruction``.
@@ -38,7 +38,7 @@ def build_budget(
     class existed the defaults named fields nothing defined, so the counter half of
     this composition was dead unless the task happened to spell it the same way.
     """
-    return AgenticCompactor(
+    return Summarize(
         trigger=AnyOf(
             PromptTokens(max_prompt_tokens),
             StateCounter(remaining, maximum),

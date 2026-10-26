@@ -1,4 +1,18 @@
-"""Context construction and effects, independent of task dynamics and allocation."""
+"""What the policy sees: context managers render prompts and compact long contexts.
+
+A :class:`ContextManager` decides two things the agent asks before every generation:
+how to render the branch's context as a prompt (:meth:`ContextManager.prepare`), and
+whether to compact it first (:meth:`ContextManager.should_compact`, then
+:meth:`ContextManager.compact`). The agent records every compaction -- its generated
+turns, the context version, a branch-point effect -- so a manager only produces the
+new context.
+
+:class:`AppendOnly` keeps the whole transcript; :class:`Segments` continues one
+assistant response in exact token segments;
+:class:`~focus.harness.compaction.Summarize` folds the transcript into notes when a
+:class:`~focus.harness.triggers.Trigger` fires. :class:`ContextTools` lets the model
+edit its own context through tools.
+"""
 
 from __future__ import annotations
 
@@ -16,13 +30,90 @@ from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
 from focus.harness.rollout import AnyRollout
 from focus.harness.tools.dispatch import tool_reply
+from focus.harness.triggers import Trigger
+from focus.harness.turn import Turn
+from focus.harness.workspace import Workspace
 
 if TYPE_CHECKING:
     from focus.harness.agent import Agent
 
 
-class ProtocolError(ValueError):
-    """Invalid model action; safe to return as corrective feedback."""
+class ContextError(ValueError):
+    """Invalid context operation; safe to return to the model as corrective feedback."""
+
+
+class IncompleteCompactionError(ValueError):
+    """Rejected model output, including the exact generations that produced it.
+
+    Callers may treat this as a terminal task failure. Transport and implementation
+    errors remain ordinary exceptions and must not become training outcomes.
+    """
+
+    def __init__(
+        self, *, turns: tuple[Turn[Any], ...], reasons: tuple[str, ...]
+    ) -> None:
+        super().__init__(
+            "Incomplete compaction reply; refusing to replace task context"
+            + (f" ({', '.join(reasons)})" if reasons else "")
+        )
+        self.turns = turns
+        self.reasons = reasons
+
+
+@dataclass(frozen=True)
+class Compaction[S]:
+    """Everything a compaction is handed -- the conversation to fold, and the runner.
+
+    A compactor reads ``messages`` (the grown conversation), persists what matters into
+    ``workspace``, and returns the messages to continue from -- ``seed`` (the system +
+    first user message) for a plain reset, or ``seed`` with what it kept folded in; how
+    the fold is shaped is the compactor's own policy.
+
+    Its one collaborator is the ``runner`` being folded, not a bag of that runner's
+    parts: a model-driven fold is a rollout under the *same* policy on a different
+    world, so it asks for :meth:`~focus.harness.agent.Agent.derive` instead
+    of reassembling a runner out of a generator, a codec, a parser and a version tag
+    smuggled across this seam -- and cannot end up guessing a tool dialect the rollout
+    never spoke. A compactor that generates nothing simply ignores it.
+    """
+
+    messages: tuple[Message, ...]
+    seed: tuple[Message, ...]
+    state: S
+    workspace: Workspace
+    #: The runner whose rollout is being folded: the model, the codec, the tool dialect
+    #: and the policy-version tag in one piece. Loose in the action parameter because a
+    #: fold's env speaks the parser's actions, which need not be the task env's.
+    runner: Agent[S, Any]
+
+    checkpoint: Any = None
+
+
+@dataclass(frozen=True)
+class CompactionResult[S]:
+    """What one compaction produced: the messages to continue from, and the new state.
+
+    Compaction is a state transition like ``env.step`` -- it reads ``state`` (via
+    :class:`Compaction`) and returns a new one, so a compactor can reset the counters
+    its :attr:`~Compactor.trigger` watched (e.g. a per-compaction search budget), which
+    is what :meth:`~...compaction.triggers.Trigger.relieve` is for.
+
+    ``turns`` are the turns a model-driven compactor generated getting here --
+    transition-free, because a fold rewrites the working context rather than acting on
+    the world. The runner appends them to its log like any others (stamping them
+    ``"fold"`` on the way in, so the tag is its own statement rather than a plug-in's),
+    so a fold's tool-call turns are first-class trainable data rather than a special
+    kind of record. A plain compactor returns none, and the runner leaves one zero-token
+    ``"fold"`` turn in their place -- the marker that records that anything happened.
+    """
+
+    messages: tuple[Message, ...]
+    state: S
+    #: ``Turn[Any]``, not ``Turn[S]``: a generative compactor's turns are
+    #: generated in the *fold's* own world (``FoldEnv``), so their state
+    #: parameter is not the task's -- and it is vacuous besides, since these
+    #: turns are retagged transition-free before they get here.
+    turns: tuple[Turn[Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -31,14 +122,36 @@ class Applied:
     transition: StepResult[Any] | None = None
 
 
-class ContextProtocol:
-    """Shared protocol; branch-owned data belongs in the rollout state.
+class ContextManager[S]:
+    """Render a branch's context, and compact it when :attr:`trigger` fires.
 
-    apply receives the already-recorded generation. Its effects reference that index,
-    and only task operations return transitions.
+    A manager is shared by every branch, so branch-owned data belongs in the rollout
+    state. The two methods most managers implement are :meth:`should_compact` (by
+    default, whether :attr:`trigger` fires on the rendered prompt) and :meth:`compact`.
+    :meth:`prepare`, :meth:`record_reply`, :meth:`apply`, and :meth:`schemas` let a
+    manager change rendering, replies, or add context operations of its own.
     """
 
-    manages_context = False
+    #: When to compact; ``None`` never compacts.
+    trigger: Trigger[S] | None = None
+
+    @property
+    def manages_context(self) -> bool:
+        """Whether this manager may rewrite the context during a rollout."""
+        return self.trigger is not None
+
+    def should_compact(self, rs: AnyRollout, prompt: Sequence[int]) -> bool:
+        """Whether to compact before generating from ``prompt``."""
+        return self.trigger is not None and self.trigger.fires(prompt, rs.state)
+
+    async def compact(self, compaction: Compaction[S]) -> CompactionResult[S]:
+        """Return the context and task state to continue from.
+
+        Called by the agent when :meth:`should_compact` is true or when the caller
+        forces a fold; the agent records the result. A manager that compacts must
+        also relieve its trigger in the returned state.
+        """
+        raise ValueError(f"{type(self).__name__} does not compact context")
 
     def prepare(self, rs: AnyRollout, runner: Agent[Any, Any]) -> PreparedPrompt:
         """Prepare the model input from this branch's current context."""
@@ -57,16 +170,10 @@ class ContextProtocol:
         return ()
 
     async def initialize(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
+        """Check the root state; a trigger refuses state fields it cannot read."""
+        if self.trigger is not None:
+            self.trigger.check(rs.state)
         return rs
-
-    def needs_prepare(self, rs: AnyRollout, runner: Agent[Any, Any]) -> bool:
-        return False
-
-    async def before(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
-        return rs
-
-    async def compact(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
-        raise ValueError("Agent has no compactor configured")
 
     async def apply(
         self,
@@ -101,7 +208,7 @@ class ContextProtocol:
         )
 
 
-class AppendOnly(ContextProtocol):
+class AppendOnly(ContextManager[Any]):
     """Retain context as chat turns or exact segments of one assistant response.
 
     ``continuation=True`` preserves original generated token IDs between requests.
@@ -189,10 +296,32 @@ class AppendOnly(ContextProtocol):
             messages[-1]["focus_continuation_tokens"] = tuple(result.tokens)
 
 
-class ToolProtocol(ContextProtocol):
-    """Serial operations; mixed task/protocol batches are rejected atomically."""
+class Segments(AppendOnly):
+    """Continue one assistant response in exact segments of at most ``tokens`` tokens.
 
-    manages_context = True
+    Each decision generates one segment, appended to the prompt by its original token
+    IDs. The agent defaults to branch points after every segment and to ending without
+    a final-answer prompt when its step budget runs out. The policy must accept token
+    input and parse segments as :class:`~focus.generation.TokenChunk` actions.
+    """
+
+    def __init__(self, tokens: int) -> None:
+        if type(tokens) is not int or tokens < 1:
+            raise ValueError("Segments.tokens must be a positive integer")
+        super().__init__(continuation=True)
+        self.tokens = tokens
+
+
+class ContextTools(ContextManager[Any]):
+    """Context operations the model calls as tools; mixed batches are refused.
+
+    Implement :meth:`schemas` and :meth:`operation`. Each successful operation
+    records a ``"context"`` effect, which branch-point policies may select.
+    """
+
+    @property
+    def manages_context(self) -> bool:
+        return True
 
     async def operation(
         self,
@@ -240,23 +369,23 @@ class ToolProtocol(ContextProtocol):
             before = rs.context_version
             try:
                 if rs.truncated:
-                    raise ProtocolError(
+                    raise ContextError(
                         "rollout is truncated; no further operations can run"
                     )
                 if mixed:
-                    raise ProtocolError(
+                    raise ContextError(
                         "issue context operations separately from task tools"
                     )
                 try:
                     arguments = json.loads(call.arguments)
                 except ValueError as exc:
-                    raise ProtocolError(str(exc)) from exc
+                    raise ContextError(str(exc)) from exc
                 if not isinstance(arguments, dict):
-                    raise ProtocolError("tool arguments must be an object")
+                    raise ContextError("tool arguments must be an object")
                 contract = contracts[call.name]
                 missing = set(contract.get("required", ())) - arguments.keys()
                 if missing:
-                    raise ProtocolError(f"missing arguments: {sorted(missing)}")
+                    raise ContextError(f"missing arguments: {sorted(missing)}")
                 candidate, text, effect_kind = await self.operation(
                     rs, call.name, arguments, runner
                 )
@@ -272,9 +401,9 @@ class ToolProtocol(ContextProtocol):
                 try:
                     runner.policy.validate_context(context)
                 except ValueError as exc:
-                    raise ProtocolError(str(exc)) from exc
+                    raise ContextError(str(exc)) from exc
                 rs, kind = candidate, effect_kind
-            except ProtocolError as exc:
+            except ContextError as exc:
                 text = f"Invalid {call.name}: {exc}. Previous valid context preserved."
             message: Message = {**tool_reply(call, text), "name": call.name}
             if exchange:

@@ -19,11 +19,10 @@ from focus.harness import (
     build_budget,
 )
 from focus.harness.compaction.agentic import DEFAULT_INSTRUCTION
-from focus.harness.compaction.base import IncompleteCompactionError
+from focus.harness.context import AppendOnly, IncompleteCompactionError
 from focus.harness.env import StepResult
 from focus.harness.tools.dispatch import tool_reply
 from focus.harness.turn import Turn
-from focus.protocols import Summary
 
 COMPACTION_SCHEMA = """
 
@@ -203,7 +202,8 @@ class BrowserRunner(Agent[State, ToolTurn]):
         rs.check_continuation()
         if self._finish_prompt is None:
             return replace(rs, truncated=True)
-        rs = await self.protocol.before(rs, self)
+        if self.protocol.should_compact(rs, self.protocol.prepare(rs, self).tokens):
+            rs = await self._fold(rs)
         if rs.done:
             return rs
         messages = [*rs.messages, {"role": "user", "content": self._finish_prompt}]
@@ -334,7 +334,7 @@ def make_runner(
         policy=policy,
         env=env,
         system_prompt=SYSTEM,
-        context=Summary(None if no_compact else compactor),
+        context=AppendOnly() if no_compact else compactor,
         max_steps=max_steps,
         finish_prompt=FINISH_PROMPT,
     )

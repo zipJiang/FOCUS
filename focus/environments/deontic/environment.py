@@ -51,22 +51,21 @@ from focus.generation.parsing import ToolTurn
 from focus.generation.policy import Policy
 from focus.harness import (
     Agent,
-    AgenticCompactor,
     InMemoryWorkspace,
     NullWorkspace,
     PromptTokens,
     RoundBudget,
     SubmitFields,
+    Summarize,
     Tool,
     ToolEnv,
     Workspace,
 )
 from focus.harness.compaction import DEFAULT_INSTRUCTION
-from focus.harness.compaction.base import IncompleteCompactionError
+from focus.harness.context import AppendOnly, IncompleteCompactionError
 from focus.harness.env import StepResult
 from focus.harness.tools.submission import submission_payload, submitted_call
 from focus.harness.turn import Turn
-from focus.protocols import Summary
 
 # -- the case ------------------------------------------------------------------------
 
@@ -472,9 +471,9 @@ def render_environment_state(state: DeonticState) -> str:
     )
 
 
-def build_deontic_compactor(cfg: RunConfig) -> AgenticCompactor[DeonticState]:
+def build_deontic_compactor(cfg: RunConfig) -> Summarize[DeonticState]:
     """Production Deontic fold: token-triggered, validated and trusted on resume."""
-    return AgenticCompactor(
+    return Summarize(
         trigger=PromptTokens(cfg.max_prompt_tokens),
         max_reply_tokens=cfg.fold_reply_tokens,
         summary_target_tokens=min(2048, cfg.fold_reply_tokens),
@@ -569,7 +568,7 @@ def build_world(case: Case, cfg: RunConfig) -> World:
         # Fold on the token budget, or once the round's tool budget is spent: exactly
         # the composition `build_budget` names, over the `RoundBudget` counters
         # `DeonticState` mixes in and `ToolEnv` charges.
-        context=Summary(None if cfg.no_compact else build_deontic_compactor(cfg)),
+        context=AppendOnly() if cfg.no_compact else build_deontic_compactor(cfg),
         max_steps=cfg.max_steps,
         finish_prompt=finish_prompt(case),
         compaction_failure=cfg.compaction_failure,

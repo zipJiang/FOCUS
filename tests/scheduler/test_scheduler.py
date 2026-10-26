@@ -11,7 +11,7 @@ from focus.harness import (
     Agent,
     Compaction,
     CompactionResult,
-    Compactor,
+    ContextManager,
     Env,
     RolloutState,
     StepResult,
@@ -54,7 +54,7 @@ class WritingEnv(ToyEnv):
         return result
 
 
-class LenCompactor(Compactor[ToyState]):
+class LenCompactor(ContextManager[ToyState]):
     """Fold to the seed once the prompt grows past a threshold (self-relieving)."""
 
     trigger = WhenTrigger(lambda prompt, state: len(prompt) > 12)
@@ -70,7 +70,7 @@ def _runner(
     gen: ScriptedGenerator,
     *,
     env: Env[Any, Any] | None = None,
-    compactor: Compactor[Any] | None = None,
+    compactor: ContextManager[Any] | None = None,
 ) -> Agent[ToyState, str]:
     return toy_runner(gen, env=env, compactor=compactor)
 
@@ -79,7 +79,7 @@ def _expander(
     gen: ScriptedGenerator,
     *,
     env: Env[Any, Any] | None = None,
-    compactor: Compactor[Any] | None = None,
+    compactor: ContextManager[Any] | None = None,
 ) -> RolloutExpander[ToyState]:
     return RolloutExpander(_runner(gen, env=env, compactor=compactor))
 

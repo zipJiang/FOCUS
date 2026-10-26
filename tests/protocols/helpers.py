@@ -4,12 +4,11 @@ from dataclasses import replace
 from typing import Any
 
 from focus.harness.agent import Agent
+from focus.harness.context import ContextError, ContextTools, schema
 from focus.harness.rollout import AnyRollout
-from focus.protocols import ToolProtocol
-from focus.protocols.base import ProtocolError, schema
 
 
-class KeepRecent(ToolProtocol):
+class KeepRecent(ContextTools):
     def schemas(self) -> tuple[dict[str, Any], ...]:
         return (
             schema(
@@ -29,7 +28,7 @@ class KeepRecent(ToolProtocol):
     ) -> tuple[AnyRollout, str, str]:
         n = arguments["n"]
         if type(n) is not int or n < 1:
-            raise ProtocolError("n must be a positive integer")
+            raise ContextError("n must be a positive integer")
         return (
             replace(
                 rs,

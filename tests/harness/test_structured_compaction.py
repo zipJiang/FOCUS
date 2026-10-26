@@ -1,8 +1,8 @@
 import pytest
 
-from focus.harness import AgenticCompactor, NullWorkspace
-from focus.harness.compaction.base import IncompleteCompactionError
+from focus.harness import NullWorkspace, Summarize
 from focus.harness.compaction.summary import parse_summary
+from focus.harness.context import IncompleteCompactionError
 from tests.harness.test_compaction import _compaction
 from tests.helpers import ScriptedGenerator
 
@@ -60,7 +60,7 @@ async def test_retry_keeps_original_context_and_exact_failed_generations():
     request = _compaction(
         [{"role": "user", "content": "original evidence"}], NullWorkspace(), gen
     )
-    compactor = AgenticCompactor[None](structured_summary=True, max_reply_tokens=4096)
+    compactor = Summarize[None](structured_summary=True, max_reply_tokens=4096)
     result = await compactor.compact(request)
     assert len(result.turns) == 2
     failed, good = result.turns
@@ -83,7 +83,7 @@ async def test_retry_keeps_original_context_and_exact_failed_generations():
 async def test_retry_is_bounded_and_rejects_oversize_summary():
     gen = ScriptedGenerator([VALID, VALID])
     request = _compaction([], NullWorkspace(), gen)
-    compactor = AgenticCompactor[None](
+    compactor = Summarize[None](
         structured_summary=True, max_reply_tokens=4096, summary_target_tokens=10
     )
     with pytest.raises(IncompleteCompactionError) as caught:
@@ -97,7 +97,7 @@ async def test_retry_is_bounded_and_rejects_oversize_summary():
 
 async def test_wrapper_recovery_is_penalized_without_retry():
     gen = ScriptedGenerator([NOTES])
-    result = await AgenticCompactor[None](structured_summary=True).compact(
+    result = await Summarize[None](structured_summary=True).compact(
         _compaction([], NullWorkspace(), gen)
     )
     assert len(result.turns) == 1
@@ -111,14 +111,14 @@ async def test_backend_failure_not_retried_or_relabelled():
             raise RuntimeError("backend unavailable")
 
     with pytest.raises(RuntimeError, match="backend unavailable"):
-        await AgenticCompactor[None](structured_summary=True).compact(
+        await Summarize[None](structured_summary=True).compact(
             _compaction([], NullWorkspace(), Broken([]))
         )
 
 
 async def test_complete_notes_at_generation_cap_are_accepted():
     gen = ScriptedGenerator([VALID])
-    result = await AgenticCompactor[None](
+    result = await Summarize[None](
         structured_summary=True, max_reply_tokens=len(VALID)
     ).compact(_compaction([], NullWorkspace(), gen))
     assert result.turns[0].compaction_penalty == 0
@@ -127,7 +127,7 @@ async def test_complete_notes_at_generation_cap_are_accepted():
 
 async def test_required_complete_reply_repairs_even_a_closed_reply_at_cap():
     gen = ScriptedGenerator([VALID + "x", VALID])
-    result = await AgenticCompactor[None](
+    result = await Summarize[None](
         structured_summary=True,
         require_complete_reply=True,
         max_reply_tokens=len(VALID) + 1,

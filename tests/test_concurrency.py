@@ -62,7 +62,6 @@ from focus.harness import (
 )
 from focus.harness.turn import Turn
 from focus.preparation.records import Batch
-from focus.protocols import Summary
 from focus.scheduler import (
     Budget,
     ConcurrencyGating,
@@ -692,7 +691,7 @@ def _runtime(
         ),
         env=RoundEnv(),
         system_prompt="sys",
-        context=Summary(build_budget(max_prompt_tokens=64, max_interactions=2)),
+        context=build_budget(max_prompt_tokens=64, max_interactions=2),
         max_steps=6,
     )
     return Collector(

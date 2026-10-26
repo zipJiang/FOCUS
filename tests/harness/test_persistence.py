@@ -16,7 +16,7 @@ from focus.harness import (
     SQLiteCheckpointer,
     regions,
 )
-from focus.protocols import AppendOnly, Summary
+from focus.harness.context import AppendOnly
 from tests.harness.test_runner import QuietMemory, ToyCompactor
 from tests.helpers import ScriptedGenerator, ToyEnv, tool_call, toy_runner
 from tests.protocols.helpers import KeepRecent
@@ -185,7 +185,7 @@ async def test_all_protocols_restore_complete_state_with_fresh_runner(
     def protocol():
         return {
             "plain": lambda: AppendOnly(),
-            "summary": lambda: Summary(ToyCompactor()),
+            "summary": lambda: ToyCompactor(),
             "custom": KeepRecent,
         }[approach]()
 

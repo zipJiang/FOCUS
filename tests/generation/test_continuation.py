@@ -337,3 +337,34 @@ def test_same_policy_supports_independent_context_protocols():
     assert not ordinary.exact_continuation
     assert ordinary.tokens == policy.format.codec.render(history)
     assert not hasattr(policy.format, "continuation")
+
+
+def test_segments_sets_the_continuation_defaults_on_the_agent():
+    from focus import Agent, EveryDecision, PolicyFormat, Segments
+    from focus.codec import ChatCodec
+    from tests.helpers import FakeChatTokenizer, ScriptedGenerator, ToyEnv, toy_policy
+
+    format = PolicyFormat("chunks", ChatCodec(FakeChatTokenizer()), TokenChunkParser())
+    policy = toy_policy(ScriptedGenerator(["go"]))
+    policy = replace_format(policy, format)
+    agent = Agent(policy=policy, env=ToyEnv(), system_prompt="sys", context=Segments(4))
+
+    assert agent._sampling_params is not None
+    assert agent._sampling_params.max_tokens == 4
+    assert isinstance(agent._checkpoints, EveryDecision)
+    assert agent._finish_prompt is None
+    assert agent.protocol.continuation
+    with pytest.raises(ValueError, match="positive"):
+        Segments(0)
+
+
+def replace_format(policy, format):
+    """The same backend under another format."""
+    from focus import Policy
+
+    return Policy(
+        format=format,
+        complete=policy._complete,
+        exact=policy.provides_exact_tokens,
+        native=policy.provides_native_tool_calls,
+    )

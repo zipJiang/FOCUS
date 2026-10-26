@@ -21,7 +21,7 @@ from focus.harness import (
     Agent,
     Compaction,
     CompactionResult,
-    Compactor,
+    ContextManager,
     Env,
     InMemoryWorkspace,
     NullWorkspace,
@@ -367,7 +367,7 @@ async def test_finish_is_a_no_op_once_the_episode_ended() -> None:
     assert len(gen.prefixes) == 1
 
 
-class ToyCompactor(Compactor[ToyState]):
+class ToyCompactor(ContextManager[ToyState]):
     """Compact when the context grows past a threshold; persist and reset to seed.
 
     Length-based so it *relieves its own trigger*: resetting to the (short) seed drops
@@ -516,7 +516,7 @@ async def test_a_runner_with_no_compactor_asks_no_fold_question() -> None:
 
 
 class TalkativeCompactor(ToyCompactor):
-    """A fold that generated -- the shape an :class:`AgenticCompactor` returns."""
+    """A fold that generated -- the shape an :class:`Summarize` returns."""
 
     async def compact(
         self, compaction: Compaction[ToyState]
@@ -565,9 +565,9 @@ class UntaggedCompactor(ToyCompactor):
 async def test_the_runner_tags_a_folds_turns_itself() -> None:
     """The tag is the fold's only record, so the runner writes it rather than hoping.
 
-    ``Compactor.compact`` already promises this ("the runner tags whatever is returned
-    ``fold``"), and four readings now rest on it: ``folds``, ``boundaries()``, where
-    ``iter_run`` yields, and which checkpoints are forkable. A
+    ``ContextManager.compact`` already promises this ("the runner tags whatever is
+    returned ``fold``"), and four readings now rest on it: ``folds``,
+    ``boundaries()``, where ``iter_run`` yields, and which checkpoints are forkable. A
     compactor that left ``Turn``'s default tag used to cost a mislabelled pack; it must
     not cost the fold itself.
     """

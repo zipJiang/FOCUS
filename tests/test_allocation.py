@@ -8,7 +8,11 @@ from typing import Any
 
 import pytest
 
-from focus import ErrorReduction, NodeInfo, Priority
+from focus import (
+    ErrorReduction,
+    NodeInfo,
+    Priority,
+)
 from focus.allocation import (
     BetaBernoulli,
     CalibrationModel,

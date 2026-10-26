@@ -15,7 +15,7 @@ from focus.harness import (
     TurnTag,
 )
 from focus.harness.agent import Execution
-from focus.protocols import AppendOnly
+from focus.harness.context import AppendOnly
 from focus.scheduler import (
     PASS_KEY,
     Budget,

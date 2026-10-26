@@ -36,7 +36,7 @@ from focus.harness import (
     Agent,
     Compaction,
     CompactionResult,
-    Compactor,
+    ContextManager,
     Env,
     StepResult,
     Workspace,
@@ -44,7 +44,6 @@ from focus.harness import (
 from focus.harness.agent import Execution
 from focus.preparation import prepare_samples
 from focus.preparation.records import Batch
-from focus.protocols import Summary
 from focus.scheduler import (
     PASS_KEY,
     SchedulerState,
@@ -113,7 +112,7 @@ class CountEnv(Env[CountState, str]):
         )
 
 
-class EveryTurnCompactor(Compactor[CountState]):
+class EveryTurnCompactor(ContextManager[CountState]):
     """Folds after every turn, so the rollout offers real branch points to work with."""
 
     trigger = WhenTrigger(lambda prompt, state: state.n > 0)
@@ -147,7 +146,7 @@ def _runner(
         ),
         env=CountEnv(),
         system_prompt="sys",
-        context=Summary(EveryTurnCompactor()),
+        context=EveryTurnCompactor(),
         max_steps=4,
         **kwargs,
     )

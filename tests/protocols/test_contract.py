@@ -41,9 +41,9 @@ async def test_mixed_mutations_are_rejected_without_partial_execution():
 
 
 async def test_programming_failures_are_not_reported_as_invalid_model_actions():
-    from focus.protocols.base import ToolProtocol, schema
+    from focus.harness.context import ContextTools, schema
 
-    class Broken(ToolProtocol):
+    class Broken(ContextTools):
         def schemas(self):
             return (schema("break", "break", {}, []),)
 
