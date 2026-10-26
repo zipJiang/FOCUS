@@ -36,7 +36,6 @@ from focus.harness import (
     StepResult,
     Turn,
     TurnTag,
-    reevaluate,
     regions,
 )
 from focus.harness.packing import PackedSequence
@@ -45,9 +44,12 @@ from focus.preparation.records import spans_of
 from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerState, SchedulerView
 from tests.estimators import FixedWeight, RootReturn
-from tests.helpers import VERSION, ConstantScorer, rollout, turn
-from tests.trees import ANCHOR, stamped_child
+from tests.helpers import VERSION, rollout, turn
+from tests.trees import stamped_child
 from tests.trees import training_root_state as root_state
+
+#: A second logprob channel, written by the random logs alongside the behavior one.
+ANCHOR = "anchor"
 
 #: One test item per seed, ``CASES`` random logs inside each -- ~200 cases per
 #: invariant, at a fraction of the per-item cost of parametrizing 200 times.
@@ -654,7 +656,6 @@ def test_a_record_is_the_regions_of_its_edge_and_the_return_over_it(
             edge = node.payload.edge(parent.payload)
             assert record.spans == spans_of(edge), case
             assert record.edge_tokens == len(_generated(edge)), case
-            assert record.provenance is not None
 
         for critic in result.critic:
             node = state.nodes[critic.node_id]
@@ -667,9 +668,6 @@ def test_a_record_is_the_regions_of_its_edge_and_the_return_over_it(
             assert critic.context == node.metadata["value_contexts"]["v-base"]
 
         for record in result.actor:
-            # every edge here was drawn from the anchor proposal, which is the whole
-            # configuration that needs no correction
-            assert record.importance == 1.0, case
             assert record.group_id == state.nodes[record.node_id].parent_id, case
             if record.estimator == "test_fixed":
                 assert record.weight == pytest.approx(0.25), case
@@ -748,10 +746,7 @@ def test_flattening_gives_one_sample_per_span_that_says_where_it_sits(
             ), case
             assert {s["metadata"]["span_count"] for s in mine} == {len(record.spans)}
             assert {s["metadata"]["edge_tokens"] for s in mine} == {record.edge_tokens}
-            assert all(
-                s["reward"] == pytest.approx(record.weight * record.importance)
-                for s in mine
-            ), case
+            assert all(s["reward"] == pytest.approx(record.weight) for s in mine), case
             assert all(s["metadata"]["estimator"] == "test_root_return" for s in mine)
 
         for critic in result.critic:
@@ -762,85 +757,3 @@ def test_flattening_gives_one_sample_per_span_that_says_where_it_sits(
                 and s["metadata"]["lane"] == "critic"
             ]
             assert all(s["target"] == pytest.approx(critic.target) for s in mine), case
-
-
-# -- 5. re-scoring -------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("seed", SEEDS)
-async def test_rescoring_fills_every_turn_once_and_agrees_with_the_packs(
-    seed: int,
-) -> None:
-    """Scoring is per region, storage is per turn, and ``spans`` is the only bridge.
-
-    So the filled columns must land back on the turns that produced them (each turn's
-    own length, its own value), a second pass must cost nothing and change nothing --
-    a whole tree is walked one node at a time, and re-scoring a shared log per node
-    would be quadratic -- and an already-scored channel must survive untouched, since
-    the behavior policy's own logprobs are the ones an importance ratio is measured
-    against.
-
-    One backend call per region *that holds tokens*: a pack of turns conditioned on
-    nothing and generating nothing has no sequence to teacher-force, and its answer --
-    an empty column per span -- is known without asking. Every turn is still filled, so
-    the strict readers do not raise over it.
-    """
-    rng = random.Random(seed)
-    for case in range(CASES):
-        turns = _random_log(rng)
-        rs = rollout(*turns)
-        before = {
-            (i, v): lps for i, t in enumerate(turns) for v, lps in t.logprobs.items()
-        }
-        scorer = ConstantScorer(-0.5)
-        scored = len([seq for seq in regions(turns) if seq.tokens])
-
-        await reevaluate(rs, version="rescored", scorer=scorer)
-
-        assert scorer.calls == scored, case
-        for t in turns:
-            assert t.logprobs["rescored"] == (-0.5,) * len(t.tokens), case
-        # the pre-existing channels are what a ratio is measured against: untouched
-        assert all(turns[i].logprobs[v] == lps for (i, v), lps in before.items()), case
-
-        await reevaluate(rs, version="rescored", scorer=scorer)
-        assert scorer.calls == scored, case  # every region was skipped
-
-        for seq in regions(turns):
-            if "rescored" not in seq.logprobs:
-                # the one pack that carries no column: nothing in it generated a
-                # token, so there is no voter and nothing to be wrong about
-                assert all(end == start for _, start, end in seq.spans), case
-                continue
-            column = seq.logprobs["rescored"]
-            for i, start, end in seq.spans:
-                assert column[start:end] == turns[i].logprobs["rescored"], case
-            assert [column[i] for i, keep in enumerate(seq.trainable) if keep] == [
-                -0.5
-            ] * sum(seq.trainable), case
-
-
-@pytest.mark.parametrize("seed", SEEDS)
-async def test_rescoring_completes_a_channel_only_some_turns_carried(seed: int) -> None:
-    """A half-scored log is the normal case, and the pass has to finish it.
-
-    A region whose turns all carry the version is skipped entirely; one that is missing
-    even a single turn is scored and only the gaps are written, because an action's
-    logprobs under a policy are branch-independent and the recorded ones are the truth.
-    """
-    rng = random.Random(seed)
-    partial = complete = 0
-    for case in range(CASES):
-        turns = _random_log(rng)
-        rs = rollout(*turns)
-        held = {i: t.logprobs.get(ANCHOR) for i, t in enumerate(turns)}
-        partial += any(v is None for v in held.values())
-        complete += all(v is not None for v in held.values())
-
-        await reevaluate(rs, version=ANCHOR, scorer=ConstantScorer(-0.25))
-
-        for i, t in enumerate(turns):
-            expected = held[i] if held[i] is not None else (-0.25,) * len(t.tokens)
-            assert t.logprobs[ANCHOR] == expected, case
-    assert partial, "no log was ever half-scored"
-    assert complete, "no log ever arrived already scored"

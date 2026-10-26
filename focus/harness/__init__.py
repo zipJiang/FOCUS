@@ -22,7 +22,6 @@ from focus.harness.persistence import (
     MemoryCheckpointer,
     SQLiteCheckpointer,
 )
-from focus.harness.rescoring import PolicyScorer, TokenScorer, reevaluate
 from focus.harness.rollout import TASK, AnyRollout, RolloutState
 from focus.harness.runner import DEFAULT_FINISH_PROMPT, Runner
 from focus.harness.tools import (
@@ -65,11 +64,9 @@ __all__ = [
     "Env",
     "FoldEnv",
     "FoldState",
-    "TokenScorer",
     "InMemoryWorkspace",
     "NullWorkspace",
     "PackedSequence",
-    "PolicyScorer",
     "PromptTokens",
     "RolloutState",
     "RoundBudget",
@@ -94,7 +91,6 @@ __all__ = [
     "flatten_tool_calls",
     "format_transcript",
     "logprob",
-    "reevaluate",
     "regions",
     "tool_schema",
     "trainable_logprobs",

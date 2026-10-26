@@ -136,11 +136,10 @@ def test_original_chain_credits_only_selected_and_new_checkpoints():
     leaf = state.add_child(
         c.id, search_payload(*c.payload.turns, turn([-1.0], reward=1, done=True))
     )
-    from focus.scheduler import stamp_provenance
     from tests.trees import stamp
 
     for node in (c, leaf):
-        stamp_provenance(node, stamp())
+        stamp(node)
     ledger.record(n, [c, leaf])
     assert {k: v.returns.n for k, v in ledger.observations.items()} == {
         n.id: 1,
@@ -183,14 +182,8 @@ def test_missing_and_nonfinite_prior_rejected(prior):
         assign(view, config, n)
 
 
-def test_exploration_and_incomplete_suffixes_are_not_evidence():
+def test_incomplete_suffixes_are_not_evidence():
     state, view, ledger, config = setup()
-    stamped_child(
-        state,
-        0,
-        search_payload(turn([-1.0], done=True, reward=1)),
-        proposal_id="explore",
-    )
     unfinished = stamped_child(state, 0, search_payload(turn([-1.0]), truncated=True))
     ledger.record(view.root, [unfinished])
     assert not ledger.observations

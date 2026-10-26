@@ -57,7 +57,6 @@ from focus.harness import (
     StateCounter,
     StepResult,
     SubmitFields,
-    TokenScorer,
     ToolEnv,
     ToolError,
     Trigger,
@@ -93,11 +92,8 @@ from focus.reward import (
 )
 from focus.reward.config import RewardConfig
 from focus.scheduler import (
-    AnchorProposal,
     ConcurrencyGating,
     GatingPolicy,
-    MixtureProposal,
-    ProposalPolicy,
     SchedulerView,
     WidthGating,
 )
@@ -164,7 +160,6 @@ __all__ = [
     "SUBMIT",
     "StepResult",
     "SubmitFields",
-    "TokenScorer",
     "ToolEnv",
     "ToolError",
     "ToolTurn",
@@ -208,11 +203,8 @@ __all__ = [
     "VLLMRewardModel",
     "register_reward",
     # The shape of the search: how far an expansion rolls, how wide, under which law.
-    "AnchorProposal",
     "GatingPolicy",
-    "ProposalPolicy",
     "ConcurrencyGating",
-    "MixtureProposal",
     "WidthGating",
     # What an edge is worth to the actor loss.
     "AdvantageEstimator",

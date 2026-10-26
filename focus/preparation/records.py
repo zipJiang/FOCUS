@@ -12,7 +12,6 @@ from focus.harness import AnyRollout
 from focus.harness.packing import PackedSequence, regions
 from focus.harness.turn import Turn
 from focus.reward.config import RewardConfig
-from focus.scheduler.core.execution import EdgeProvenance, provenance_of
 from focus.scheduler.core.tree import Node, SchedulerView
 
 #: Which head a sample trains. Two, and only two: the actor's scalar is a weight to
@@ -60,15 +59,14 @@ class ActorSample:
     estimator: str
     #: The actor weight :math:`w` -- written by ``assign``, used as-is.
     weight: float = 0.0
-    #: The clipped anchor/behavior ratio for this edge.
-    importance: float = 1.0
     #: Whatever the estimator wants said about how it reached :attr:`weight` -- e.g.
     #: ``{"advantage": A, "baseline": V}``. Metadata, not arithmetic: it is carried into
     #: the trainer's ``metadata["diagnostics"]`` and never multiplied into anything.
     #: Frozen at export, so a record cannot be rewritten through the dict its estimator
     #: kept.
     diagnostics: Mapping[str, float] = _NO_DIAGNOSTICS
-    provenance: EdgeProvenance | None = None
+    #: Index of the search pass that produced this edge, when one did.
+    search_pass: int | None = None
 
     @property
     def edge_tokens(self) -> int:
@@ -200,18 +198,13 @@ def edge_spans(
 
 def _trainable_edges(
     view: SchedulerView[AnyRollout],
-) -> Iterator[tuple[Node[AnyRollout], Node[AnyRollout], EdgeProvenance]]:
-    """Stamped edges ending at live checkpoints or terminals; no descendant lookup."""
+) -> Iterator[tuple[Node[AnyRollout], Node[AnyRollout]]]:
+    """Searched edges ending at live checkpoints or terminals."""
     for node in view.nodes():
         parent = None if node.parent_id is None else view.node(node.parent_id)
-        stamp = provenance_of(node)
-        if (
-            parent is None
-            or stamp is None
-            or not (node.payload.done or node.payload.forkable)
-        ):
+        if parent is None or not (node.payload.done or node.payload.forkable):
             continue
-        yield node, parent, stamp
+        yield node, parent
 
 
 def _refuse_non_finite(record: ActorSample | CriticSample) -> None:
@@ -235,10 +228,6 @@ def _refuse_non_finite(record: ActorSample | CriticSample) -> None:
         estimator = f"estimator {record.estimator!r}"
         scalars = [
             ("weight", record.weight, estimator),
-            # not the estimator's: one ratio is computed per edge and every slot on it
-            # shares that one, so blaming a recipe here would send the reader to the
-            # wrong module
-            ("importance", record.importance, "the anchor/behavior ratio"),
             # Diagnostics are checked too, though nothing trains on them: they are the
             # numbers a run is debugged by and they go out over the same JSON encoder,
             # which writes a bare `NaN` no strict reader accepts. A `nan` here also
@@ -254,6 +243,5 @@ def _refuse_non_finite(record: ActorSample | CriticSample) -> None:
             raise ValueError(
                 f"{source} produced a non-finite {name} ({value}) on the edge into "
                 + f"node {record.node_id}. Export will not write a zero in its place: "
-                + "check the env's rewards, the value channel, and the anchor logprobs "
-                + "this edge was scored against."
+                + "check the env's rewards and the value channel."
             )

@@ -26,7 +26,7 @@ class SampleFactory[T](Protocol):
 
     The five keywords named here are the actor contract. ``**extra`` carries
     the actor's own keys
-    (``importance``, ``estimator``, ``group_id``, ``diagnostics``) and the edge-shape
+    (``estimator``, ``group_id``, ``diagnostics``) and the edge-shape
     keys (``node_id``, ``edge_tokens``, ``span_index``, ``span_count``,
     ``group_edge_count``), which arrive by
     name on every call and may be ignored. A factory *must* take ``**extra``, because
@@ -37,9 +37,7 @@ class SampleFactory[T](Protocol):
     is a ``list[MySample]`` rather than a ``list[Any]`` a trainer then has to cast.
 
     ``span`` is the packed region itself, and ``logprobs`` is the behavior column
-    already selected out of it (:attr:`PreparedBatch.behavior_version`) -- a factory
-    never has to know which channel a run generated under, and one that wants another
-    (the anchor, say) can still read ``span.logprobs`` for it.
+    already selected out of it (:attr:`PreparedBatch.behavior_version`).
     """
 
     def __call__(
@@ -126,7 +124,6 @@ def to_samples(
     *,
     sample_factory: None = None,
     critic_sample_factory: None = None,
-    apply_importance: bool = True,
     min_abs_advantage: float | None = None,
 ) -> list[dict[str, Any]]: ...
 
@@ -138,7 +135,6 @@ def to_samples[T](
     *,
     sample_factory: SampleFactory[T] | None = None,
     critic_sample_factory: CriticSampleFactory[T] | None = None,
-    apply_importance: bool = True,
     min_abs_advantage: float | None = None,
 ) -> list[T]: ...
 
@@ -149,13 +145,11 @@ def to_samples(
     *,
     sample_factory: SampleFactory[Any] | None = None,
     critic_sample_factory: CriticSampleFactory[Any] | None = None,
-    apply_importance: bool = True,
     min_abs_advantage: float | None = None,
 ) -> list[Any]:
     """Export actor spans and checkpoint critic contexts, one group per prompt.
 
-    ``reward`` is the actor weight its estimator wrote. Importance is folded in when
-    ``apply_importance`` is true and emitted as its own field either way; whatever the
+    ``reward`` is the actor weight its estimator wrote; whatever the
     estimator said about how it reached the weight rides in
     ``metadata["diagnostics"]``, where no trainer can mistake it for a coefficient.
 
@@ -165,7 +159,7 @@ def to_samples(
     means ``list[dict[str, Any]]``, a factory means a list of whatever it returns.
 
     ``min_abs_advantage`` excludes whole actor edges whose absolute estimator weight
-    is at most the cutoff, before importance correction. ``None`` disables filtering;
+    is at most the cutoff. ``None`` disables filtering;
     zero excludes exactly zero weights. Edges containing malformed compaction
     attempts are retained to preserve their small shaping signal.
     Critic records and the prepared batch remain
@@ -204,8 +198,6 @@ def to_samples(
 
     for actor in actors:
         reward = actor.weight
-        if apply_importance:
-            reward *= actor.importance
         samples.extend(
             _record_samples(
                 make,
@@ -214,7 +206,6 @@ def to_samples(
                 reward=reward,
                 lane="actor",
                 group_index=group_index,
-                importance=actor.importance,
                 diagnostics=actor.diagnostics,
                 estimator=actor.estimator,
                 group_id=actor.group_id,
@@ -244,7 +235,6 @@ def _dict_sample(
     reward: float,
     lane: Lane,
     group_index: int,
-    importance: float = 1.0,
     estimator: str | None = None,
     diagnostics: Mapping[str, float] | None = None,
     **extra: Any,
@@ -279,7 +269,6 @@ def _dict_sample(
         "loss_mask": list(map(bool, span.trainable)),
         "logprobs": list(logprobs),
         "reward": reward,
-        "importance": importance,
         "group_index": group_index,
         "metadata": metadata,
     }
@@ -381,7 +370,7 @@ def format_edges(result: PreparedBatch) -> str:
         )
     lines = []
     for edge in sorted(result.actor, key=lambda r: r.node_id):
-        stamp = edge.provenance.pass_id if edge.provenance else "-"
+        stamp = "-" if edge.search_pass is None else f"pass-{edge.search_pass}"
         lines.append(
             f"edge {edge.node_id:>3}  {stamp:<9} tag={_tag_of(edge.spans):<5} "
             f"tokens={edge.edge_tokens:>4}  " + "  ".join(scored.get(edge.node_id, ()))

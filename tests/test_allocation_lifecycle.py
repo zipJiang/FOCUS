@@ -29,7 +29,6 @@ from focus.scheduler import (
     SchedulerState,
     SchedulerView,
     edge_return,
-    stamp_provenance,
 )
 from tests.helpers import rollout, turn
 from tests.scheduler.fakes import Toy
@@ -287,7 +286,7 @@ def test_all_suffixes_match_existing_return_math_and_are_linear(
     monkeypatch.setattr(RewardConfig, "train_reward", counted)
     ledger = RolloutLedger(config)
     for node in chain:
-        stamp_provenance(node, stamp())
+        stamp(node)
     ledger.record(root, chain)
     assert calls == 40  # one reward evaluation per new transition, regardless of nodes
     for node_id, value in expected.items():
@@ -445,7 +444,7 @@ def test_invalid_checkpoint_boundaries_do_not_partially_record_evidence() -> Non
     leaf = state.add_child(first.id, rollout(turn(done=True)))
     ledger = RolloutLedger(RewardConfig())
     for node in (first, leaf):
-        stamp_provenance(node, stamp())
+        stamp(node)
     with pytest.raises(ValueError, match="nondecreasing"):
         ledger.record(state.nodes[0], [first, leaf])
     assert not ledger.observations

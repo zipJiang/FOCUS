@@ -27,9 +27,7 @@ class RewardConfig:
     batch, which is what makes an estimate collected before a decision and one collected
     after it commensurable.
 
-    ``value_version`` and ``anchor_version`` name channels, not values: the critic key
-    playing :math:`V_{\\mathrm{base}}` and the logprob key of the anchor policy
-    :math:`\\pi_k` (see :func:`trainable_logprobs`).
+    ``value_version`` names the channel the critic's estimates are stored under.
 
     A ``builds_self`` registry namespace, so an authored mapping (a YAML file, a
     ``RolloutSpec`` field) is coerced into this frozen record rather than reaching a
@@ -49,13 +47,6 @@ class RewardConfig:
     #: What one unit of shaping reward is worth against one unit of outcome reward.
     beta_step: float = 1.0
     value_version: str = "v-base"
-    anchor_version: str = "anchor"
-    #: Clip on the anchor/behavior importance ratio. It belongs beside the two channel
-    #: names because it bounds exactly the quantity they define: sequence-level ratios
-    #: over long regions are heavy-tailed, and one un-clipped outlier would dominate a
-    #: whole batch. Every estimator reading the same edge must read the same bound, so
-    #: this is the batch's statement of it rather than any one estimator's.
-    clip: float = 10.0
     #: Identifies this configuration in every record derived under it.
     config_id: str = "rc-0"
     component_weights: dict[str, float] = field(default_factory=dict)

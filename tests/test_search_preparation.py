@@ -25,7 +25,7 @@ from focus import (
     run_search,
 )
 from focus.allocation import Observations
-from focus.scheduler import provenance_of
+from focus.scheduler import PASS_KEY
 from tests.estimators import FixedWeight
 from tests.test_loop import _runtime
 
@@ -81,9 +81,9 @@ async def test_skips_preserve_indices_without_building_zero_budget_allocators() 
     assert skipped.calls == 0
     assert observed.calls == 1
     assert observed.ledger
-    assert {p.pass_id for n in state.nodes.values() if (p := provenance_of(n))} == {
-        "pass-2"
-    }
+    assert {
+        n.metadata[PASS_KEY] for n in state.nodes.values() if PASS_KEY in n.metadata
+    } == {2}
     assert sum(c.m_done for c in observed.ledger.values()) == state.stats["rollouts"]
     assert all(c.m_pending == 0 for c in observed.ledger.values())
     assert all(c.returns.n >= 1 for c in observed.ledger.values())
@@ -108,10 +108,9 @@ async def test_gate_changes_reopen_nodes_and_policies_keep_their_backup() -> Non
     assert capture.ledger
     assert sum(c.m_done for c in capture.ledger.values()) == state.stats["rollouts"]
     assert all(c.m_pending == 0 for c in capture.ledger.values())
-    assert {p.pass_id for n in state.nodes.values() if (p := provenance_of(n))} == {
-        "pass-0",
-        "pass-1",
-    }
+    assert {
+        n.metadata[PASS_KEY] for n in state.nodes.values() if PASS_KEY in n.metadata
+    } == {0, 1}
 
 
 async def test_one_tree_prepares_independent_recipes_without_mutating_search() -> None:

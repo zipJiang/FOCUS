@@ -28,7 +28,6 @@ from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerView
 from tests.estimators import FixedWeight, RootReturn
 from tests.helpers import VERSION, rollout, turn
-from tests.trees import stamp as _stamp
 from tests.trees import stamped_child
 from tests.trees import training_root_state as root_state
 
@@ -242,9 +241,8 @@ def _result() -> PreparedBatch:
                 reward_config_id="rc-0",
                 estimator="refined_td",
                 weight=-1.5,
-                importance=2.0,
                 diagnostics={"advantage": -1.5, "baseline": 0.25},
-                provenance=_stamp("pass-0"),
+                search_pass=0,
             ),
             ActorSample(
                 node_id=5,
@@ -254,7 +252,7 @@ def _result() -> PreparedBatch:
                 estimator="test_custom",
                 weight=0.4,
                 diagnostics={"advantage": 0.4, "confidence": 1.0},
-                provenance=_stamp("pass-1"),
+                search_pass=1,
             ),
             ActorSample(
                 node_id=6,
@@ -264,7 +262,7 @@ def _result() -> PreparedBatch:
                 estimator="test_custom",
                 weight=-0.4,
                 diagnostics={"advantage": -0.4, "confidence": 1.0},
-                provenance=_stamp("pass-1"),
+                search_pass=1,
             ),
         ),
         critic=(
@@ -313,7 +311,7 @@ def test_a_multi_region_edge_becomes_one_sample_per_region() -> None:
     samples = [s for s in to_samples(_result(), 0) if s["metadata"].get("node_id") == 1]
 
     assert len(samples) == 2
-    assert all(s["reward"] == pytest.approx(-3.0) for s in samples)
+    assert all(s["reward"] == pytest.approx(-1.5) for s in samples)
 
 
 def test_the_loss_mask_stays_aligned_to_the_tokens() -> None:
@@ -325,24 +323,6 @@ def test_the_loss_mask_stays_aligned_to_the_tokens() -> None:
         assert not sample["logprobs"] or len(sample["logprobs"]) == len(
             sample["tokens"]
         )
-
-
-def test_the_importance_correction_is_applied_but_also_reported() -> None:
-    corrected = next(
-        s
-        for s in to_samples(_result(), 0, apply_importance=True)
-        if s["metadata"].get(ESTIMATOR_KEY) == "refined_td"
-    )
-    raw = next(
-        s
-        for s in to_samples(_result(), 0, apply_importance=False)
-        if s["metadata"].get(ESTIMATOR_KEY) == "refined_td"
-    )
-
-    assert corrected["reward"] == pytest.approx(-3.0)
-    assert raw["reward"] == pytest.approx(-1.5)
-    assert corrected["importance"] == pytest.approx(2.0)
-    assert corrected["reward"] < 0
 
 
 def test_a_custom_sample_factory_builds_the_trainer_s_own_type() -> None:
@@ -435,27 +415,20 @@ def test_advantage_cutoff_filters_whole_edges_and_preserves_critic_and_batch() -
     assert len(result.actor) == 3
 
 
-def test_advantage_cutoff_precedes_importance_and_ignores_diagnostics() -> None:
+def test_advantage_cutoff_ignores_diagnostics() -> None:
     result = _result()
     result.actor[0].weight = 0.03
-    result.actor[0].importance = 100.0
     result.actor[0].diagnostics = {"advantage": 10.0}
     result.actor[1].weight = 0.05
-    result.actor[1].importance = 0.01
-    for apply_importance in (True, False):
-        samples = to_samples(
-            result, 0, min_abs_advantage=0.04, apply_importance=apply_importance
-        )
-        assert {
-            s["metadata"]["node_id"]
-            for s in samples
-            if s["metadata"]["lane"] == "actor"
-        } == {5, 6}
+    samples = to_samples(result, 0, min_abs_advantage=0.04)
+    assert {
+        s["metadata"]["node_id"] for s in samples if s["metadata"]["lane"] == "actor"
+    } == {5, 6}
 
 
 def test_filtered_edge_keeps_original_prompt_normalization() -> None:
     result = _result()
-    samples = to_samples(result, 0, min_abs_advantage=0.5, apply_importance=False)
+    samples = to_samples(result, 0, min_abs_advantage=0.5)
     actor = [s for s in samples if s["metadata"]["lane"] == "actor"]
     assert len(actor) == 2  # Both regions of the single retained edge.
     contribution = sum(
@@ -708,7 +681,7 @@ def _searched_tree():
         state,
         second.id,
         rollout(shared, turn([-3.0], reward=0.25), turn([-4.0], done=True, reward=0.5)),
-        pass_id="pass-1",
+        search_pass=1,
     )
     for node in state.nodes.values():
         node.critic.clear()
@@ -789,7 +762,7 @@ def test_malformed_compaction_retained_below_cutoff_with_exact_weights():
     result.actor[0].spans = regions((bad,))
     result.actor[0].weight = -0.002
     result.actor[1].weight = result.actor[2].weight = 0
-    samples = to_samples(result, 0, min_abs_advantage=0.02, apply_importance=False)
+    samples = to_samples(result, 0, min_abs_advantage=0.02)
     actors = [s for s in samples if s["metadata"]["lane"] == "actor"]
     assert len(actors) == 1
     assert actors[0]["reward"] == -0.002

@@ -20,8 +20,8 @@ from focus.preparation.records import (
 from focus.preparation.refined_td import checkpoint_value
 from focus.reward.config import RewardConfig
 from focus.scheduler.core.critic import VALUE_CONTEXTS_KEY
-from focus.scheduler.core.execution import provenance_of
-from focus.scheduler.core.returns import finished_through, importance
+from focus.scheduler.core.execution import PASS_KEY
+from focus.scheduler.core.returns import finished_through
 from focus.scheduler.core.tree import SchedulerState, SchedulerView
 
 logger = logging.getLogger(__name__)
@@ -37,19 +37,6 @@ def prepare_samples(
     """Compute one actor recipe and critic targets before flattening token spans."""
     view = SchedulerView(state)
     evidence = evidence_of(view, reward_config)
-    if evidence.behavior_version not in (None, behavior_version):
-        raise ValueError(
-            f"rollout evidence behavior version {evidence.behavior_version!r} "
-            f"differs from behavior_version={behavior_version!r}"
-        )
-    stamped = {
-        p.behavior_version for n in view.nodes() if (p := provenance_of(n)) is not None
-    }
-    if stamped and stamped != {behavior_version}:
-        raise ValueError(
-            f"tree behavior versions {sorted(stamped)!r} differ from "
-            f"behavior_version={behavior_version!r}"
-        )
     if estimator is not None and not estimator.name:
         raise ValueError(
             f"{type(estimator).__name__} has no `name`; "
@@ -57,7 +44,7 @@ def prepare_samples(
         )
     actor: list[ActorSample] = []
     critic: list[CriticSample] = []
-    for node, parent, stamp in _trainable_edges(view) if estimator is not None else ():
+    for node, parent in _trainable_edges(view) if estimator is not None else ():
         if (
             estimator is not None
             and estimator.requires_completed_paths
@@ -85,14 +72,7 @@ def prepare_samples(
                     group_id=parent.id,
                     reward_config_id=reward_config.config_id,
                     estimator=estimator.name,
-                    importance=importance(
-                        node,
-                        parent,
-                        reward_config,
-                        behavior_version,
-                        reward_config.clip,
-                    ),
-                    provenance=stamp,
+                    search_pass=node.metadata.get(PASS_KEY),
                 )
             )
     critic_override = (

@@ -20,7 +20,6 @@ from focus import (
     Runner,
     SamplingParams,
     TinkerPolicy,
-    TokenScorer,
     VLLMPolicy,
 )
 from focus.generation import GenerateResult, NativeToolCall
@@ -214,8 +213,6 @@ async def test_native_tools_errors_nudges_and_forks(
         assert all(
             c["store"] is False and "previous_response_id" not in c for c in wire.calls
         )
-    with pytest.raises(ValueError, match="exact-token policy"):
-        TokenScorer(policy)
     with pytest.raises(NotImplementedError, match="token input"):
         await policy.agenerate_tokens([1, 2])
 

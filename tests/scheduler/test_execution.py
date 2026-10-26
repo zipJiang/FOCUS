@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pickle
-import random
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, cast
@@ -19,18 +18,13 @@ from focus.harness import (
     TurnTag,
 )
 from focus.protocols import AppendOnly
-from focus.registry import build
 from focus.scheduler import (
-    PROVENANCE_KEY,
+    PASS_KEY,
     Budget,
-    EdgeProvenance,
     Expander,
-    ProposalPolicy,
     RolloutExpander,
     Scheduler,
-    provenance_of,
 )
-from focus.scheduler.core.proposal import AnchorProposal, MixtureProposal
 from tests.helpers import (
     VERSION,
     ScriptedGenerator,
@@ -39,7 +33,6 @@ from tests.helpers import (
     toy_runner,
     turn,
 )
-from tests.trees import stamp
 
 
 def fold_marker(version: str = VERSION) -> Turn[None]:
@@ -63,45 +56,10 @@ def as_runner(fake: object) -> Runner[None, Any]:
     return cast("Runner[None, Any]", fake)
 
 
-# -- proposals -----------------------------------------------------------------------
-
 EXPLORE = SamplingParams(temperature=1.5)
-ANCHOR = SamplingParams(temperature=0.6)
 
 
-def test_the_anchor_proposal_draws_one_law_and_names_it() -> None:
-    proposal = AnchorProposal(sampling_params=ANCHOR)
-
-    assert proposal.draw() == ("anchor", ANCHOR)
-
-
-def test_a_mixture_reports_which_component_it_drew() -> None:
-    """Which law produced an edge decides whether it needs correcting -- and a
-    temperature read back off the params would not say whether the coin came up."""
-    always = MixtureProposal(explore=EXPLORE, epsilon=1.0, anchor=ANCHOR)
-    never = MixtureProposal(explore=EXPLORE, epsilon=0.0, anchor=ANCHOR)
-
-    assert always.draw() == ("explore", EXPLORE)
-    assert never.draw() == ("anchor", ANCHOR)
-
-
-def test_a_mixture_splits_at_epsilon_under_a_seeded_rng() -> None:
-    proposal = MixtureProposal(
-        explore=EXPLORE, epsilon=0.25, anchor=ANCHOR, rng=random.Random(0)
-    )
-
-    drawn = [proposal.draw()[0] for _ in range(2000)]
-
-    assert 0.2 < drawn.count("explore") / len(drawn) < 0.3
-
-
-def test_mixture_validates_epsilon_and_builds_from_the_registry() -> None:
-    with pytest.raises(ValueError, match="epsilon"):
-        MixtureProposal(explore=EXPLORE, epsilon=1.5)
-    assert isinstance(build(ProposalPolicy, {"name": "anchor"}), AnchorProposal)
-
-
-# -- provenance ----------------------------------------------------------------------
+# -- annotations -------------------------------------------------------------
 
 
 class ScriptedExpander(Expander[RolloutState[None]]):
@@ -114,21 +72,17 @@ class ScriptedExpander(Expander[RolloutState[None]]):
 
 
 class StampedExpander(ScriptedExpander):
-    def __init__(self, provenance: EdgeProvenance) -> None:
-        self._provenance = provenance
-
     async def expand(self, payload):
         chain, _ = await super().expand(payload)
-        return chain, {PROVENANCE_KEY: self._provenance}
+        return chain, {PASS_KEY: 3}
 
 
 @pytest.mark.asyncio
-async def test_every_node_an_expansion_creates_carries_its_provenance() -> None:
+async def test_every_node_an_expansion_creates_carries_its_annotation() -> None:
     """The payload exists before the node does, so the expander hands the record to
     the scheduler rather than reaching for a node it cannot see."""
-    stamped = stamp()
     scheduler: Scheduler[RolloutState[None]] = Scheduler(
-        expander=StampedExpander(stamped),
+        expander=StampedExpander(),
         termination=Budget(max_rollouts=2),
         gating=WidthGating(2),
         max_concurrency=1,
@@ -138,8 +92,8 @@ async def test_every_node_an_expansion_creates_carries_its_provenance() -> None:
 
     created = [n for n in result.nodes.values() if n.id != 0]
     assert created
-    assert all(provenance_of(n) == stamped for n in created)
-    assert provenance_of(result.nodes[0]) is None  # nothing produced the root
+    assert all(n.metadata[PASS_KEY] == 3 for n in created)
+    assert PASS_KEY not in result.nodes[0].metadata  # nothing produced the root
 
 
 @pytest.mark.asyncio
@@ -154,22 +108,6 @@ async def test_an_unstamped_expansion_leaves_metadata_alone() -> None:
     result = await scheduler.run(rollout())
 
     assert all(not n.metadata for n in result.nodes.values())
-
-
-def test_the_expander_records_the_component_the_proposal_actually_drew() -> None:
-    """A mixture that drew `explore` must not be recorded as an anchor draw."""
-    expander: RolloutExpander[None] = RolloutExpander(
-        runner=as_runner(None),  # `_annotation` never reaches it
-        proposal=MixtureProposal(explore=EXPLORE, epsilon=1.0),
-        provenance=stamp(),
-    )
-
-    annotation = expander._annotation("explore")
-
-    stamped = annotation[PROVENANCE_KEY]
-    assert isinstance(stamped, EdgeProvenance)
-    assert stamped.proposal_id == "explore"
-    assert stamped.pass_id == "pass-0"
 
 
 # -- shared completion loop ----------------------------------------------------------
@@ -285,19 +223,15 @@ async def test_ended_inputs_do_not_generate():
 
 
 @pytest.mark.asyncio
-async def test_proposal_reaches_every_advance_and_forced_answer():
+async def test_pass_sampling_reaches_every_advance_and_forced_answer():
     runner = ScriptedRunner("task", "fold", "task", max_steps=2)
     expander = RolloutExpander(
-        runner,
-        proposal=MixtureProposal(explore=EXPLORE, epsilon=1.0),
-        provenance=stamp(),
+        runner, sampling_params=EXPLORE, annotation={PASS_KEY: 1}
     )
     chain, annotation = await expander.expand(rollout())
     assert runner.seen == [EXPLORE, EXPLORE, EXPLORE]
     assert chain[-1].truncated
-    provenance = annotation[PROVENANCE_KEY]
-    assert isinstance(provenance, EdgeProvenance)
-    assert provenance.proposal_id == "explore"
+    assert annotation == {PASS_KEY: 1}
 
 
 @pytest.mark.asyncio

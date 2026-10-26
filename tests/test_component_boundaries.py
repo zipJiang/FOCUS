@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 from focus import (
@@ -9,7 +7,6 @@ from focus import (
     InMemoryWorkspace,
     NullWorkspace,
     Runtime,
-    TokenScorer,
 )
 from focus.config import RolloutSpec
 from focus.generation.parsing import HermesToolCallParser
@@ -105,19 +102,6 @@ def test_storage_validation_accepts_capabilities_without_concrete_type():
         StorageTool().validate_workspace(NullWorkspace())
 
 
-def test_runtime_composition_preserves_scorer_services():
-    policy = ScriptedGenerator(["answer"])
-    scorer_services = ExecutionServices()
-    scorer = TokenScorer(policy, services=scorer_services)
-    left, right = toy_runner(policy), toy_runner(policy)
-    first = Runtime(runner=left, scorer=scorer)
-    second = Runtime(runner=right, scorer=scorer)
-    copied = replace(first)
-    assert first.scorer is second.scorer is copied.scorer is scorer
-    assert scorer.services is scorer_services
-    assert left.services is not right.services
-
-
 @pytest.mark.parametrize("own_services", [False, True])
 async def test_slime_preserves_factory_services_and_respects_ownership(
     monkeypatch, own_services
@@ -130,14 +114,12 @@ async def test_slime_preserves_factory_services_and_respects_ownership(
             await super().aclose()
 
     services = Services()
-    scorer_services = Services()
     policy = ScriptedGenerator(["answer"])
-    scorer = TokenScorer(policy, services=scorer_services)
     seen = []
 
     def factory(args):
         runner = toy_runner(policy, services=services)
-        return Runtime(runner=runner, scorer=scorer)
+        return Runtime(runner=runner)
 
     async def collect(prompt, runtime, **kwargs):
         seen.append(runtime)
@@ -151,13 +133,11 @@ async def test_slime_preserves_factory_services_and_respects_ownership(
     await hook(object(), "first")
     await hook(object(), "second")
     assert all(runtime.runner.services is services for runtime in seen)
-    assert scorer.services is scorer_services
     await hook.aclose()
     await hook.aclose()
     assert closed == ([services] if own_services else [])
     if not own_services:
         await services.aclose()
-    await scorer_services.aclose()
 
 
 async def test_slime_closes_other_owned_services_after_one_close_fails(monkeypatch):

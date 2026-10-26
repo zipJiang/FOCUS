@@ -13,7 +13,6 @@ from focus.scheduler.core.allocation import (
     Observations,
     RankedSession,
 )
-from focus.scheduler.core.execution import drawn_from_anchor, provenance_of
 from focus.scheduler.core.tree import Node, SchedulerView
 
 EVIDENCE_KEY = "rollout_evidence"
@@ -25,7 +24,6 @@ class RolloutEvidence:
 
     reward_config: RewardConfig
     observations: dict[int, Observations]
-    behavior_version: str | None = None
 
 
 def evidence_of(
@@ -68,23 +66,6 @@ class RolloutLedger(AllocationLedger[AnyRollout]):
     def record(self, parent: Node[AnyRollout], chain: list[Node[AnyRollout]]) -> None:
         if not chain or not chain[-1].payload.done:
             return
-        # A proposal samples the entire continuation. Its suffix is anchor-value
-        # evidence only when that continuation was drawn from the anchor.
-        if not all(
-            drawn_from_anchor(n, self.reward_config.anchor_version) for n in chain
-        ):
-            return
-        stamps = [provenance_of(n) for n in chain]
-        versions = {p.behavior_version for p in stamps if p is not None}
-        configs = {p.reward_config_id for p in stamps if p is not None}
-        if len(versions) != 1 or configs != {self.reward_config.config_id}:
-            raise ValueError("inconsistent rollout evidence provenance")
-        if self._root is not None:
-            stored = self._root.metadata[EVIDENCE_KEY]
-            assert isinstance(stored, RolloutEvidence)
-            version = next(iter(versions))
-            if stored.behavior_version not in (None, version):
-                raise ValueError("rollout evidence mixes behavior versions")
         turns = chain[-1].payload.turns
         cursor, total = len(turns), 0.0
         values = []
@@ -108,10 +89,6 @@ class RolloutLedger(AllocationLedger[AnyRollout]):
             if not math.isfinite(total):
                 raise ValueError("non-finite rollout suffix return")
             values.append((node, total))
-        if self._root is not None:
-            self._root.metadata[EVIDENCE_KEY] = RolloutEvidence(
-                self.reward_config, self.observations, next(iter(versions))
-            )
         # Calculate first, then commit so malformed boundaries leave no partial
         # evidence.
         for node, value in reversed(values):

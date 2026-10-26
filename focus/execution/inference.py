@@ -29,7 +29,6 @@ class InferenceRequest:
     tools: tuple[dict[str, Any], ...] = ()
     params: SamplingParams | None = None
     owner: Owner = DEFAULT_OWNER
-    token_input: bool = False
     queue_timeout: float | None = None
     execution_timeout: float | None = None
 
@@ -71,8 +70,6 @@ class LocalInferenceExecutor:
             raise ValueError("request format differs from registered policy")
 
         async def generate() -> GenerateResult:
-            if request.token_input:
-                return await policy.agenerate_tokens(request.tokens, request.params)
             prompt = PreparedPrompt(
                 request.tokens, policy.format, request.messages, request.tools
             )
@@ -155,7 +152,6 @@ class ExecutionServices:
         *,
         owner: Owner = DEFAULT_OWNER,
         timeout: float | None = None,
-        token_input: bool = False,
         queue_timeout: float | None = None,
     ) -> GenerateResult:
         if prompt.exact_continuation:
@@ -177,7 +173,6 @@ class ExecutionServices:
             tuple(prompt.tools),
             deepcopy(params),
             owner,
-            token_input=token_input,
             execution_timeout=timeout,
             queue_timeout=queue_timeout,
         )

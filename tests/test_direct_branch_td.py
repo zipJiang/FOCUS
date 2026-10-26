@@ -95,15 +95,6 @@ def test_bootstrap_leaf_without_target_and_fold_duration_discount():
     assert batch.actor[0].diagnostics["duration"] == 2
 
 
-def test_foreign_proposal_is_not_silently_counted():
-    state, view, _, config = setup()
-    stamped_child(
-        state, 0, search_payload(turn([-1.0], reward=1, done=True)), proposal_id="other"
-    )
-    with pytest.raises(ValueError, match="anchor-policy"):
-        direct_branch_values(view, config)
-
-
 @pytest.mark.parametrize("prior", [None, float("nan"), float("inf")])
 def test_missing_or_nonfinite_successor_prior_rejected(prior):
     state, view, _, config = setup()

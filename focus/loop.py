@@ -8,22 +8,14 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from focus.allocation import RolloutLedger
-from focus.config import RolloutConfig
+from focus.config import RolloutConfig, SearchPass
 from focus.execution import Usage
-from focus.generation import TokenId
 from focus.harness import AnyRollout, RolloutState, Runner
-from focus.harness.rescoring import PolicyScorer, reevaluate
 from focus.harness.workspace import Workspace
 from focus.preparation import AdvantageEstimator, PreparedBatch, prepare_samples
 from focus.reward import RewardModel
-from focus.reward.config import RewardConfig
 from focus.scheduler.core.critic import NodeScorer
-from focus.scheduler.core.execution import (
-    EdgeProvenance,
-    RolloutExpander,
-    drawn_from_anchor,
-    provenance_of,
-)
+from focus.scheduler.core.execution import PASS_KEY, RolloutExpander
 from focus.scheduler.core.gating import ConcurrencyGating
 from focus.scheduler.core.policies import Budget
 from focus.scheduler.core.scheduler import Scheduler
@@ -43,13 +35,10 @@ class Runtime:
     """Connect a runner, optional scorers, and a search configuration.
 
     Construction preserves each collaborator's configuration and service ownership.
-    Pass the same ExecutionServices to Runner and TokenScorer when generation and
-    rescoring should share capacity. Each search creates its own tree and workspace.
+    Each search creates its own tree and workspace.
     """
 
     runner: Runner[Any, Any]
-    #: Supplies anchor-policy log probabilities for off-anchor continuations.
-    scorer: PolicyScorer | None = None
     #: Predicts remaining return at checkpoints. Estimates are stored under
     #: config.reward_config.value_version.
     value_model: RewardModel | None = None
@@ -60,27 +49,14 @@ class Runtime:
     config: RolloutConfig = field(default_factory=RolloutConfig)
 
 
-def _expander(runtime: Runtime, pass_id: str) -> RolloutExpander[Any]:
-    """The pass's expander: one runner, one law -- its own pass stamp.
-
-    Every pass shares the same runner and proposal law. Only its
-    allocation session, budget, gating, and provenance stamp vary.
-    """
+def _expander(
+    runtime: Runtime, pass_index: int, search_pass: SearchPass
+) -> RolloutExpander[Any]:
+    """The pass's expander: the shared runner, this pass's sampling and index."""
     return RolloutExpander(
         runtime.runner,
-        proposal=runtime.config.proposal,
-        provenance=EdgeProvenance(
-            # the law the pass will draw from; a draw that lands elsewhere (a mixture
-            # coming up `explore`) overwrites it on the edge it actually produced
-            proposal_id=runtime.config.proposal.proposal_id,
-            continuation_id=runtime.config.continuation_id,
-            # the runner's own channel, read off the runner rather than authored
-            # beside it: it is the key every generation is actually filed under, and a
-            # second name for it is a name that can be wrong
-            behavior_version=runtime.runner.policy.version,
-            reward_config_id=runtime.config.reward_config.config_id,
-            pass_id=pass_id,
-        ),
+        sampling_params=search_pass.sampling_params,
+        annotation={PASS_KEY: pass_index},
     )
 
 
@@ -148,111 +124,6 @@ async def _score_root(
     critic.write([node], scores)
 
 
-class _CountingScorer:
-    """A scorer that also counts the teacher-forced passes it ran.
-
-    The pack count is the number of backend round-trips the re-scoring cost -- the only
-    part of the rescoring a training job pays for in latency. It cannot be read from
-    the tree afterwards, because :func:`reevaluate` skips packs another node filled.
-    So it is counted where it happens.
-    """
-
-    def __init__(self, inner: PolicyScorer) -> None:
-        self._inner = inner
-        self.packs = 0
-
-    async def score(
-        self, tokens: tuple[TokenId, ...], trainable: tuple[bool, ...]
-    ) -> tuple[float, ...]:
-        self.packs += 1
-        return await self._inner.score(tokens, trainable)
-
-
-def _off_anchor(view: SchedulerView[AnyRollout], config: RewardConfig) -> bool:
-    """Whether any edge here was drawn from a law other than the anchor.
-
-    Read off provenance, like :func:`importance` itself: the root has no incoming edge
-    and no stamp, and an edge's need for a correction is a fact about the law that drew
-    it, not about which channels happen to be filled.
-    """
-    return any(
-        provenance_of(node) is not None
-        and not drawn_from_anchor(node, config.anchor_version)
-        for node in view.nodes()
-    )
-
-
-async def rescore_anchor(runtime: Runtime, view: SchedulerView[AnyRollout]) -> None:
-    """Fill the anchor logprob channel when an off-anchor draw made it load-bearing.
-
-    Off-anchor is read off the stamp, not off the policy's class: an edge is off-anchor
-    exactly when its ``provenance.proposal_id`` differs from
-    ``reward_config.anchor_version``. So the two are one name written twice, and a run
-    that renames one of them alone arrives here with every edge looking off-anchor --
-    which is what the error below says, rather than blaming the scorer alone.
-
-    A mixture proposal buys coverage and owes an importance ratio on everything it drew
-    off-anchor, and that ratio is
-    :math:`\\exp(\\log\\pi_{\\mathrm{anchor}} - \\log\\pi_{\\mathrm{behavior}})` over
-    tokens the anchor never generated -- so someone has to teacher-force them. Nobody
-    below can: the export reads the channel strictly (an absent anchor would otherwise
-    read as ``exp(0) = 1``, "the policies agree exactly"), so a missing scorer surfaces
-    here as a configuration error rather than as a ``KeyError`` two layers down.
-
-    *Every* turn is scored, folds included, because :func:`importance` measures the
-    whole edge (``tags=None``): a fold's summary tokens were generated under the
-    proposal like any others, and an edge missing them is not the edge the ratio is for.
-
-    A scorer of the caller's that raises -- notably a ``TokenScorer`` whose
-    ``timeout`` fired -- comes out of here unchanged, which is the honest answer rather
-    than the friendly one: the export reads the anchor channel strictly, so leaving a
-    pack unscored would not degrade a ratio, it would silently make it ``exp(0) = 1``.
-
-    Nodes are walked longest turn log first so the work is not repeated: turns are
-    shared objects across forked checkpoints, so a leaf's pass fills every ancestor's
-    turns too, and :func:`reevaluate` then skips a region whose turns all carry the
-    version. Scoring is per *region*, so a region straddling scored and unscored turns
-    is still re-scored as a whole -- ``setdefault`` keeps the columns already there.
-    """
-    config = runtime.config.reward_config
-    if config.anchor_version == runtime.runner.policy.version:
-        return  # the anchor *is* the behavior policy; every ratio is exactly 1
-    if not _off_anchor(view, config):
-        return
-    if runtime.scorer is None:
-        # The message names both halves of the pairing, because a missing scorer is
-        # only one of the two ways to get here and the other is far likelier: whether
-        # an edge counts as off-anchor is `provenance.proposal_id == anchor_version`,
-        # so renaming one of those two and not the other turns an anchor-only run into
-        # a fully off-anchor one. Saying only "set a scorer" sends that reader to fix
-        # the wrong thing -- and a scorer would indeed silence it, at the cost of
-        # teacher-forcing the whole tree to compute ratios that are all 1.
-        raise ValueError(
-            "proposal drew off-anchor edges but Runtime.scorer is None; importance "
-            + "ratios need the anchor logprobs. An edge is off-anchor when its "
-            + "provenance proposal_id differs from reward_config.anchor_version="
-            + f"{config.anchor_version!r} -- this run's proposal draws under "
-            + f"{runtime.config.proposal.proposal_id!r}, so if those two are meant "
-            + "to be the same law, name them the same rather than adding a scorer"
-        )
-    nodes = sorted(view.nodes(), key=lambda n: len(n.payload.turns), reverse=True)
-    pending = {
-        id(turn)
-        for node in nodes
-        for turn in node.payload.turns
-        if config.anchor_version not in turn.logprobs
-    }
-    scorer = _CountingScorer(runtime.scorer)
-    for node in nodes:
-        await reevaluate(node.payload, version=config.anchor_version, scorer=scorer)
-    logger.info(
-        "anchor rescored version=%s turns=%d packs=%d",
-        config.anchor_version,
-        len(pending),
-        scorer.packs,
-    )
-
-
 def _spent(before: Mapping[str, float], after: Mapping[str, float]) -> dict[str, float]:
     """What one pass added to each running stat -- its cost, not the tree's total.
 
@@ -269,7 +140,7 @@ async def run_search(
     *,
     workspace: Workspace | None = None,
 ) -> SchedulerState[AnyRollout]:
-    """Initialize a root, execute the authored passes, and fill anchor logprobs."""
+    """Initialize a root and execute the authored passes."""
     if not isinstance(prompt, (str, RolloutState)):
         raise TypeError(
             "prompt must be a str or a RolloutState, not " + type(prompt).__name__
@@ -304,7 +175,7 @@ async def run_search(
             continue
         before = dict(state.stats)
         await Scheduler(
-            expander=_expander(runtime, pass_id),
+            expander=_expander(runtime, index, search_pass),
             allocation=allocation,
             termination=_budget(state, search_pass.budget),
             scorer=critic,
@@ -317,7 +188,6 @@ async def run_search(
             search_pass.budget,
             _spent(before, state.stats),
         )
-    await rescore_anchor(runtime, view)
     _resource_stats(state, runtime, root.episode_id, before_usage)
     return state
 
@@ -363,4 +233,4 @@ def _resource_stats(
         state.stats["resource_" + name] = float(value - before[name])
 
 
-__all__ = ["Runtime", "collect_samples", "rescore_anchor", "run_search"]
+__all__ = ["Runtime", "collect_samples", "run_search"]

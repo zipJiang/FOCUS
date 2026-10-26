@@ -35,7 +35,6 @@ from focus.scheduler import (
     Scheduler,
     SchedulerState,
     SchedulerView,
-    stamp_provenance,
 )
 from focus.statistics import RunningStats
 from tests.trees import region, root_state, stamp, stamped_child
@@ -651,7 +650,7 @@ def test_a_scored_pass_records_births_beside_the_return_it_bought() -> None:
     assert reservation is not None
     chain = _chain(state, 0.0, 1.0)
     for node in chain:
-        stamp_provenance(node, stamp())
+        stamp(node)
     session.complete(reservation, state, chain)
 
     assert observations[root.id].m_done == 1
@@ -673,7 +672,7 @@ def test_best_first_keeps_ancestor_statistics_separate_from_suffix_evidence() ->
     chain = _chain(state, 0.0, 1.0)
 
     for node in chain:
-        stamp_provenance(node, stamp())
+        stamp(node)
 
     session.complete(reservation, state, chain)
 

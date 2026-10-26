@@ -20,7 +20,6 @@ from focus import (
     FifoAllocator,
     RefinedTdEstimator,
     SearchPass,
-    ValueRefinement,
     WidthGating,
 )
 from focus.codec import ChatCodec
@@ -36,8 +35,6 @@ from focus.integrations.slime import make_generate
 from focus.loop import Runtime
 from focus.preparation.records import ActorSample, CriticSample, PreparedBatch
 from focus.registry import build
-from focus.reward.config import RewardConfig
-from focus.scheduler import MixtureProposal
 from tests.helpers import (
     DemoValue,
     FakeChatTokenizer,
@@ -347,70 +344,6 @@ def test_the_spec_carries_no_live_objects() -> None:
     assert isinstance(restored.config.passes[0].gating, WidthGating)
 
 
-def test_a_fully_authored_spec_ships_too_rng_and_all() -> None:
-    """The thin spec above is not the one an experiment writes. This is.
-
-    Every policy field filled, a nested ``env`` config with its own compactor and
-    trigger tree, and the one place a spec still carries a ``random.Random`` -- a
-    mixture proposal's coin. An rng pickles by value, which is the right thing and
-    worth pinning: each actor gets its own stream from wherever the seed had reached,
-    so two actors do not draw the same explore coins. ``ChildRelative`` carries a plain
-    ``seed`` instead, so every actor scores a given tree identically.
-    """
-    import pickle
-
-    spec = build(
-        RolloutSpec,
-        {
-            "env": {
-                "name": "toy",
-                "compactor": {
-                    "name": "budget",
-                    "trigger": {
-                        "name": "any_of",
-                        "triggers": [
-                            {"name": "prompt_tokens", "limit": 10_000},
-                            {"name": "state_counter"},
-                        ],
-                    },
-                },
-            },
-            "system_prompt": "sys",
-            "config": {
-                "proposal": {"name": "mixture", "explore": {"temperature": 1.5}},
-                "passes": [
-                    {
-                        "allocator": {"name": "fifo"},
-                        "budget": 32,
-                        "gating": {"name": "width", "width": 5},
-                    },
-                    {
-                        "allocator": {"name": "value_refinement"},
-                        "budget": 4,
-                        "gating": {"name": "concurrency", "limit": 6},
-                    },
-                    {
-                        "allocator": {"name": "fifo"},
-                        "budget": 4,
-                        "gating": {"name": "concurrency", "limit": 6},
-                    },
-                ],
-            },
-        },
-    )
-
-    restored = pickle.loads(pickle.dumps(spec))
-
-    assert restored.env == spec.env
-    assert isinstance(restored.config.proposal, MixtureProposal)
-    assert [type(w) for w in [p.allocator for p in restored.config.passes[1:]]] == [
-        ValueRefinement,
-        FifoAllocator,
-    ]
-    # the coin came across at the state it had reached, not reseeded on the far side
-    assert restored.config.proposal.draw() == spec.config.proposal.draw()
-
-
 # -- the split, and the one rule that follows from it --------------------------------
 
 #: The fields a spec may never carry: a live endpoint, a function over one, or a bound
@@ -419,7 +352,6 @@ def test_a_fully_authored_spec_ships_too_rng_and_all() -> None:
 #: travels to actors holding different endpoints.
 LIVE_FIELDS = {
     "runner",
-    "scorer",
     "value_model",
     "value_serialize",
     "score_timeout",
@@ -471,7 +403,7 @@ async def test_the_spec_s_config_replaces_the_factory_s_and_the_live_objects_sta
 
     monkeypatch.setattr("focus.loop.run_search", fake_rollout)
     monkeypatch.setattr("focus.loop.prepare_samples", lambda *a, **kw: _result())
-    scorer, value_model = object(), object()
+    value_model = object()
     spec = RolloutSpec(
         config=RolloutConfig(
             max_concurrency=1,
@@ -484,7 +416,6 @@ async def test_the_spec_s_config_replaces_the_factory_s_and_the_live_objects_sta
     generate = make_generate(
         spec,
         runtime_factory=lambda args: _runtime(
-            scorer=cast(Any, scorer),
             value_model=cast(Any, value_model),
             config=RolloutConfig(
                 max_concurrency=99,
@@ -497,7 +428,6 @@ async def test_the_spec_s_config_replaces_the_factory_s_and_the_live_objects_sta
     await generate(object(), object())
 
     assert seen[0].config is spec.config
-    assert seen[0].scorer is scorer
     assert seen[0].value_model is value_model
 
 
@@ -508,87 +438,3 @@ def test_an_authored_empty_weighters_means_none_not_the_default_pair() -> None:
 
 
 # -- what a config file turns into ----------------------------------------------------
-
-
-def test_a_yaml_shaped_mapping_builds_the_spec_it_describes() -> None:
-    """What a loaded config file is: nested mappings and lists, no objects.
-
-    Every policy field is *built* on the way in, because the config is what the
-    runtime runs with -- there is no later pass to turn a leftover `dict` into the
-    object its field is typed for.
-    """
-    built = build(
-        RolloutSpec,
-        {
-            "env": {"name": "toy", "size": 3},
-            "system_prompt": "sys",
-            "config": {
-                "reward_config": {"gamma": 0.95, "value_version": "v-1", "clip": 3.0},
-                "proposal": {"name": "mixture", "explore": {"temperature": 1.5}},
-                "continuation_id": "nu-7",
-                "max_concurrency": 2,
-                "passes": [
-                    {
-                        "allocator": {"name": "fifo"},
-                        "budget": 4,
-                        "gating": {"name": "width", "width": 5},
-                    },
-                    {
-                        "allocator": {"name": "value_refinement"},
-                        "budget": 4,
-                        "gating": {"name": "concurrency", "limit": 6},
-                    },
-                    {
-                        "allocator": {"name": "fifo"},
-                        "budget": 4,
-                        "gating": {"name": "concurrency", "limit": 6},
-                    },
-                ],
-            },
-        },
-    )
-
-    assert built.env == {"name": "toy", "size": 3}
-    assert built.system_prompt == "sys"
-    config = built.config
-    assert config.passes[0].budget == 4
-    assert config.reward_config == RewardConfig(
-        gamma=0.95, value_version="v-1", clip=3.0
-    )
-    assert isinstance(config.passes[0].allocator, FifoAllocator)
-    assert isinstance(config.proposal, MixtureProposal)
-    assert isinstance(config.passes[0].gating, WidthGating)
-    assert isinstance(config.passes[-1].gating, ConcurrencyGating)
-    assert [type(w) for w in [p.allocator for p in config.passes[1:]]] == [
-        ValueRefinement,
-        FifoAllocator,
-    ]
-    assert config.continuation_id == "nu-7"
-    assert config.max_concurrency == 2
-
-
-def test_a_field_the_file_omits_is_the_default_it_documents() -> None:
-    """There is no "unset" any more: what the record says is what the run does."""
-    config = build(
-        RolloutConfig,
-        {
-            "passes": [
-                {
-                    "allocator": {"name": "fifo"},
-                    "budget": 12,
-                    "gating": {"name": "width", "width": 3},
-                }
-            ]
-        },
-    )
-
-    assert config.passes[0].budget == 12
-    assert config.max_concurrency == 4
-    assert config.reward_config == RewardConfig()
-
-
-def test_a_misspelled_key_is_refused_rather_than_ignored() -> None:
-    with pytest.raises(TypeError, match="unexpected config keys"):
-        build(RolloutSpec, {"first_pass_turns": 4})
-    with pytest.raises(TypeError, match="unexpected config keys"):
-        build(RolloutConfig, {"pass_turn": 4})

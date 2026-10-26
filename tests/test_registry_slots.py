@@ -59,8 +59,6 @@ from focus.reward.config import RewardConfig
 from focus.scheduler import (
     CriticSelection,
     GatingPolicy,
-    MixtureProposal,
-    ProposalPolicy,
     Termination,
 )
 from tests.helpers import FakeChatTokenizer, native_format, test_format
@@ -168,8 +166,6 @@ TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
     (Compactor, {"name": "agentic", "max_interactions": 2}),
     (Compactor, {"name": "budget", "max_prompt_tokens": 128}),
     # -- scheduler -------------------------------------------------------------------
-    (ProposalPolicy, {"name": "anchor"}),
-    (ProposalPolicy, {"name": "mixture", "explore": {"temperature": 1.5}}),
     (GatingPolicy, {"name": "width", "width": 3}),
     (GatingPolicy, {"name": "concurrency", "limit": 3}),
     (Allocator, {"name": "fifo"}),
@@ -264,15 +260,9 @@ def test_the_table_covers_every_registered_name() -> None:
 def test_a_dataclass_config_is_coerced_from_its_annotation() -> None:
     """A ``builds_self`` namespace (``SamplingParams``) annotated on a parameter
     turns a mapping into the record, not a dict the constructor then holds."""
-    proposal = build(
-        ProposalPolicy,
-        {"name": "mixture", "explore": {"temperature": 1.4, "max_tokens": 64}},
-    )
     allocator = build(Allocator, {"name": "value_refinement"})
 
-    assert isinstance(proposal, MixtureProposal)
     assert isinstance(allocator, ValueRefinement)
-    assert proposal._explore == SamplingParams(temperature=1.4, max_tokens=64)
     assert (
         build(RewardConfig, {"value_prior_strength": 2.0}).value_prior_strength == 2.0
     )

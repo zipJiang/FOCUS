@@ -1,10 +1,7 @@
 """Shared tree fixtures for the export, weighting, scheduler and slime tests.
 
 The counterpart to :mod:`tests.helpers`: that module builds the *log* -- turns,
-rollouts, a runner over the fakes -- and this one builds the *tree* over it. A root, a
-stamped child, and the provenance stamp itself were copied into five test modules, and
-a stamp that drifts between them is not a harmless difference: whether an edge is
-exportable, and whether it needs an importance correction, are both read off it.
+rollouts, a runner over the fakes -- and this one builds the *tree* over it.
 
 There is no rollout builder here: :func:`tests.helpers.rollout` is the one, and a
 checkpoint records its folds as tagged turns rather than as a counter beside them.
@@ -18,26 +15,13 @@ from focus import (
     WidthGating,
 )
 from focus.harness import RolloutState, Turn
-from focus.scheduler import (
-    EdgeProvenance,
-    Node,
-    SchedulerState,
-    stamp_provenance,
-)
+from focus.scheduler import PASS_KEY, Node, SchedulerState
 from tests.helpers import VERSION, turn
 
-ANCHOR = "anchor"
 
-
-def stamp(pass_id: str = "pass-0", proposal_id: str = ANCHOR) -> EdgeProvenance:
-    """The provenance a first search pass drawing from the anchor would leave."""
-    return EdgeProvenance(
-        proposal_id=proposal_id,
-        continuation_id="nu-0",
-        behavior_version=VERSION,
-        reward_config_id="rc-0",
-        pass_id=pass_id,
-    )
+def stamp(node: Node[Any], search_pass: int = 0) -> None:
+    """Mark ``node`` as produced by ``search_pass``, as an expansion would."""
+    node.metadata[PASS_KEY] = search_pass
 
 
 def root_state(payload: Any, *, width: int = 8) -> SchedulerState[Any]:
@@ -66,12 +50,11 @@ def stamped_child(
     parent_id: int,
     payload: Any,
     *,
-    pass_id: str = "pass-0",
-    proposal_id: str = ANCHOR,
+    search_pass: int = 0,
 ) -> Node[Any]:
-    """Attach ``payload`` under ``parent_id`` as an expansion would: with provenance."""
+    """Attach ``payload`` under ``parent_id`` as an expansion would."""
     node = state.add_child(parent_id, payload)
-    stamp_provenance(node, stamp(pass_id, proposal_id))
+    stamp(node, search_pass)
     if state.nodes[0].metadata.get("test_training_fixture"):
         from focus.allocation.evidence import RolloutLedger
         from focus.scheduler import SchedulerView
@@ -85,18 +68,12 @@ def stamped_child(
     return node
 
 
-def region(
-    reward: float = 0.0, done: bool = False, anchor: float | None = None
-) -> Turn[None]:
-    """One task turn under the behavior channel, optionally with an anchor logprob."""
-    step = turn([-1.0], reward=reward, done=done, version=VERSION)
-    if anchor is not None:
-        step.logprobs[ANCHOR] = (anchor,)
-    return step
+def region(reward: float = 0.0, done: bool = False) -> Turn[None]:
+    """One task turn under the behavior channel."""
+    return turn([-1.0], reward=reward, done=done, version=VERSION)
 
 
 __all__ = [
-    "ANCHOR",
     "VERSION",
     "region",
     "root_state",

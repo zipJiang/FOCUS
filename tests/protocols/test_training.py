@@ -3,12 +3,11 @@ import pytest
 from focus.generation.interfaces import finite_logprobs
 from focus.harness import Turn
 from focus.harness.packing import regions
-from focus.harness.rescoring import reevaluate
 from focus.harness.turn import logprob
-from tests.helpers import ConstantScorer, rollout
+from tests.helpers import rollout
 
 
-async def test_helper_likelihood_is_fixed_and_never_rescored():
+def test_helper_turns_are_never_trainable():
     actor: Turn[None] = Turn(prefix=(1,), tokens=(2,), logprobs={"policy": (-0.2,)})
     helper: Turn[None] = Turn(
         prefix=(1, 2),
@@ -19,13 +18,7 @@ async def test_helper_likelihood_is_fixed_and_never_rescored():
         exact=False,
     )
     rs = rollout(actor, helper)
-    scorer = ConstantScorer(-0.1)
-    await reevaluate(rs, version="anchor", scorer=scorer)
-    assert scorer.calls == 1
-    assert helper.logprobs == {}
-    assert logprob(rs.turns, "anchor") - logprob(rs.turns, "policy") == pytest.approx(
-        0.1
-    )
+    assert logprob(rs.turns, "policy") == pytest.approx(-0.2)
     assert not any(regions(rs.turns)[1].trainable)
 
 

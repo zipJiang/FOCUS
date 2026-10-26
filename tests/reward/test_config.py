@@ -116,4 +116,3 @@ def test_defaults_are_the_core_configuration() -> None:
         1.0,
     )
     assert config.value_version == "v-base"
-    assert config.anchor_version == "anchor"

@@ -47,23 +47,19 @@ from focus.harness import (
     Workspace,
 )
 from focus.integrations.slime import to_samples
-from focus.loop import Runtime, _budget, _value_head, rescore_anchor
-from focus.preparation.records import ActorSample, PreparedBatch
+from focus.loop import Runtime, _budget, _value_head
+from focus.preparation.records import PreparedBatch
 from focus.protocols import Summary
 from focus.reward import RewardModel, RewardResult
 from focus.reward.config import RewardConfig
 from focus.scheduler import (
-    AnchorProposal,
-    MixtureProposal,
+    PASS_KEY,
     SchedulerState,
     SchedulerView,
 )
-from focus.scheduler.core.execution import provenance_of
 from focus.scheduler.core.tree import STAT_FAILURES, STAT_TURNS
 from tests.estimators import FixedWeight
 from tests.helpers import (
-    VERSION,
-    ConstantScorer,
     DeadReward,
     FakeChatTokenizer,
     InexactBridge,
@@ -73,9 +69,7 @@ from tests.helpers import (
     WhenTrigger,
     prepared,
     rollout,
-    turn,
 )
-from tests.trees import root_state, stamped_child
 
 
 class CyclingGenerator(Policy[Any]):
@@ -253,15 +247,11 @@ async def test_later_pass_edges_are_actor_data() -> None:
     result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
 
     assert result.actor
-    pass_ids = {r.provenance.pass_id for r in result.actor if r.provenance}
-    assert "pass-0" in pass_ids
-    assert any(p != "pass-0" for p in pass_ids)
+    pass_ids = {r.search_pass for r in result.actor}
+    assert 0 in pass_ids
+    assert any(p != 0 for p in pass_ids)
 
-    later_ids = {
-        r.node_id
-        for r in result.actor
-        if r.provenance and r.provenance.pass_id != "pass-0"
-    }
+    later_ids = {r.node_id for r in result.actor if r.search_pass != 0}
     assert later_ids
     # later-pass edges that finished are eligible for the actor lane
     assert later_ids & {r.node_id for r in result.actor}
@@ -398,7 +388,7 @@ async def test_the_weight_an_estimator_wrote_is_the_one_that_goes_on_the_wire() 
     rewards = [
         s["reward"] for s in to_samples(result, 0) if s["metadata"]["lane"] == "actor"
     ]
-    assert rewards == [r.weight * r.importance for r in result.actor for _ in r.spans]
+    assert rewards == [r.weight for r in result.actor for _ in r.spans]
 
 
 @pytest.mark.asyncio
@@ -418,7 +408,7 @@ async def test_a_constant_weight_reaches_every_slot_untouched() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_weight_multiplies_with_importance_on_the_wire() -> None:
+async def test_the_estimator_weight_is_the_exported_reward() -> None:
     result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
 
     by_node = {(r.estimator, r.node_id): r for r in result.actor}
@@ -428,7 +418,7 @@ async def test_the_weight_multiplies_with_importance_on_the_wire() -> None:
             continue
         meta = sample["metadata"]
         record = by_node[(meta["estimator"], meta["node_id"])]
-        assert sample["reward"] == pytest.approx(record.weight * sample["importance"])
+        assert sample["reward"] == pytest.approx(record.weight)
         # the recipe's own account of the number rides in the metadata, as a plain
         # dict a JSON encoder can write, and never as a column beside `reward`
         assert meta["diagnostics"] == dict(record.diagnostics)
@@ -467,18 +457,14 @@ async def test_every_expansion_records_which_pass_produced_it() -> None:
 
     created = [n for n in state.nodes.values() if n.id != state.root_id]
     assert created
-    assert all(provenance_of(n) is not None for n in created)
-    for node in created:
-        stamp = provenance_of(node)
-        assert stamp is not None
-        assert stamp.pass_id in {"pass-0", "pass-1", "pass-2"}
+    assert {n.metadata[PASS_KEY] for n in created} <= {0, 1, 2}
 
 
 @pytest.mark.asyncio
 async def test_one_scheduler_pass_per_weighter_that_asks_for_evidence() -> None:
     result = await prepared("solve it", _runtime(), estimator=RefinedTdEstimator())
-    passes = {r.provenance.pass_id for r in result.actor if r.provenance}
-    assert passes == {"pass-0", "pass-1", "pass-2"}
+    passes = {r.search_pass for r in result.actor}
+    assert passes == {0, 1, 2}
 
     quiet = await prepared(
         "solve it",
@@ -487,7 +473,7 @@ async def test_one_scheduler_pass_per_weighter_that_asks_for_evidence() -> None:
         ),
         estimator=FixedWeight(),
     )
-    assert {r.provenance.pass_id for r in quiet.actor if r.provenance} == {"pass-0"}
+    assert {r.search_pass for r in quiet.actor} == {0}
     assert quiet.actor
     assert all(r.weight == 1.0 for r in quiet.actor)
 
@@ -505,16 +491,14 @@ async def test_each_pass_gets_its_own_budget_on_the_shared_tree() -> None:
     result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
 
     slack = runtime.config.max_concurrency * runtime.runner.max_steps
-    turns = {"pass-0": 6, "pass-1": 4, "pass-2": 2}
-    spent: dict[str, int] = {}
+    turns = {0: 6, 1: 4, 2: 2}
+    spent: dict[int | None, int] = {}
     for record in result.actor:
-        if record.provenance is None:
-            continue
-        spent[record.provenance.pass_id] = spent.get(record.provenance.pass_id, 0) + 1
-    for pass_id, cap in turns.items():
-        assert spent.get(pass_id, 0) <= cap + slack
-    assert spent.get("pass-0", 0) >= 1
-    assert spent.get("pass-1", 0) >= 1
+        spent[record.search_pass] = spent.get(record.search_pass, 0) + 1
+    for search_pass, cap in turns.items():
+        assert spent.get(search_pass, 0) <= cap + slack
+    assert spent.get(0, 0) >= 1
+    assert spent.get(1, 0) >= 1
 
 
 class _UnitWorth(NodeWorth):
@@ -752,68 +736,6 @@ async def test_scoring_a_searched_tree_keeps_the_runner_s_own_channel() -> None:
         for sample in samples
         if sample["metadata"]["lane"] == "actor"
     )
-
-
-@pytest.mark.asyncio
-async def test_scoring_a_tree_under_the_wrong_channel_is_refused() -> None:
-    """The failure the split invites: a tree scored by a runtime of another version.
-
-    "Score it in another process, from disk" is the whole reason ``score_search``
-    exists, and the one thing that does not travel with the tree is which channel its
-    generations were filed under. Getting it wrong is silent -- every logprob column
-    downstream is a ``.get(version, ())`` -- so it is refused, by name, against what
-    the edges themselves recorded.
-    """
-    searched = _runtime(runner=_runner(version="pi-7"))
-    state = await run_search("solve it", searched)
-
-    with pytest.raises(ValueError, match="pi-7") as excinfo:
-        prepare_samples(
-            state,
-            estimator=RefinedTdEstimator(),
-            reward_config=_runtime().config.reward_config,
-            behavior_version=_runtime().runner.policy.version,
-        )  # a runner filing under the default "policy"
-
-    assert "policy" in str(excinfo.value)
-    # the way out that does not need a runner of that version at all
-    assert "behavior_version" in str(excinfo.value)
-
-
-@pytest.mark.asyncio
-async def test_a_from_disk_tree_can_name_its_own_channel() -> None:
-    """``behavior_version=`` scores a tree whose runner this process does not hold.
-
-    A scoring worker has no endpoint and so no runner speaking ``pi-7``; without the
-    override its only way to export the tree would be to build a fake runner just to
-    carry a string. The columns it fills are the real ones.
-    """
-    searched = _runtime(runner=_runner(version="pi-7"))
-    state = await run_search("solve it", searched)
-
-    result = prepare_samples(
-        state,
-        estimator=RefinedTdEstimator(),
-        reward_config=_runtime().config.reward_config,
-        behavior_version="pi-7",
-    )
-
-    assert result.behavior_version == "pi-7"
-    assert result.actor
-    assert all(all(span.logprobs["pi-7"] for span in r.spans) for r in result.actor)
-    assert all(
-        sample["logprobs"]
-        for sample in to_samples(result, 0)
-        if sample["metadata"]["lane"] == "actor"
-    )
-    # and an override that disagrees with the tree is refused like any other
-    with pytest.raises(ValueError, match="pi-7"):
-        prepare_samples(
-            state,
-            estimator=RefinedTdEstimator(),
-            reward_config=searched.config.reward_config,
-            behavior_version="pi-9",
-        )
 
 
 @pytest.mark.asyncio
@@ -1076,9 +998,6 @@ async def test_the_run_stamps_and_reads_the_runner_s_own_behavior_channel() -> N
     result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
 
     assert result.actor
-    assert all(r.provenance is not None for r in result.actor)
-    channels = {r.provenance.behavior_version for r in result.actor if r.provenance}
-    assert channels == {"pi-7"}
     # and the logprobs are there, not an empty column beside a claim that they are
     assert result.behavior_version == "pi-7"  # what `to_samples` reads the column by
     assert all(all(span.logprobs["pi-7"] for span in r.spans) for r in result.actor)
@@ -1126,188 +1045,6 @@ async def test_a_value_head_that_miscounts_its_batch_costs_the_baseline_not_the_
     warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
     assert any("root scoring failed" in m for m in warnings)
     assert any("expansion scoring failed" in m for m in warnings)
-
-
-# -- off-anchor exploration ----------------------------------------------------------
-
-#: The constant the fake anchor scorer writes on every generated token.
-ANCHOR_LOGPROB = -0.4
-
-
-def _mixture(epsilon: float) -> MixtureProposal:
-    """A proposal whose explore component is the whole draw at ``epsilon = 1``."""
-    return MixtureProposal(SamplingParams(temperature=1.5), epsilon=epsilon)
-
-
-def _expected_importance(record: ActorSample, clip: float = 10.0) -> float:
-    """``exp(anchor - behavior)`` over the edge, from the record's own spans.
-
-    The anchor side is arithmetic (a constant per generated token); the behavior side is
-    what the generator actually recorded, read back off the exported spans -- so this is
-    the ratio computed from the trainer's view of the edge rather than a second copy of
-    the loop's. A span is a packed region, so the behavior column is picked out of it by
-    version, exactly as ``to_samples`` does.
-    """
-    behavior = sum(
-        logprob
-        for span in record.spans
-        for logprob, keep in zip(span.logprobs[VERSION], span.trainable, strict=True)
-        if keep
-    )
-    return min(math.exp(ANCHOR_LOGPROB * record.edge_tokens - behavior), clip)
-
-
-@pytest.mark.asyncio
-async def test_an_explore_draw_is_corrected_against_the_rescored_anchor(caplog) -> None:
-    """Off-anchor exploration end to end: the loop fills the anchor channel itself.
-
-    The anchor logprobs of tokens the anchor did not generate exist nowhere until some
-    policy is asked for them, so without this pass every explore edge reaches export
-    with an empty channel -- which the strict reader turns into a `KeyError`.
-    """
-    caplog.set_level(logging.INFO, logger="focus.loop")
-    scorer = ConstantScorer(ANCHOR_LOGPROB)
-
-    result = await prepared(
-        "solve it",
-        _runtime(proposal=_mixture(1.0), scorer=scorer),
-        estimator=RefinedTdEstimator(),
-    )
-
-    assert result.actor
-    assert scorer.calls
-    assert all(
-        r.provenance is not None and r.provenance.proposal_id == "explore"
-        for r in result.actor
-    )
-    assert any(r.importance != 1.0 for r in result.actor)
-    for record in result.actor:
-        assert record.importance == pytest.approx(_expected_importance(record))
-
-    scored = [
-        r.getMessage()
-        for r in caplog.records
-        if r.name == "focus.loop" and r.getMessage().startswith("anchor")
-    ]
-    assert len(scored) == 1
-    assert "turns=" in scored[0]
-    assert "packs=" in scored[0]
-
-
-@pytest.mark.asyncio
-async def test_the_export_clips_importance_at_the_reward_config_s_bound() -> None:
-    """The clip is a fact about the anchor/behavior pair, so the reward config owns it.
-
-    It used to live on ``GaeConfig`` -- the estimator's own record -- where an
-    experiment that configured a clip on its estimator got the *default* one applied at
-    export, because the export read a ``GaeConfig`` nobody had authored. Both halves are
-    asserted here: the authored bound is what every off-anchor edge is capped at, and
-    there is no second clip left for the two to disagree about.
-    """
-    runtime = _runtime(
-        proposal=_mixture(1.0),
-        scorer=ConstantScorer(ANCHOR_LOGPROB),
-        reward_config=RewardConfig(clip=2.0),
-        passes=(
-            SearchPass(FifoAllocator(), budget=12, gating=WidthGating(2)),
-            SearchPass(FifoAllocator(), budget=4, gating=ConcurrencyGating(4)),
-        ),
-    )
-
-    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
-
-    assert result.actor
-    assert all(r.importance <= 2.0 for r in result.actor)
-    assert any(r.importance == pytest.approx(2.0) for r in result.actor)
-    for record in result.actor:
-        assert record.importance == pytest.approx(
-            _expected_importance(record, clip=2.0)
-        )
-    # one clip, in one place: the estimator's config no longer carries one to shadow it
-    assert not hasattr(RefinedTdEstimator(), "clip")
-
-
-@pytest.mark.asyncio
-async def test_an_anchor_only_mixture_needs_no_scorer() -> None:
-    """The correction is owed by the draw, not by the policy being a mixture."""
-    result = await prepared(
-        "solve it", _runtime(proposal=_mixture(0.0)), estimator=RefinedTdEstimator()
-    )
-
-    assert result.actor
-    assert all(r.importance == 1.0 for r in result.actor)
-
-
-@pytest.mark.asyncio
-async def test_an_off_anchor_draw_without_a_scorer_is_a_configuration_error() -> None:
-    """And it says so here, rather than as a `KeyError` inside the export."""
-    with pytest.raises(ValueError, match=r"Runtime\.scorer is None"):
-        await prepared(
-            "solve it", _runtime(proposal=_mixture(1.0)), estimator=RefinedTdEstimator()
-        )
-
-
-@pytest.mark.asyncio
-async def test_a_renamed_anchor_channel_says_which_two_names_disagree() -> None:
-    """The likelier cause of "off-anchor edges" is a typo, not a forgotten scorer.
-
-    Whether an edge is off-anchor is one comparison -- the stamped ``proposal_id``
-    against ``reward_config.anchor_version`` -- so renaming one of those two and not the
-    other turns an anchor-only run into a fully off-anchor one. Nothing is wrong with
-    the proposal and nothing is wrong with the run; the two names simply stopped being
-    the same name, and the error has both of them in hand.
-    """
-    runtime = _runtime(
-        proposal=AnchorProposal(), reward_config=RewardConfig(anchor_version="pi-k")
-    )
-
-    with pytest.raises(ValueError, match="anchor_version") as caught:
-        await prepared("solve it", runtime, estimator=RefinedTdEstimator())
-
-    message = str(caught.value)
-    assert "'pi-k'" in message  # the channel the config named
-    assert "'anchor'" in message  # the law the proposal actually draws under
-
-
-@pytest.mark.asyncio
-async def test_nothing_is_rescored_when_the_anchor_is_the_behavior_policy() -> None:
-    """One channel, so the ratio is exactly 1 and there is nothing to score."""
-    scorer = ConstantScorer(ANCHOR_LOGPROB)
-    runtime = _runtime(
-        proposal=_mixture(1.0),
-        scorer=scorer,
-        reward_config=RewardConfig(anchor_version="policy"),
-    )
-
-    result = await prepared("solve it", runtime, estimator=RefinedTdEstimator())
-
-    assert result.actor
-    assert scorer.calls == 0
-    assert all(r.importance == 1.0 for r in result.actor)
-
-
-@pytest.mark.asyncio
-async def test_rescoring_covers_fold_turns_and_scores_each_pack_once() -> None:
-    """Folds are part of the edge the ratio is over, and a shared pack is scored once.
-
-    `importance` reads the whole edge (`tags=None`), so a fold's generations are inside
-    the ratio exactly like task work. The deepest node is walked first, which is what
-    keeps its ancestor -- whose turns are the same objects -- from paying for them
-    again.
-    """
-    first = turn([-1.0], tag="fold")
-    second = turn([-2.0], done=True, reward=1.0)
-    state = root_state(rollout())
-    parent = stamped_child(state, state.root_id, rollout(first), proposal_id="explore")
-    stamped_child(state, parent.id, rollout(first, second), proposal_id="explore")
-    scorer = ConstantScorer(ANCHOR_LOGPROB)
-
-    await rescore_anchor(_runtime(scorer=scorer), SchedulerView(state))
-
-    assert first.logprobs["anchor"] == (ANCHOR_LOGPROB,)
-    assert second.logprobs["anchor"] == (ANCHOR_LOGPROB,)
-    # one pass per pack (the fold's and the task turn's), not one per node
-    assert scorer.calls == 2
 
 
 # -- failure policy: degrade, raise, or propagate -------------------------------------

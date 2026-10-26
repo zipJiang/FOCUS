@@ -16,7 +16,6 @@ from focus.preparation.base import (
 from focus.preparation.records import ActorSample, CriticSample
 from focus.reward.config import RewardConfig
 from focus.scheduler.core.critic import VALUE_CONTEXTS_KEY
-from focus.scheduler.core.execution import drawn_from_anchor, provenance_of
 from focus.scheduler.core.returns import edge_return
 from focus.scheduler.core.tree import SchedulerView
 
@@ -37,7 +36,6 @@ def direct_branch_values(
     Successor values include their own prior blend. A terminal's remaining value
     is zero; its reward is on the incoming edge. An unexplored nonterminal uses
     its frozen network prior and has no critic target. No tree state is mutated.
-    Only anchor-policy edges can contribute without a proposal correction.
     """
     values: dict[int, DirectBranchValue] = {}
     for node in sorted(view.nodes(), key=lambda n: n.depth, reverse=True):
@@ -54,15 +52,6 @@ def direct_branch_values(
             child = view.node(child_id)
             if child is None or child.parent_id != node.id:
                 raise ValueError(f"invalid direct branch from checkpoint {node.id}")
-            stamp = provenance_of(child)
-            if (
-                not drawn_from_anchor(child, config.anchor_version)
-                or stamp is None
-                or stamp.reward_config_id != config.config_id
-            ):
-                raise ValueError(
-                    "direct-branch values require matching anchor-policy edges"
-                )
             duration = sum(
                 t.transition is not None for t in child.payload.edge(node.payload)
             )
