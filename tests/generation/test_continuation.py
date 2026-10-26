@@ -353,6 +353,7 @@ def test_segments_sets_the_continuation_defaults_on_the_agent():
     assert agent._sampling_params.max_tokens == 4
     assert isinstance(agent._checkpoints, EveryDecision)
     assert agent._finish_prompt is None
+    assert isinstance(agent.protocol, Segments)
     assert agent.protocol.continuation
     with pytest.raises(ValueError, match="positive"):
         Segments(0)
