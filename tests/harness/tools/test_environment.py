@@ -1,7 +1,7 @@
 """ToolEnv: dispatch, single submission, and stateless feedback.
 
 Each branch of `step`/`finish` in isolation; `tools/test_submission.py` drives the same
-convention end-to-end through the Runner.
+convention end-to-end through the Agent.
 """
 
 from __future__ import annotations

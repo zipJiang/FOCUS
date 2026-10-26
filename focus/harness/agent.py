@@ -1,6 +1,6 @@
 """Drive exact model generations through context protocols and model-free tasks.
 
-Runner owns trace ordering, continuation limits and checkpoint notifications. A context
+Agent owns trace ordering, continuation limits and checkpoint notifications. A context
 protocol owns prompt preparation and action effects. ExecutionServices owns shared
 inference resources; derived runners inherit it. Search sees settled snapshots
 without protocol-name branches.
@@ -16,7 +16,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from focus.codec import Message
@@ -92,18 +92,41 @@ DEFAULT_FINISH_PROMPT = (
 )
 
 
-class Runner[S, A]:
+@dataclass
+class Execution:
+    """How an agent's model calls run, persist, and recover.
+
+    ``services`` shares inference capacity and usage accounting; pass one object to
+    several agents (or collectors) to share it. An optional ``checkpointer`` persists
+    every complete state; ``retries`` bounds retries of ``retry_on`` exceptions from
+    the last committed state. ``resource_budget`` caps model calls and tokens per
+    branch, and ``generate_timeout`` bounds one generation in seconds.
+    """
+
+    services: ExecutionServices = field(default_factory=ExecutionServices)
+    checkpointer: Checkpointer | None = None
+    retries: int = 2
+    retry_on: tuple[type[Exception], ...] = (ConnectionError, TimeoutError)
+    resource_budget: ResourceBudget = field(default_factory=ResourceBudget)
+    generate_timeout: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.retries < 0:
+            raise ValueError("retries must be nonnegative")
+
+
+class Agent[S, A]:
     """Generate actions, apply task transitions, and record a rollout.
 
-    The policy produces actions accepted by the environment. The context protocol
-    controls the live conversation; the checkpoint policy selects branch points.
-    These collaborators are shared, while task state and workspace live in each
-    RolloutState. The environment validates workspace requirements at initialization.
+    The policy produces actions accepted by the environment. The context manager
+    controls what the policy sees and when it is compacted; the branch-point policy
+    selects checkpoints search may continue from. These collaborators are shared,
+    while task state and workspace live in each RolloutState. The environment
+    validates workspace requirements at initialization.
 
-    An optional checkpointer persists complete states independently of branch-point
-    selection. checkpoint_retries bounds retries of retry_on exceptions from the
-    last committed state. Subclass _advance, _compact, or _finish to keep custom
-    behavior within that commit/retry boundary.
+    ``execution`` groups services, persistence, retries, resource budgets, and the
+    generation timeout. Subclass _advance, _compact, or _finish to keep custom behavior
+    within the commit/retry boundary.
     """
 
     def __init__(
@@ -112,33 +135,22 @@ class Runner[S, A]:
         policy: Policy[A],
         env: Env[S, A],
         system_prompt: str,
-        protocol: ContextProtocol | None = None,
+        context: ContextProtocol | None = None,
         sampling_params: SamplingParams | None = None,
         max_steps: int = 32,
         finish_prompt: str | None = DEFAULT_FINISH_PROMPT,
         tools: Sequence[dict[str, Any]] | None = None,
-        generate_timeout: float | None = None,
-        checkpoints: CheckpointPolicy | None = None,
-        checkpointer: Checkpointer | None = None,
-        checkpoint_retries: int = 2,
-        retry_on: tuple[type[Exception], ...] = (ConnectionError, TimeoutError),
-        services: ExecutionServices | None = None,
-        resource_budget: ResourceBudget | None = None,
+        branch_points: CheckpointPolicy | None = None,
+        execution: Execution | None = None,
         actor: bool = True,
     ) -> None:
-        if checkpoint_retries < 0:
-            raise ValueError("checkpoint_retries must be nonnegative")
-        self.checkpointer = checkpointer
-        self.checkpoint_retries = checkpoint_retries
-        self.retry_on = retry_on
-        self.services = services or ExecutionServices()
-        self._resource_budget = resource_budget or ResourceBudget()
+        self.execution = execution if execution is not None else Execution()
         self.actor = actor
-        self._checkpoints = checkpoints or SparseCheckpoints()
+        self._checkpoints = branch_points or SparseCheckpoints()
         self._policy: Policy[A] = policy
         self._env: Env[S, A] = env
         self._system_prompt: str = system_prompt
-        self.protocol = protocol or AppendOnly()
+        self.protocol = context or AppendOnly()
         self._sampling_params: SamplingParams | None = sampling_params
         self._max_steps: int = max_steps
         self._finish_prompt: str | None = finish_prompt
@@ -149,20 +161,24 @@ class Runner[S, A]:
         names = [tool["function"]["name"] for tool in self._tools]
         if len(names) != len(set(names)):
             raise ValueError("protocol and task tool names collide")
-        # Seconds one generate may take before the turn is abandoned. `None` -- the
-        # default -- waits forever, which is what a backend that always answers wants.
-        # `-1` normalises to `None` here rather than staying in-band as it does for the
-        # step budget, so a CLI passing -1 for "no limit" needs no special case and no
-        # reader downstream has to know the sentinel at all.
-        self._generate_timeout: float | None = (
-            None
-            if generate_timeout is not None and generate_timeout < 0
-            else generate_timeout
-        )
+
+    @property
+    def services(self) -> ExecutionServices:
+        return self.execution.services
+
+    @services.setter
+    def services(self, services: ExecutionServices) -> None:
+        self.execution = replace(self.execution, services=services)
+
+    @property
+    def checkpointer(self) -> Checkpointer | None:
+        return self.execution.checkpointer
 
     @property
     def generate_timeout(self) -> float | None:
-        return self._generate_timeout
+        """Seconds one generation may take; ``None`` (or a negative value) waits."""
+        timeout = self.execution.generate_timeout
+        return None if timeout is not None and timeout < 0 else timeout
 
     def save_checkpoint(self, rs: RolloutState[S]) -> RolloutState[S]:
         """Commit a complete state, independently of search checkpoint selection.
@@ -222,12 +238,12 @@ class Runner[S, A]:
                 # A fork starts a new storage lineage from its source checkpoint.
                 rs = self.save_checkpoint(rs)
         assert rs.checkpoint_id is not None
-        for attempt in range(self.checkpoint_retries + 1):
+        for attempt in range(self.execution.retries + 1):
             try:
                 # Protect the saved/input state from in-place workspace/tool updates.
                 result = await operation(rs.snapshot())
             except Exception as exc:
-                if attempt == self.checkpoint_retries or not self._retryable(exc):
+                if attempt == self.execution.retries or not self._retryable(exc):
                     raise
                 logger.warning(
                     "retrying from checkpoint=%s attempt=%d error=%r",
@@ -245,7 +261,7 @@ class Runner[S, A]:
     def _retryable(self, exc: Exception) -> bool:
         if isinstance(exc, ExceptionGroup):
             return all(self._retryable(child) for child in exc.exceptions)
-        return isinstance(exc, self.retry_on)
+        return isinstance(exc, self.execution.retry_on)
 
     @property
     def env(self) -> Env[S, A]:
@@ -280,7 +296,7 @@ class Runner[S, A]:
         finish_prompt: str | None,
         sampling_params: SamplingParams | None = None,
         tools: Sequence[dict[str, Any]] | None = None,
-    ) -> Runner[T, A]:
+    ) -> Agent[T, A]:
         """The same runner over a different world: same policy, new env and prompt.
 
         A nested rollout -- a model-driven fold, and anything else shaped like it -- is
@@ -298,11 +314,11 @@ class Runner[S, A]:
         defaults to the new env's own schemas, and ``sampling_params`` to this runner's
         -- pass either to override, e.g. a colder temperature for a summarizer.
         """
-        return Runner(
+        return Agent(
             policy=self._policy,
             env=env,
             system_prompt=system_prompt,
-            protocol=AppendOnly(),
+            context=AppendOnly(),
             sampling_params=(
                 self._sampling_params if sampling_params is None else sampling_params
             ),
@@ -310,9 +326,11 @@ class Runner[S, A]:
             finish_prompt=finish_prompt,
             tools=tools,
             # a nested rollout talks to the same backend, so it inherits the same
-            # patience: a fold that hung forever would stall the turn that folded
-            generate_timeout=self._generate_timeout,
-            services=self.services,
+            # services and patience: a fold that hung would stall the turn that folded
+            execution=Execution(
+                services=self.services,
+                generate_timeout=self.execution.generate_timeout,
+            ),
             actor=self.actor,
         )
 
@@ -343,7 +361,7 @@ class Runner[S, A]:
             seed=messages,
             state=state,
             workspace=ws,
-            budget=self._resource_budget,
+            budget=self.execution.resource_budget,
             history=deepcopy(messages),
             context_refs=tuple(range(len(messages))),
             steps_remaining=None if self._max_steps < 0 else self._max_steps,
@@ -390,7 +408,7 @@ class Runner[S, A]:
         branching.
 
         ``sampling_params`` overlays the runner's defaults for this turn only, so a
-        proposal can vary temperature per expansion without a second ``Runner`` per
+        proposal can vary temperature per expansion without a second ``Agent`` per
         proposal -- the runner is shared across concurrent branches and must stay
         stateless for that to be safe.
         """
@@ -498,16 +516,16 @@ class Runner[S, A]:
         the prompt was. ``wait_for`` has already cancelled the generation by then, so
         the backend request is not left running behind the turn that gave up on it.
         """
-        if self._generate_timeout is None:
+        if self.generate_timeout is None:
             return await self.services.generate(self._policy, cond, params, owner=owner)
         try:
             return await asyncio.wait_for(
                 self.services.generate(self._policy, cond, params, owner=owner),
-                self._generate_timeout,
+                self.generate_timeout,
             )
         except TimeoutError as exc:
             raise TimeoutError(
-                f"generation exceeded generate_timeout={self._generate_timeout}s "
+                f"generation exceeded generate_timeout={self.generate_timeout}s "
                 + f"(prompt_tokens={len(cond.tokens)}); the turn is abandoned and the "
                 + "expansion "
                 + "counts as one dead rollout"
@@ -738,4 +756,4 @@ class Runner[S, A]:
         )
 
 
-__all__ = ["DEFAULT_FINISH_PROMPT", "Runner"]
+__all__ = ["DEFAULT_FINISH_PROMPT", "Agent", "Execution"]

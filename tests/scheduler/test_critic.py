@@ -230,7 +230,7 @@ async def test_a_scoring_failure_keeps_the_rollout_and_is_counted() -> None:
 async def test_a_stalled_reward_server_is_bounded_by_the_scorer_timeout() -> None:
     """An expansion is generate *then* score, so both halves need their own bound.
 
-    ``Runner.generate_timeout`` bounds the first; without a bound on the second a
+    ``Agent.generate_timeout`` bounds the first; without a bound on the second a
     reward server that swallows a request holds the expansion, and -- since a pass
     drains what is in flight rather than cancelling it -- the whole pass behind it. The
     message carries what a reader of the node's ``score_error`` needs and the bare

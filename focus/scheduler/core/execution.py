@@ -12,7 +12,7 @@ from types import MappingProxyType
 from typing import Any
 
 from focus.generation import SamplingParams
-from focus.harness import RolloutState, Runner, Workspace
+from focus.harness import Agent, RolloutState, Workspace
 
 #: Node-metadata key holding the index of the search pass that created the node.
 PASS_KEY = "pass"
@@ -36,7 +36,7 @@ class RolloutExpander[S](Expander[RolloutState[S]]):
 
     def __init__(
         self,
-        runner: Runner[S, Any],
+        runner: Agent[S, Any],
         *,
         sampling_params: SamplingParams | None = None,
         annotation: Mapping[str, object] | None = None,
@@ -65,7 +65,7 @@ class RolloutExpander[S](Expander[RolloutState[S]]):
     async def start(
         self, prompt: str, *, workspace: Workspace | None = None
     ) -> RolloutState[S]:
-        """Convenience: build the search root from a prompt (keeps the Runner here)."""
+        """Convenience: build the search root from a prompt (keeps the Agent here)."""
         return await self._runner.start(prompt, workspace=workspace)
 
 

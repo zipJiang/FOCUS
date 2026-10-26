@@ -11,7 +11,7 @@ async def test_custom_protocol_changes_context_without_task_transition():
     runner = toy_runner(
         ScriptedGenerator([tool_call("keep_recent", n=1)]),
         parser=HermesToolCallParser(),
-        protocol=KeepRecent(),
+        context=KeepRecent(),
     )
     root = await runner.start("question")
     result = await runner.advance(root)
@@ -32,7 +32,7 @@ async def test_mixed_mutations_are_rejected_without_partial_execution():
         ]
     )
     runner = toy_runner(
-        ScriptedGenerator([text]), parser=HermesToolCallParser(), protocol=KeepRecent()
+        ScriptedGenerator([text]), parser=HermesToolCallParser(), context=KeepRecent()
     )
     result = await runner.advance(await runner.start("question"))
     assert result.context_version == 0
@@ -53,7 +53,7 @@ async def test_programming_failures_are_not_reported_as_invalid_model_actions():
     runner = toy_runner(
         ScriptedGenerator([tool_call("break")]),
         parser=HermesToolCallParser(),
-        protocol=Broken(),
+        context=Broken(),
     )
     with pytest.raises(KeyError, match="backend not registered"):
         await runner.advance(await runner.start("question"))
@@ -67,7 +67,7 @@ async def test_invalid_custom_arguments_preserve_context(arguments):
         + "</tool_call>"
     )
     runner = toy_runner(
-        ScriptedGenerator([text]), parser=HermesToolCallParser(), protocol=KeepRecent()
+        ScriptedGenerator([text]), parser=HermesToolCallParser(), context=KeepRecent()
     )
     try:
         root = await runner.start("question")
@@ -86,7 +86,7 @@ async def test_context_operations_obey_runner_step_limit():
     runner = toy_runner(
         generator,
         parser=HermesToolCallParser(),
-        protocol=KeepRecent(),
+        context=KeepRecent(),
         max_steps=2,
         finish_prompt=None,
     )
@@ -112,7 +112,7 @@ async def test_runner_uses_protocol_preparation_for_advance_and_finish():
             prompt = super().prepare(rs, runner)
             return replace(prompt, tokens=(777, *prompt.tokens))
 
-    runner = toy_runner(ScriptedGenerator(["go", "stop"]), protocol=CustomPrompt())
+    runner = toy_runner(ScriptedGenerator(["go", "stop"]), context=CustomPrompt())
     root = await runner.start("question")
     advanced = await runner.advance(root)
     finished = await runner.finish(advanced)
@@ -126,7 +126,7 @@ async def test_continuation_rejects_environment_messages_before_another_request(
     from focus import AppendOnly
 
     gen = ScriptedGenerator(["go", "stop"])
-    runner = toy_runner(gen, protocol=AppendOnly(continuation=True))
+    runner = toy_runner(gen, context=AppendOnly(continuation=True))
     first = await runner.advance(await runner.start("question"))
     assert gen.calls == 1
     with pytest.raises(ValueError, match="uninterrupted"):
@@ -141,7 +141,7 @@ async def test_continuation_rejects_native_policy_at_initialization():
     from focus import AppendOnly
 
     runner = toy_runner(
-        ScriptedGenerator(["go"]), protocol=AppendOnly(continuation=True)
+        ScriptedGenerator(["go"]), context=AppendOnly(continuation=True)
     )
     runner.policy.provides_native_tool_calls = True
     with pytest.raises(ValueError, match="exact token-input"):

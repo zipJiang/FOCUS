@@ -29,17 +29,18 @@ from focus.generation.parsing import (
 )
 from focus.harness import (
     SUBMIT,
+    Agent,
     AgenticCompactor,
     AnyOf,
     BaseTool,
     Compactor,
     Env,
+    Execution,
     InMemoryWorkspace,
     NullWorkspace,
     PromptTokens,
     RolloutState,
     RoundBudget,
-    Runner,
     StateCounter,
     StepResult,
     SubmitFields,
@@ -78,6 +79,8 @@ from focus.values import RewardConfig
 # each group. The groups are the documentation: they are the order the docs introduce
 # the library in, which is not the order an alphabetical list would give.
 __all__ = [
+    "Agent",
+    "Execution",
     "Collector",
     "Tree",
     "Batch",
@@ -135,7 +138,6 @@ __all__ = [
     "PromptTokens",
     "RolloutState",
     "RoundBudget",
-    "Runner",
     "StateCounter",
     "StepResult",
     "SubmitFields",

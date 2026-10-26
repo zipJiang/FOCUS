@@ -18,6 +18,7 @@ from focus.generation import (
 from focus.generation.parsing import HermesToolCallParser, TextActionParser
 from focus.generation.policy import Policy
 from focus.harness import (
+    Agent,
     Compaction,
     CompactionResult,
     Compactor,
@@ -25,7 +26,6 @@ from focus.harness import (
     InMemoryWorkspace,
     NullWorkspace,
     RolloutState,
-    Runner,
     StepResult,
     StorageTool,
     Trigger,
@@ -226,7 +226,7 @@ async def test_nested_prefixes_share_the_ids_they_agree_on() -> None:
     on any machine and any build, where a ``tracemalloc`` threshold would be a guess
     that a debug interpreter or a future ``int`` layout could break.
     """
-    runner = Runner(
+    runner = Agent(
         policy=Policy(
             format=PolicyFormat(
                 "custom", ChatCodec(BigIdTokenizer()), TextActionParser()

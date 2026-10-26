@@ -13,7 +13,7 @@ from focus.harness.turn import Turn
 from focus.protocols.base import ContextProtocol
 
 if TYPE_CHECKING:
-    from focus.harness.runner import Runner
+    from focus.harness.agent import Agent
 
 
 class Summary(ContextProtocol):
@@ -25,23 +25,23 @@ class Summary(ContextProtocol):
         self.compactor = compactor
         self.manages_context = compactor is not None
 
-    async def initialize(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
+    async def initialize(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
         if self.compactor is not None:
             self.compactor.trigger.check(rs.state)
         return rs
 
-    def needs_prepare(self, rs: AnyRollout, runner: Runner[Any, Any]) -> bool:
+    def needs_prepare(self, rs: AnyRollout, runner: Agent[Any, Any]) -> bool:
         return self.compactor is not None and self.compactor.trigger.fires(
             self.prepare(rs, runner).tokens,
             rs.state,
         )
 
-    async def before(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
+    async def before(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
         # The enclosing runner operation commits this fold with its complete state.
         # Calling runner.compact here would nest a persistence/retry transaction.
         return await runner._compact(rs) if self.needs_prepare(rs, runner) else rs
 
-    async def compact(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
+    async def compact(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
         if self.compactor is None:
             return await super().compact(rs, runner)
         runner.services.attach_budget(rs.owner, rs.budget)

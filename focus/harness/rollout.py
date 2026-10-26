@@ -5,7 +5,7 @@ conversation, the env state, the workspace, and the log of
 :class:`~focus.harness.turn.Turn` s taken so far -- and it is also the *final
 result* of one, since a finished rollout is just a checkpoint nothing continues from.
 The driver that produces it lives next door in
-:mod:`focus.harness.runner`; this module is the data and the questions you
+:mod:`focus.harness.agent`; this module is the data and the questions you
 can ask of it, so a consumer (scheduler, exporter, preparation) can depend on the
 checkpoint without dragging in the loop.
 
@@ -96,7 +96,7 @@ class RolloutState[S]:
     workspace: Workspace
     #: The append-only turn log -- task turns and fold turns interleaved, in order.
     turns: tuple[Turn[S], ...] = field(default_factory=tuple)
-    #: Did this episode end because the step budget ran out (:meth:`Runner.finish` drove
+    #: Did this episode end because the step budget ran out (:meth:`Agent.finish` drove
     #: one last answer turn) rather than on its own? ``done`` stays ``True`` either way
     #: -- the episode *is* over -- so this is the flag that tells the two endings apart,
     #: for a metric ("what fraction were forced?") or a filter over training data.
@@ -295,7 +295,7 @@ class RolloutState[S]:
         """Copy branch-owned state while retaining immutable generation records.
 
         Unguarded (no :attr:`forkable` check, unlike :meth:`fork`): it freezes the
-        mutable workspace so a later in-place :meth:`Runner.advance` cannot reach back
+        mutable workspace so a later in-place :meth:`Agent.advance` cannot reach back
         and change an already-recorded checkpoint. Use it to store a checkpoint that
         will keep advancing (e.g. every fold of a long rollout).
         """

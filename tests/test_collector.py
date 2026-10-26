@@ -33,14 +33,15 @@ from focus.generation import (
 )
 from focus.generation.parsing import TextActionParser
 from focus.harness import (
+    Agent,
     Compaction,
     CompactionResult,
     Compactor,
     Env,
-    Runner,
     StepResult,
     Workspace,
 )
+from focus.harness.agent import Execution
 from focus.preparation import prepare_samples
 from focus.preparation.records import Batch
 from focus.protocols import Summary
@@ -127,14 +128,14 @@ def _runner(
     generator: Policy[Any] | None = None,
     version: str = "policy",
     **kwargs: Any,
-) -> Runner[CountState, str]:
+) -> Agent[CountState, str]:
     """The folding toy runner every collector here drives.
 
     ``generator`` is a parameter rather than a fixture because what a *backend* does --
     answer, fail, stall -- is the one thing a robustness test varies about the runner.
     """
     generator = generator or CyclingGenerator(["go", "stop-good", "go", "stop-bad"])
-    return Runner(
+    return Agent(
         policy=Policy(
             format=PolicyFormat(
                 "custom", ChatCodec(FakeChatTokenizer()), TextActionParser()
@@ -146,7 +147,7 @@ def _runner(
         ),
         env=CountEnv(),
         system_prompt="sys",
-        protocol=Summary(EveryTurnCompactor()),
+        context=Summary(EveryTurnCompactor()),
         max_steps=4,
         **kwargs,
     )
@@ -157,7 +158,7 @@ _CONSTANT = object()
 
 def _collector(
     *,
-    runner: Runner[Any, Any] | None = None,
+    runner: Agent[Any, Any] | None = None,
     critic: Any = _CONSTANT,
     passes: tuple[Phase, ...] | None = None,
     max_concurrency: int = 1,
@@ -307,7 +308,7 @@ async def test_fifo_records_birth_evidence_for_the_next_pass() -> None:
 def _unfolding_collector(**kwargs) -> Collector:
     """A collector whose rollouts never fold, so the only branch points on a line are
     the ones the strategy itself decided to keep."""
-    runner: Runner[CountState, str] = Runner(
+    runner: Agent[CountState, str] = Agent(
         policy=Policy(
             format=PolicyFormat(
                 "custom", ChatCodec(FakeChatTokenizer()), TextActionParser()
@@ -978,7 +979,7 @@ async def test_a_stalled_backend_costs_expansions_not_the_whole_prompt(caplog) -
     caplog.set_level(logging.WARNING)
     gen = StalledGenerator()
     collector = _collector(
-        runner=_runner(generator=gen, generate_timeout=0.01),
+        runner=_runner(generator=gen, execution=Execution(generate_timeout=0.01)),
         passes=(
             Phase(Fifo(), 4, max_children=2),
             Phase(Fifo(), 4, max_pending=4),

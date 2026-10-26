@@ -80,7 +80,7 @@ __all__ = [
 
 
 class SearchPayload(RolloutState[None]):
-    """Generic scheduler fixture: every live node can branch, independent of Runner.
+    """Generic scheduler fixture: every live node can branch, independent of Agent.
 
     Allocation tests exercise arbitrary Payload trees with synthetic reward logs.
     Real runner checkpoint eligibility is covered by the harness/execution tests.

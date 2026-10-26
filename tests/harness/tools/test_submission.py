@@ -9,8 +9,8 @@ import pytest
 from focus.generation.parsing import HermesToolCallParser
 from focus.harness import (
     DEFAULT_FINISH_PROMPT,
+    Agent,
     InMemoryWorkspace,
-    Runner,
     StorageTool,
     SubmitTool,
 )
@@ -33,11 +33,11 @@ def store(value: str) -> str:
     return "r</think>" + tool_call("storage", operate="put", key="k", value=value)
 
 
-def _runner(gen: ScriptedGenerator, **env_kwargs: Any) -> Runner[Any, Any]:
+def _runner(gen: ScriptedGenerator, **env_kwargs: Any) -> Agent[Any, Any]:
     """The submit env over one real tool: `storage`, which writes to the run's store.
 
     So every rollout below is started on an `InMemoryWorkspace`. A `storage` tool under
-    a `NullWorkspace` is refused at `Runner.root` -- its calls would come back to the
+    a `NullWorkspace` is refused at `Agent.root` -- its calls would come back to the
     model as error strings, and a `store(...)` turn here means the agent went back to
     work, not that it hit a broken tool.
     """

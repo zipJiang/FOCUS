@@ -30,11 +30,11 @@ from focus.generation import (
 )
 from focus.generation.parsing import ActionParser, TextActionParser, ToolTurn
 from focus.harness import (
+    Agent,
     Env,
     InMemoryWorkspace,
     NullWorkspace,
     RolloutState,
-    Runner,
     StepResult,
     SubmitFields,
     ToolEnv,
@@ -340,18 +340,26 @@ def toy_runner(
     parser: ActionParser[Any] | None = None,
     version: str = "policy",
     **kwargs: Any,
-) -> Runner[Any, Any]:
+) -> Agent[Any, Any]:
     """A runner over the fakes, wired the way every harness test wires one.
 
     One place decides what "the standard toy rollout" is -- the fake tokenizer's codec,
     a text parser, a one-line system prompt -- so a test that cares about compaction or
     scheduling names only the piece it is actually varying.
     """
+    from focus.harness.agent import Execution
     from focus.protocols import Summary
 
     if "compactor" in kwargs:
-        kwargs["protocol"] = Summary(kwargs.pop("compactor"))
-    return Runner(
+        kwargs["context"] = Summary(kwargs.pop("compactor"))
+    execution = {
+        key: kwargs.pop(key)
+        for key in ("services", "checkpointer", "resource_budget", "generate_timeout")
+        if key in kwargs
+    }
+    if execution:
+        kwargs["execution"] = Execution(**execution)
+    return Agent(
         policy=toy_policy(gen, parser=parser, version=version),
         env=env if env is not None else ToyEnv(),
         system_prompt="sys",
@@ -360,7 +368,7 @@ def toy_runner(
 
 
 async def complete(
-    runner: Runner[Any, Any],
+    runner: Agent[Any, Any],
     prompt: str,
     *,
     workspace: Workspace | None = None,

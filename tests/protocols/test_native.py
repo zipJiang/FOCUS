@@ -3,9 +3,9 @@
 import pytest
 
 from focus import (
+    Agent,
     OpenAIChatPolicy,
     OpenAIResponsesPolicy,
-    Runner,
 )
 from focus.generation import NativeToolCall
 from tests.generation.test_openai_chat import (
@@ -67,8 +67,8 @@ async def test_custom_protocol_preserves_native_batch_and_history(native_backend
         NativeToolCall("keep_recent", '{"n": 1}', "c1"),
         NativeToolCall("keep_recent", '{"n": 1}', "c2"),
     )
-    runner = Runner(
-        policy=policy, env=SubmitEnv([]), system_prompt="sys", protocol=KeepRecent()
+    runner = Agent(
+        policy=policy, env=SubmitEnv([]), system_prompt="sys", context=KeepRecent()
     )
     try:
         root = await runner.start("original evidence")
@@ -96,8 +96,8 @@ async def test_custom_protocol_preserves_native_batch_and_history(native_backend
 async def test_invalid_native_context_edit_rolls_back(native_backend):
     policy, respond = native_backend
     respond(NativeToolCall("unknown", "{}", "old"))
-    runner = Runner(
-        policy=policy, env=SubmitEnv([]), system_prompt="sys", protocol=KeepRecent()
+    runner = Agent(
+        policy=policy, env=SubmitEnv([]), system_prompt="sys", context=KeepRecent()
     )
     try:
         previous = await runner.advance(await runner.start("evidence"))
@@ -121,8 +121,8 @@ async def test_mixed_native_batch_rejects_context_and_task_operations(native_bac
         NativeToolCall("keep_recent", '{"n": 1}', "edit"),
         NativeToolCall("submit", '{"answer": "premature"}', "finish"),
     )
-    runner = Runner(
-        policy=policy, env=SubmitEnv([]), system_prompt="sys", protocol=KeepRecent()
+    runner = Agent(
+        policy=policy, env=SubmitEnv([]), system_prompt="sys", context=KeepRecent()
     )
     try:
         root = await runner.start("evidence")

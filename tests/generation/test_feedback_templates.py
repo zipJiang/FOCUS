@@ -11,7 +11,7 @@ from focus.generation.parsing import (
     HermesToolCallParser,
     QwenXMLToolCallParser,
 )
-from focus.harness import Runner
+from focus.harness import Agent
 from tests.helpers import FakeChatTokenizer, ScriptedGenerator, SubmitEnv, tool_call
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "templates"
@@ -56,7 +56,7 @@ async def test_feedback_preserves_task_history_and_final_submit(filename, max_st
     policy = Policy(
         format=PolicyFormat(filename, codec, parser), complete=gen.agenerate_tokens
     )
-    runner = Runner(
+    runner = Agent(
         policy=policy,
         env=SubmitEnv([]),
         system_prompt="Solve the task.",

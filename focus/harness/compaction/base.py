@@ -18,7 +18,7 @@ from focus.harness.workspace import Workspace
 if TYPE_CHECKING:
     # Type-only: a fold *is* a rollout, so the runner imports this protocol module.
     # Naming its type here at runtime would close that loop.
-    from focus.harness.runner import Runner
+    from focus.harness.agent import Agent
 
 
 class IncompleteCompactionError(ValueError):
@@ -50,7 +50,7 @@ class Compaction[S]:
 
     Its one collaborator is the ``runner`` being folded, not a bag of that runner's
     parts: a model-driven fold is a rollout under the *same* policy on a different
-    world, so it asks for :meth:`~focus.harness.runner.Runner.derive` instead
+    world, so it asks for :meth:`~focus.harness.agent.Agent.derive` instead
     of reassembling a runner out of a generator, a codec, a parser and a version tag
     smuggled across this seam -- and cannot end up guessing a tool dialect the rollout
     never spoke. A compactor that generates nothing simply ignores it.
@@ -63,7 +63,7 @@ class Compaction[S]:
     #: The runner whose rollout is being folded: the model, the codec, the tool dialect
     #: and the policy-version tag in one piece. Loose in the action parameter because a
     #: fold's env speaks the parser's actions, which need not be the task env's.
-    runner: Runner[S, Any]
+    runner: Agent[S, Any]
 
     checkpoint: Any = None
 
@@ -114,7 +114,7 @@ class Compactor[S](ABC):
     #: When to fold. Required -- every compactor sets it, because a fold with no
     #: criterion is one the runner could never call. An annotation rather than an
     #: abstract method, so forgetting it is not a construction error here; the
-    #: :class:`~focus.harness.runner.Runner` refuses a compactor without one
+    #: :class:`~focus.harness.agent.Agent` refuses a compactor without one
     #: instead, which is the first place both halves are in hand. It also owns the other
     #: half of the pairing: the runner front-loads the check, so a trigger that fires
     #: and is never :meth:`~...compaction.triggers.Trigger.relieve` d re-fires on the

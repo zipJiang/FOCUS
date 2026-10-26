@@ -15,7 +15,7 @@ checked
 Concrete strategies live as sibling modules (``agentic``, …).
 
 :class:`AgenticCompactor` is the general, LLM-driven strategy, and it is *the same
-machinery as the rollout*: a :class:`~focus.harness.runner.Runner` over a
+machinery as the rollout*: a :class:`~focus.harness.agent.Agent` over a
 :class:`FoldEnv`, whose tools are the workspace's own. Its turns come back tagged
 ``"fold"`` and join the rollout's log, so a fold's tool-call turns are first-class
 trainable data and an env author never has to know compaction exists.

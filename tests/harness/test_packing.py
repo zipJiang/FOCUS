@@ -12,7 +12,7 @@ from focus.generation import PolicyFormat
 from focus.generation.parsing.base import TextActionParser
 from focus.generation.policy import Policy
 from focus.harness import Turn, regions
-from focus.harness.runner import Runner
+from focus.harness.agent import Agent
 from tests.helpers import (
     FakeChatTokenizer,
     ScriptedGenerator,
@@ -270,7 +270,7 @@ async def test_a_template_that_strips_think_splits_the_run_into_exact_packs() ->
     restates the first generation without its reasoning.
     """
     first, second = "reasoning</think>a", "more</think>b"
-    runner: Runner[Any, str] = Runner(
+    runner: Agent[Any, str] = Agent(
         policy=Policy(
             format=PolicyFormat(
                 "custom", ChatCodec(RewritingTokenizer()), TextActionParser()

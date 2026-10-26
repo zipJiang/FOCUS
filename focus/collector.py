@@ -18,7 +18,7 @@ from typing import Any
 from focus.allocation.evidence import RolloutLedger
 from focus.critic import Critic
 from focus.execution import Usage
-from focus.harness import AnyRollout, RolloutState, Runner
+from focus.harness import Agent, AnyRollout, RolloutState
 from focus.harness.workspace import Workspace
 from focus.preparation import Batch, DirectBranchTd, Estimator, prepare_samples
 from focus.scheduler.core.critic import NodeScorer
@@ -64,7 +64,7 @@ class Collector:
 
     def __init__(
         self,
-        agent: Runner[Any, Any],
+        agent: Agent[Any, Any],
         *,
         search: Search,
         critic: Critic | None = None,

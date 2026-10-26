@@ -11,13 +11,13 @@ from typing import Any
 from focus.generation import Policy, SamplingParams
 from focus.generation.parsing import ToolTurn
 from focus.harness import (
+    Agent,
     AgenticCompactor,
     BaseTool,
     NullWorkspace,
     PromptTokens,
     RolloutState,
     RoundBudget,
-    Runner,
     StepResult,
     ToolEnv,
     ToolError,
@@ -290,7 +290,7 @@ class RunConfig:
             raise ValueError("all generation and call budgets must be positive")
 
 
-class LocBenchRunner(Runner[LocBenchState, ToolTurn]):
+class LocBenchRunner(Agent[LocBenchState, ToolTurn]):
     """Apply LocBench stopping and authored-compaction failure policies."""
 
     def __init__(
@@ -391,7 +391,7 @@ def build_locbench_compactor(config: RunConfig) -> AgenticCompactor[LocBenchStat
 
 @dataclass(frozen=True)
 class World:
-    runner: Runner[LocBenchState, ToolTurn]
+    runner: Agent[LocBenchState, ToolTurn]
     workspace: NullWorkspace
     prompt: str
 
@@ -427,7 +427,7 @@ def build_world(case: Case, repo: Repository, config: RunConfig) -> World:
             "Rank distinct relevant files early; put the strongest candidates first."
         )
         + LOCALIZATION_GUIDANCE,
-        protocol=Summary(build_locbench_compactor(config) if config.compact else None),
+        context=Summary(build_locbench_compactor(config) if config.compact else None),
         max_steps=config.max_steps,
         finish_prompt=(
             "Investigation budget exhausted. Call submit with your ranked locations "

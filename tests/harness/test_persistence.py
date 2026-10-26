@@ -200,7 +200,7 @@ async def test_all_protocols_restore_complete_state_with_fresh_runner(
         return toy_runner(
             ScriptedGenerator([output], logprobs=-0.1),
             parser=HermesToolCallParser(),
-            protocol=protocol(),
+            context=protocol(),
             checkpointer=SQLiteCheckpointer(path),
         )
 
@@ -281,7 +281,7 @@ async def test_continuation_horizon_survives_crash_and_restore():
     runner = toy_runner(
         ScriptedGenerator(["go"]),
         checkpointer=store,
-        checkpoints=EveryDecision(),
+        branch_points=EveryDecision(),
         finish_prompt=None,
     )
     started = await runner.advance(await runner.start("q"))

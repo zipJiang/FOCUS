@@ -5,7 +5,7 @@ scheduler, allocation -- which is exactly the shape that grows an import cycle w
 anyone noticing: the package body runs before any submodule of it, so a submodule that
 reaches back up (directly, or through a sibling that does) deadlocks on a
 half-initialized module. The failure is *order-dependent* -- `import focus`
-may be fine while `import focus.harness.runner` as the very first import of
+may be fine while `import focus.harness.agent` as the very first import of
 the process is not -- so a suite that has already imported half the library cannot see
 it.
 

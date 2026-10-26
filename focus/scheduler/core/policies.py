@@ -50,18 +50,18 @@ class Budget[P: Payload](Termination[P]):
     in, and the only one that means the same thing whether an expansion rolled one
     region or a whole episode. It is a stop condition rather than a launch count,
     because what the *next* expansion will cost is not known before it runs. Total turns
-    are therefore bounded by ``max_turns + max_concurrency * Runner.max_steps``: the
+    are therefore bounded by ``max_turns + max_concurrency * Agent.max_steps``: the
     check happens before launching, and expansions already in flight are drained rather
     than cancelled -- they finish and are counted, since a finished rollout thrown away
     at the budget line is the most expensive thing this loop could discard.
     ``max_nodes`` has the same overshoot, for the same reason. Only ``max_rollouts``
     is exact, because a rollout can be counted before it runs.
 
-    That bound assumes the runner *has* a step budget. Under ``Runner.max_steps = -1``
+    That bound assumes the runner *has* a step budget. Under ``Agent.max_steps = -1``
     one expansion is unlimited, so a turn or node budget still stops the loop
     *launching* but bounds nothing: an env that never ends the episode makes the pass as
     long as its slowest in-flight expansion, which is then bounded only by
-    ``Runner.generate_timeout``. A run that wants a guaranteed ceiling needs a
+    ``Agent.generate_timeout``. A run that wants a guaranteed ceiling needs a
     ``max_rollouts`` (exact whatever the runner does) or a finite ``max_steps``.
 
     The overshoot is *carried*, not compounded: the next pass's cap is computed from

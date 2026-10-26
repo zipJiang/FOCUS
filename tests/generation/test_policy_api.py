@@ -11,13 +11,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from focus import (
+    Agent,
     AgenticCompactor,
     NullWorkspace,
     OpenAIChatPolicy,
     OpenAIResponsesPolicy,
     Policy,
     PolicyFormat,
-    Runner,
     SamplingParams,
     TinkerPolicy,
     VLLMPolicy,
@@ -180,7 +180,7 @@ async def test_native_tools_errors_nudges_and_forks(
         policy = OpenAIResponsesPolicy(
             model="corporate", format=native_format(FakeChatTokenizer())
         )
-    runner = Runner(policy=policy, env=SubmitEnv([]), system_prompt="sys")
+    runner = Agent(policy=policy, env=SubmitEnv([]), system_prompt="sys")
     rs = await runner.start("q", workspace=NullWorkspace())
     rs = await runner.advance(rs)
     replies = [m for m in rs.messages if m["role"] == "tool"]
@@ -235,7 +235,7 @@ async def test_malformed_submit_answers_every_skipped_sibling(
     policy = OpenAIChatPolicy(
         model="corporate", format=native_format(FakeChatTokenizer())
     )
-    runner = Runner(policy=policy, env=SubmitEnv([]), system_prompt="sys")
+    runner = Agent(policy=policy, env=SubmitEnv([]), system_prompt="sys")
     rs = await runner.advance(await runner.start("q", workspace=NullWorkspace()))
     replies = [m for m in rs.messages if m["role"] == "tool"]
     assert [m["tool_call_id"] for m in replies] == ["submit1", "skipped1"]
@@ -257,7 +257,7 @@ async def test_responses_keeps_encrypted_reasoning_for_stateless_continuation(
     policy = OpenAIResponsesPolicy(
         model="corporate", format=native_format(FakeChatTokenizer())
     )
-    runner = Runner(policy=policy, env=SubmitEnv([]), system_prompt="sys")
+    runner = Agent(policy=policy, env=SubmitEnv([]), system_prompt="sys")
     rs = await runner.advance(await runner.start("q", workspace=NullWorkspace()))
     wire.response = responses_response(_text_item("done"))
     await runner.advance(rs)
@@ -272,11 +272,11 @@ async def test_native_compaction_uses_same_policy_without_orphan_tool_history(
     policy = OpenAIChatPolicy(
         model="corporate", format=native_format(FakeChatTokenizer())
     )
-    runner = Runner(
+    runner = Agent(
         policy=policy,
         env=SubmitEnv([]),
         system_prompt="sys",
-        protocol=Summary(AgenticCompactor(max_prompt_tokens=10000)),
+        context=Summary(AgenticCompactor(max_prompt_tokens=10000)),
     )
     rs = await runner.start("q", workspace=NullWorkspace())
     folded = await runner.compact(rs)
@@ -376,7 +376,7 @@ async def test_native_reminder_and_final_attempt_are_api_valid(
         policy = OpenAIResponsesPolicy(
             model="corporate", format=native_format(FakeChatTokenizer())
         )
-    runner = Runner(policy=policy, env=SubmitEnv([]), system_prompt="sys", max_steps=1)
+    runner = Agent(policy=policy, env=SubmitEnv([]), system_prompt="sys", max_steps=1)
     rs = await runner.advance(await runner.start("q"))
     assert not rs.done
     assert rs.state.answer is None

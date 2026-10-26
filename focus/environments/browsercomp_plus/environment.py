@@ -11,9 +11,9 @@ from pathlib import Path
 from focus.generation import Policy, SamplingParams
 from focus.generation.parsing import ToolTurn
 from focus.harness import (
+    Agent,
     NullWorkspace,
     RoundBudget,
-    Runner,
     SubmitFields,
     ToolEnv,
     build_budget,
@@ -139,7 +139,7 @@ class State(SubmitFields, RoundBudget):
     compaction_failure: tuple[str, ...] = ()
 
 
-class BrowserRunner(Runner[State, ToolTurn]):
+class BrowserRunner(Agent[State, ToolTurn]):
     """Bound the entire task path, including continuations from saved branches."""
 
     def __init__(self, *, context_limit=98304, compaction_failure="raise", **kwargs):
@@ -334,7 +334,7 @@ def make_runner(
         policy=policy,
         env=env,
         system_prompt=SYSTEM,
-        protocol=Summary(None if no_compact else compactor),
+        context=Summary(None if no_compact else compactor),
         max_steps=max_steps,
         finish_prompt=FINISH_PROMPT,
     )

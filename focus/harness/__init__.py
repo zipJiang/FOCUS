@@ -1,5 +1,6 @@
 """Harness: the agent-facing runtime around the generation backends."""
 
+from focus.harness.agent import DEFAULT_FINISH_PROMPT, Agent, Execution
 from focus.harness.compaction import (
     AgenticCompactor,
     AnyOf,
@@ -23,7 +24,6 @@ from focus.harness.persistence import (
     SQLiteCheckpointer,
 )
 from focus.harness.rollout import TASK, AnyRollout, RolloutState
-from focus.harness.runner import DEFAULT_FINISH_PROMPT, Runner
 from focus.harness.tools import (
     BaseTool,
     Tool,
@@ -70,7 +70,8 @@ __all__ = [
     "PromptTokens",
     "RolloutState",
     "RoundBudget",
-    "Runner",
+    "Agent",
+    "Execution",
     "SUBMIT",
     "StateCounter",
     "StepResult",

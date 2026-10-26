@@ -2,7 +2,7 @@
 
 A fold is an agent doing a bounded piece of tool work and then saying what it kept,
 which is exactly what an :class:`Env` describes -- so the ordinary
-:class:`~focus.harness.runner.Runner` drives it, and the compactor is left
+:class:`~focus.harness.agent.Agent` drives it, and the compactor is left
 owning only its *strategy* (the instruction, the budget, the trigger). The alternative
 is a second copy of the runner loop inside the compactor -- generate, parse, dispatch,
 observe, finish, with its own nudge and its own budget handling -- drifting from the one
@@ -102,7 +102,7 @@ class FoldEnv(ToolEnv[FoldState]):
         """The fold's ending: its visible text is the context to keep.
 
         Reached from both endings -- a voluntary no-tool reply, and the forced one
-        :meth:`~focus.harness.runner.Runner.finish` drives when the
+        :meth:`~focus.harness.agent.Agent.finish` drives when the
         interaction budget is spent -- so there is one place the kept text is written.
         """
         del payload

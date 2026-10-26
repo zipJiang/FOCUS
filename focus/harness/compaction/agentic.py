@@ -116,8 +116,8 @@ class AgenticCompactor(Compactor[S]):
     """An LLM that compacts via the workspace's tools within a bounded call budget.
 
     A fold *is* a rollout, so this owns no loop. It asks the rollout's own
-    :class:`~focus.harness.runner.Runner` to
-    :meth:`~focus.harness.runner.Runner.derive` one over a
+    :class:`~focus.harness.agent.Agent` to
+    :meth:`~focus.harness.agent.Agent.derive` one over a
     :class:`~...compaction.fold_env.FoldEnv` -- same generate/parse/dispatch/observe
     machinery, same turn log, same budget-forces-an-ending path -- and its whole job is
     the three things that are genuinely strategy: *when* (a composable
@@ -249,7 +249,7 @@ class AgenticCompactor(Compactor[S]):
             instruction += SUMMARY_INSTRUCTION
             if repair:
                 instruction += REPAIR_INSTRUCTION
-        # `derive`, not a fresh Runner: same model, same codec, same tool dialect,
+        # `derive`, not a fresh Agent: same model, same codec, same tool dialect,
         # same policy-version tag -- only the world, the prompts and the budget differ.
         # The same call-time-workspace mechanism as the rollout, too: the tools take no
         # captured store; the runner forwards this fold's workspace per call.

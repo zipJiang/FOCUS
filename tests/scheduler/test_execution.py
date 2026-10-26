@@ -9,11 +9,12 @@ import pytest
 
 from focus.generation import SamplingParams
 from focus.harness import (
+    Agent,
     RolloutState,
-    Runner,
     Turn,
     TurnTag,
 )
+from focus.harness.agent import Execution
 from focus.protocols import AppendOnly
 from focus.scheduler import (
     PASS_KEY,
@@ -42,15 +43,15 @@ def fold_marker() -> Turn[None]:
     return Turn(prefix=(), tokens=(), logprobs=(), tag="fold")
 
 
-def as_runner(fake: object) -> Runner[None, Any]:
-    """Present a scripted stand-in as the ``Runner`` the strategies ask for.
+def as_runner(fake: object) -> Agent[None, Any]:
+    """Present a scripted stand-in as the ``Agent`` the strategies ask for.
 
-    The fakes below script one region (or one turn) at a time, which a real ``Runner``
+    The fakes below script one region (or one turn) at a time, which a real ``Agent``
     has no way to do, so they reimplement its surface rather than subclass it. Casting
     once here says that in one place, instead of a directive on every call that passes
     one through.
     """
-    return cast("Runner[None, Any]", fake)
+    return cast("Agent[None, Any]", fake)
 
 
 EXPLORE = SamplingParams(temperature=1.5)
@@ -110,11 +111,11 @@ async def test_an_unstamped_expansion_leaves_metadata_alone() -> None:
 # -- shared completion loop ----------------------------------------------------------
 
 
-class ScriptedRunner(Runner[None, Any]):
+class ScriptedRunner(Agent[None, Any]):
     """Exercise the real drive loop with deterministic advances and workspace writes."""
 
     def __init__(self, *tags: TurnTag, max_steps: int = 8, done_at_end: bool = True):
-        self.checkpointer = None
+        self.execution = Execution()
         self.protocol = AppendOnly()
         self._tags = tags
         self._max_steps = max_steps

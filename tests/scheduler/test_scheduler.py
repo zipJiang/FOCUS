@@ -8,12 +8,12 @@ from typing import Any
 import pytest
 
 from focus.harness import (
+    Agent,
     Compaction,
     CompactionResult,
     Compactor,
     Env,
     RolloutState,
-    Runner,
     StepResult,
 )
 from focus.scheduler import (
@@ -71,7 +71,7 @@ def _runner(
     *,
     env: Env[Any, Any] | None = None,
     compactor: Compactor[Any] | None = None,
-) -> Runner[ToyState, str]:
+) -> Agent[ToyState, str]:
     return toy_runner(gen, env=env, compactor=compactor)
 
 
@@ -374,7 +374,7 @@ async def test_concurrency_gating_allows_unbounded_total_children() -> None:
     assert len(result.terminals()) == 3
 
 
-# -- purity: drive the whole scheduler with no Runner / harness at all ---------------
+# -- purity: drive the whole scheduler with no Agent / harness at all ---------------
 
 
 @pytest.mark.asyncio
@@ -473,7 +473,7 @@ class OneFastThenSlowChain(Expander[Toy]):
     Bounded, unlike :class:`OneFastThenBlockingChain`: a drained pass waits for what is
     in flight, so an expansion that never returns would hang the loop rather than being
     cancelled by it -- which is exactly what the per-call timeouts
-    (``Runner.generate_timeout``, ``NodeScorer(timeout=...)``) exist to prevent in
+    (``Agent.generate_timeout``, ``NodeScorer(timeout=...)``) exist to prevent in
     production.
     """
 
@@ -558,7 +558,7 @@ async def test_a_drained_turn_budget_overshoots_by_at_most_one_episode_per_slot(
 
     What the next expansion will cost is unknown before it runs and the drain finishes
     what is in flight, so the total may pass ``max_turns`` -- by at most one episode
-    (``Runner.max_steps`` turns) per concurrency slot, since nothing launches after the
+    (``Agent.max_steps`` turns) per concurrency slot, since nothing launches after the
     budget is hit.
     """
     exp = _expander(

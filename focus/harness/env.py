@@ -91,7 +91,7 @@ class Env[S, A](ABC):
         (no tools run, no world effects) and the transition is terminal whatever it
         contains. The default records the state unchanged; override to read the final
         answer out of the action or to score it, exactly as the natural ending does.
-        See :meth:`~focus.harness.runner.Runner.finish`, which drives it.
+        See :meth:`~focus.harness.agent.Agent.finish`, which drives it.
         """
         return StepResult(state, done=True)
 

@@ -14,7 +14,7 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment
 from focus.codec import ChatCodec
 from focus.generation import GenerateResult, Policy, PolicyFormat
 from focus.generation.parsing import TextActionParser
-from focus.harness import Env, Runner, StepResult, regions
+from focus.harness import Agent, Env, StepResult, regions
 from tests.helpers import FakeChatTokenizer, ScriptedGenerator
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -74,7 +74,7 @@ async def test_qwen_matches_frozen_harness_contract(role, forced):
                 reward_outcome=float(state + 1 == 2),
             )
 
-    runner = Runner(
+    runner = Agent(
         policy=Policy(
             format=PolicyFormat("qwen-test", codec, TextActionParser()),
             complete=complete,
@@ -153,7 +153,7 @@ async def test_qwen_thinking_rewrites_preserve_original_training_tokens(
         format=PolicyFormat("qwen-test", codec, TextActionParser()),
         complete=gen.agenerate_tokens,
     )
-    runner = Runner(
+    runner = Agent(
         policy=policy,
         env=FeedbackEnv(done_at=2),
         system_prompt="task",
@@ -232,12 +232,12 @@ async def test_qwen_continuation_keeps_unfinished_thinking_and_exact_fork_prefix
         format=PolicyFormat("qwen-segments", codec, TokenChunkParser()),
         complete=complete,
     )
-    runner = Runner(
+    runner = Agent(
         policy=policy,
         env=Segments(),
         system_prompt="task",
-        protocol=AppendOnly(continuation=True),
-        checkpoints=EveryDecision(),
+        context=AppendOnly(continuation=True),
+        branch_points=EveryDecision(),
         sampling_params=SamplingParams(max_tokens=len(first)),
         finish_prompt=None,
     )

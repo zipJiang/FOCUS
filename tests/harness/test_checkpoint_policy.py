@@ -25,7 +25,7 @@ class AtProgress:
 async def test_custom_eligibility_reads_completed_state_and_forked_workspace():
     policy = AtProgress()
     assert isinstance(policy, CheckpointPolicy)
-    runner = toy_runner(ScriptedGenerator(["go", "go", "go"]), checkpoints=policy)
+    runner = toy_runner(ScriptedGenerator(["go", "go", "go"]), branch_points=policy)
     workspace = InMemoryWorkspace()
     workspace.write("target", "2")
     root = await runner.start("question", workspace=workspace)
@@ -50,7 +50,7 @@ async def test_sparse_selects_context_boundary_but_not_the_following_task(compac
     runner = toy_runner(
         ScriptedGenerator(["go", "go"]),
         compactor=compactor,
-        checkpoints=SparseCheckpoints(),
+        branch_points=SparseCheckpoints(),
     )
     root = await runner.start("hi", workspace=QuietMemory())
     assert root.forkable
@@ -66,7 +66,9 @@ async def test_sparse_selects_context_boundary_but_not_the_following_task(compac
 
 
 async def test_every_decision_still_excludes_completed_and_truncated_states():
-    runner = toy_runner(ScriptedGenerator(["go", "stop"]), checkpoints=EveryDecision())
+    runner = toy_runner(
+        ScriptedGenerator(["go", "stop"]), branch_points=EveryDecision()
+    )
     first = await runner.advance(await runner.start("hi"))
     assert first.forkable
     assert not replace(first, truncated=True).forkable

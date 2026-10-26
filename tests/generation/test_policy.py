@@ -27,7 +27,7 @@ from focus.generation.parsing import (
     QwenXMLToolCallParser,
     TextActionParser,
 )
-from focus.harness import Runner
+from focus.harness import Agent
 from tests.helpers import (
     FakeChatTokenizer,
     InexactBridge,
@@ -272,7 +272,7 @@ def test_a_turn_with_no_native_calls_is_the_plain_assistant_message() -> None:
 def test_a_policy_is_a_value_and_is_shared_rather_than_copied() -> None:
     """Frozen, so the one record a run is configured with cannot drift under it."""
     policy = toy_policy(ScriptedGenerator(["go"]))
-    runner: Runner[Any, Any] = Runner(policy=policy, env=ToyEnv(), system_prompt="s")
+    runner: Agent[Any, Any] = Agent(policy=policy, env=ToyEnv(), system_prompt="s")
 
     assert runner.policy is policy
     with pytest.raises(AttributeError):

@@ -50,12 +50,12 @@ from focus.generation import SamplingParams
 from focus.generation.parsing import ToolTurn
 from focus.generation.policy import Policy
 from focus.harness import (
+    Agent,
     AgenticCompactor,
     InMemoryWorkspace,
     NullWorkspace,
     PromptTokens,
     RoundBudget,
-    Runner,
     SubmitFields,
     Tool,
     ToolEnv,
@@ -351,7 +351,7 @@ class DeonticState(SubmitFields, RoundBudget):
     compaction_failure: tuple[str, ...] = ()
 
 
-class DeonticRunner(Runner[DeonticState, ToolTurn]):
+class DeonticRunner(Agent[DeonticState, ToolTurn]):
     """Optionally turn rejected model folds into honest terminal training branches.
 
     Only :class:`IncompleteCompactionError` is an authored outcome: the compactor has
@@ -541,7 +541,7 @@ class World:
     and assembling them twice is how the two modes would quietly drift apart.
     """
 
-    runner: Runner[DeonticState, ToolTurn]
+    runner: Agent[DeonticState, ToolTurn]
     workspace: Workspace
     prompt: str
 
@@ -562,14 +562,14 @@ def build_world(case: Case, cfg: RunConfig) -> World:
         scorer=cfg.scorer,
         roll_call_budget=True,
     )
-    runner: Runner[DeonticState, ToolTurn] = DeonticRunner(
+    runner: Agent[DeonticState, ToolTurn] = DeonticRunner(
         policy=cfg.policy,
         env=env,
         system_prompt=build_system_prompt(cfg.tools),
         # Fold on the token budget, or once the round's tool budget is spent: exactly
         # the composition `build_budget` names, over the `RoundBudget` counters
         # `DeonticState` mixes in and `ToolEnv` charges.
-        protocol=Summary(None if cfg.no_compact else build_deontic_compactor(cfg)),
+        context=Summary(None if cfg.no_compact else build_deontic_compactor(cfg)),
         max_steps=cfg.max_steps,
         finish_prompt=finish_prompt(case),
         compaction_failure=cfg.compaction_failure,

@@ -20,7 +20,7 @@ check-before-launch already carried, now realized in the tree instead of thrown 
 :class:`~focus.scheduler.core.policies.Budget` states the size of it, and the
 one configuration where it is not a bound at all. A *rollout* budget stays a hard cap:
 in-flight expansions are charged against it before launch. Draining also makes the
-per-call bounds load-bearing (``Runner.generate_timeout``, ``NodeScorer(timeout=...)``):
+per-call bounds load-bearing (``Agent.generate_timeout``, ``NodeScorer(timeout=...)``):
 a pass ends no sooner than its slowest in-flight expansion.
 
 Cancellation is the one thing that is *not* a failure. ``CancelledError`` is a
@@ -31,7 +31,7 @@ that still aborts: in-flight expansions are cancelled and the gate slots and bac
 reservations they hold are handed back (see :meth:`Scheduler._abort`).
 
 The scheduler holds only the injected ``expander`` and the pure tree policies
-(selection, termination, backup); it never touches a ``Runner``, generation, or how a
+(selection, termination, backup); it never touches a ``Agent``, generation, or how a
 payload is made. All mutable search state lives in the :class:`SchedulerState` per run,
 and every tree access runs under ``state.lock`` -- so external code can inspect or
 mutate the tree mid-run by holding the same lock (``async with state.lock:``).

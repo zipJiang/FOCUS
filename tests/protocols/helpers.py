@@ -3,8 +3,8 @@
 from dataclasses import replace
 from typing import Any
 
+from focus.harness.agent import Agent
 from focus.harness.rollout import AnyRollout
-from focus.harness.runner import Runner
 from focus.protocols import ToolProtocol
 from focus.protocols.base import ProtocolError, schema
 
@@ -25,7 +25,7 @@ class KeepRecent(ToolProtocol):
         rs: AnyRollout,
         name: str,
         arguments: dict[str, Any],
-        runner: Runner[Any, Any],
+        runner: Agent[Any, Any],
     ) -> tuple[AnyRollout, str, str]:
         n = arguments["n"]
         if type(n) is not int or n < 1:

@@ -18,7 +18,7 @@ from focus.harness.rollout import AnyRollout
 from focus.harness.tools.dispatch import tool_reply
 
 if TYPE_CHECKING:
-    from focus.harness.runner import Runner
+    from focus.harness.agent import Agent
 
 
 class ProtocolError(ValueError):
@@ -40,7 +40,7 @@ class ContextProtocol:
 
     manages_context = False
 
-    def prepare(self, rs: AnyRollout, runner: Runner[Any, Any]) -> PreparedPrompt:
+    def prepare(self, rs: AnyRollout, runner: Agent[Any, Any]) -> PreparedPrompt:
         """Prepare the model input from this branch's current context."""
         return runner.policy.prepare(rs.messages, tools=runner.tools)
 
@@ -48,7 +48,7 @@ class ContextProtocol:
         self,
         result: GenerateResult,
         messages: list[Message],
-        runner: Runner[Any, Any],
+        runner: Agent[Any, Any],
     ) -> None:
         """Append the generated reply to the branch's live conversation."""
         runner.policy.record_reply(result, messages)
@@ -56,23 +56,23 @@ class ContextProtocol:
     def schemas(self) -> tuple[dict[str, Any], ...]:
         return ()
 
-    async def initialize(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
+    async def initialize(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
         return rs
 
-    def needs_prepare(self, rs: AnyRollout, runner: Runner[Any, Any]) -> bool:
+    def needs_prepare(self, rs: AnyRollout, runner: Agent[Any, Any]) -> bool:
         return False
 
-    async def before(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
+    async def before(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
         return rs
 
-    async def compact(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
-        raise ValueError("Runner has no compactor configured")
+    async def compact(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
+        raise ValueError("Agent has no compactor configured")
 
     async def apply(
         self,
         rs: AnyRollout,
         action: Any,
-        runner: Runner[Any, Any],
+        runner: Agent[Any, Any],
         *,
         ending: bool,
     ) -> Applied:
@@ -111,18 +111,18 @@ class AppendOnly(ContextProtocol):
     def __init__(self, *, continuation: bool = False) -> None:
         self.continuation = continuation
 
-    def _check_policy(self, runner: Runner[Any, Any]) -> None:
+    def _check_policy(self, runner: Agent[Any, Any]) -> None:
         if self.continuation and (
             not runner.policy.provides_exact_tokens
             or runner.policy.provides_native_tool_calls
         ):
             raise ValueError("Token continuation requires an exact token-input policy")
 
-    async def initialize(self, rs: AnyRollout, runner: Runner[Any, Any]) -> AnyRollout:
+    async def initialize(self, rs: AnyRollout, runner: Agent[Any, Any]) -> AnyRollout:
         self._check_policy(runner)
         return rs
 
-    def _boundary(self, messages: Sequence[Message], runner: Runner[Any, Any]) -> int:
+    def _boundary(self, messages: Sequence[Message], runner: Agent[Any, Any]) -> int:
         boundary = next(
             (
                 i
@@ -152,7 +152,7 @@ class AppendOnly(ContextProtocol):
                 )
         return boundary
 
-    def prepare(self, rs: AnyRollout, runner: Runner[Any, Any]) -> PreparedPrompt:
+    def prepare(self, rs: AnyRollout, runner: Agent[Any, Any]) -> PreparedPrompt:
         """Render chat context, or append exact segments to the initial prompt."""
         if not self.continuation:
             return super().prepare(rs, runner)
@@ -175,7 +175,7 @@ class AppendOnly(ContextProtocol):
         self,
         result: GenerateResult,
         messages: list[Message],
-        runner: Runner[Any, Any],
+        runner: Agent[Any, Any],
     ) -> None:
         """Keep exact token IDs with each assistant segment in continuation mode."""
         if self.continuation and (
@@ -199,7 +199,7 @@ class ToolProtocol(ContextProtocol):
         rs: AnyRollout,
         name: str,
         arguments: dict[str, Any],
-        runner: Runner[Any, Any],
+        runner: Agent[Any, Any],
     ) -> tuple[AnyRollout, str, str]:
         raise NotImplementedError
 
@@ -207,7 +207,7 @@ class ToolProtocol(ContextProtocol):
         self,
         rs: AnyRollout,
         action: Any,
-        runner: Runner[Any, Any],
+        runner: Agent[Any, Any],
         *,
         ending: bool,
     ) -> Applied:

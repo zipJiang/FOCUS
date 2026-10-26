@@ -53,9 +53,9 @@ from focus.generation import (
 )
 from focus.generation.parsing import HermesToolCallParser, ToolTurn
 from focus.harness import (
+    Agent,
     Env,
     RoundBudget,
-    Runner,
     StepResult,
     Workspace,
     build_budget,
@@ -680,7 +680,7 @@ def _runtime(
 ) -> Collector:
     """The whole loop over the fakes: folding runner, every-turn strategy, both
     default-shaped weighters at budgets this module can afford."""
-    runner: Runner[Round, ToolTurn] = Runner(
+    runner: Agent[Round, ToolTurn] = Agent(
         policy=Policy(
             format=PolicyFormat(
                 "custom", ChatCodec(FakeChatTokenizer()), HermesToolCallParser()
@@ -692,7 +692,7 @@ def _runtime(
         ),
         env=RoundEnv(),
         system_prompt="sys",
-        protocol=Summary(build_budget(max_prompt_tokens=64, max_interactions=2)),
+        context=Summary(build_budget(max_prompt_tokens=64, max_interactions=2)),
         max_steps=6,
     )
     return Collector(

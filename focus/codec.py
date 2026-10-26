@@ -21,7 +21,7 @@ from typing import Any, Protocol, runtime_checkable
 #: tool through a backend's *structured* channel carries the calls themselves --
 #: ``{"tool_calls": [{"id", "type", "function": {...}}]}``, the OpenAI shape an HF chat
 #: template renders back into the model's own dialect (see
-#: :func:`~focus.harness.runner._record_reply`). Every message this library
+#: :func:`~focus.harness.agent._record_reply`). Every message this library
 #: writes still has a string ``content``.
 Message = dict[str, Any]
 

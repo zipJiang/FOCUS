@@ -14,6 +14,7 @@ from focus.generation.parsing import (
     QwenXMLToolCallParser,
 )
 from focus.harness import (
+    Agent,
     AgenticCompactor,
     AnyOf,
     BaseTool,
@@ -26,7 +27,6 @@ from focus.harness import (
     NullWorkspace,
     PromptTokens,
     RoundBudget,
-    Runner,
     StateCounter,
     StorageTool,
     SubmitFields,
@@ -63,10 +63,10 @@ def _reply(text: str) -> str:
 
 def _folding_runner(
     gen: ScriptedGenerator, parser: ActionParser[Any] | None = None
-) -> Runner[Any, Any]:
+) -> Agent[Any, Any]:
     """The rollout a compaction is folding.
 
-    Only what :meth:`Runner.derive` carries matters here -- the generator, the codec,
+    Only what :meth:`Agent.derive` carries matters here -- the generator, the codec,
     the tool dialect and the policy-version tag. The fold runs on its own ``FoldEnv``,
     so this runner's env is never stepped.
     """
@@ -674,12 +674,12 @@ async def test_the_fold_speaks_the_rollout_s_tool_dialect() -> None:
 
 @pytest.mark.asyncio
 async def test_a_rollout_folds_by_deriving_the_runner_it_is_already_using() -> None:
-    """End to end through ``Runner``: no bag of parts crosses the compaction seam."""
+    """End to end through ``Agent``: no bag of parts crosses the compaction seam."""
     ws = InMemoryWorkspace()
     gen = ScriptedGenerator(
         [_turn(_store("author", "Christie")), _reply("kept summary")], logprobs=-0.5
     )
-    runner: Runner[Any, Any] = toy_runner(
+    runner: Agent[Any, Any] = toy_runner(
         gen,
         parser=HermesToolCallParser(),
         compactor=AgenticCompactor[None](max_prompt_tokens=1, max_interactions=4),
@@ -730,7 +730,7 @@ def test_a_compactor_without_a_trigger_is_refused_when_the_runner_is_built() -> 
     ``should_compact`` used to be an ``@abstractmethod``, so a compactor with no *when*
     could not be instantiated at all. Now that *when* is an attribute the runner reads,
     the same omission constructs fine and raises ``AttributeError`` inside
-    :meth:`Runner.advance` -- which the scheduler catches as a dead expansion, so a run
+    :meth:`Agent.advance` -- which the scheduler catches as a dead expansion, so a run
     configured this way produces no records and says only that every rollout failed.
     """
     with pytest.raises(TypeError, match="trigger"):
