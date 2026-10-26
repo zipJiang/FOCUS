@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from focus.codec import Message
+from focus.generation.interfaces import merge_sampling_params
 from focus.generation.parsing.base import ActionParser
 from focus.generation.policy import Policy, PreparedPrompt, register_policy
 from focus.generation.types import GenerateResult, SamplingParams, TokenId
@@ -26,28 +27,15 @@ class TokenChunk:
 
 @register(ActionParser, "token_chunk")
 class TokenChunkParser(ActionParser[TokenChunk]):
-    """Read fixed-size segments, allowing the final segment to end earlier.
+    """Extract original tokens and distinguish continuation from completion.
 
-    Set the policy's ``SamplingParams(max_tokens=chunk_size)`` to the same size.
-    A ``length`` finish must reach that boundary; a ``stop`` finish ends the response.
-    Other finish reasons fail explicitly so interrupted generations cannot be graded
-    as completed answers.
+    ``length`` leaves the response open; ``stop`` finishes it. Other finish reasons
+    are rejected. The generation layer validates the request's token limit.
     """
-
-    def __init__(self, chunk_size: int = 256) -> None:
-        if isinstance(chunk_size, bool) or not isinstance(chunk_size, int):
-            raise TypeError("chunk_size must be an integer")
-        if chunk_size < 1:
-            raise ValueError("chunk_size must be positive")
-        self.chunk_size = chunk_size
 
     def parse(self, result: GenerateResult) -> TokenChunk:
         if result.stop_reason not in {"length", "stop"}:
             raise ValueError(f"Unexpected finish reason: {result.stop_reason}")
-        if len(result.tokens) > self.chunk_size:
-            raise ValueError(f"A segment exceeded {self.chunk_size} tokens")
-        if result.stop_reason == "length" and len(result.tokens) != self.chunk_size:
-            raise ValueError("Generation stopped before the requested chunk boundary")
         return TokenChunk(tuple(result.tokens), result.stop_reason == "stop")
 
 
@@ -125,9 +113,19 @@ class TokenContinuationPolicy[A](Policy[A]):
         tokens: Sequence[TokenId],
         sampling_params: SamplingParams | None = None,
     ) -> GenerateResult:
-        result = await self.backend.agenerate_tokens(tokens, sampling_params)
+        params = merge_sampling_params(self.default_params, sampling_params)
+        limit = params.max_tokens
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("max_tokens must be a positive integer")
+        result = await self.backend.agenerate_tokens(tokens, params)
         if not result.exact_generation:
             raise ValueError("Token continuation requires exact generated token IDs")
+        if len(result.tokens) > limit:
+            raise ValueError(
+                f"Generation exceeded the requested limit of {limit} tokens"
+            )
+        if result.stop_reason == "length" and len(result.tokens) != limit:
+            raise ValueError("Generation stopped before the requested token limit")
         return result
 
     def decode(

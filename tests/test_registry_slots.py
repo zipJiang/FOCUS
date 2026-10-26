@@ -159,7 +159,7 @@ TABLE: tuple[tuple[type, Mapping[str, Any]], ...] = (
     (Workspace, {"name": "null"}),
     (Workspace, {"name": "memory"}),
     (ActionParser, {"name": "text"}),
-    (ActionParser, {"name": "token_chunk", "chunk_size": 256}),
+    (ActionParser, {"name": "token_chunk"}),
     (ActionParser, {"name": "hermes"}),
     (ActionParser, {"name": "native"}),
     (ActionParser, {"name": "qwen_xml"}),

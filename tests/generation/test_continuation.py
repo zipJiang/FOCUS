@@ -15,6 +15,7 @@ from focus import (
     TokenContinuationPolicy,
 )
 from focus.generation import GenerateResult
+from focus.generation.interfaces import merge_sampling_params
 from focus.generation.parsing import ActionParser
 from focus.registry import build
 from tests.helpers import test_format
@@ -101,7 +102,9 @@ async def test_backend_identity_custom_hooks_and_lifecycle():
     params = SamplingParams(max_tokens=256)
     prompt = policy.prepare([{"role": "user", "content": "problem"}])
     assert await policy.agenerate(prompt, params) is result
-    inner.agenerate_tokens.assert_awaited_once_with(prompt.tokens, params)
+    inner.agenerate_tokens.assert_awaited_once_with(
+        prompt.tokens, merge_sampling_params(policy.default_params, params)
+    )
     assert policy.parse(result) == "custom action"
     assert not policy.is_exact(result)
     policy.validate_context(prompt.messages)
@@ -138,7 +141,7 @@ async def test_inexact_backend_and_per_call_provenance_rejected():
 
 @pytest.mark.parametrize("size", [1, 256, 512])
 def test_chunk_parser_boundary_and_natural_completion(size):
-    parser = TokenChunkParser(size)
+    parser = TokenChunkParser()
     tokens = tuple(range(size))
     assert parser.parse(
         GenerateResult(tokens=tokens, stop_reason="length")
@@ -149,24 +152,74 @@ def test_chunk_parser_boundary_and_natural_completion(size):
     assert parser.parse(GenerateResult(tokens=(), stop_reason="stop")) == TokenChunk(
         (), True
     )
-    with pytest.raises(ValueError, match="boundary"):
-        parser.parse(GenerateResult(tokens=tokens[:-1], stop_reason="length"))
-    with pytest.raises(ValueError, match="exceeded"):
-        parser.parse(GenerateResult(tokens=(*tokens, 1), stop_reason="stop"))
     with pytest.raises(ValueError, match="finish reason"):
         parser.parse(GenerateResult(tokens=tokens, stop_reason="error"))
 
 
-@pytest.mark.parametrize("size", [0, -1])
-def test_invalid_chunk_sizes(size):
-    with pytest.raises(ValueError, match="positive"):
-        TokenChunkParser(size)
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+async def test_invalid_request_limits_fail_before_generation(limit):
+    inner = backend()
+    inner.agenerate_tokens = AsyncMock()
+    policy = TokenContinuationPolicy(inner)
+    with pytest.raises(ValueError, match="positive integer"):
+        await policy.agenerate_tokens((1,), SamplingParams(max_tokens=limit))
+    inner.agenerate_tokens.assert_not_awaited()
+
+
+@pytest.mark.parametrize("override", [None, 4, 16])
+@pytest.mark.parametrize("finish", ["length", "stop"])
+async def test_generation_validates_the_effective_request_limit(override, finish):
+    inner = backend()
+    inner.default_params = SamplingParams(max_tokens=8, temperature=0.3)
+    inner.agenerate_tokens = AsyncMock()
+    policy = TokenContinuationPolicy(inner)
+    params = None if override is None else SamplingParams(max_tokens=override)
+    limit = 8 if override is None else override
+    inner.agenerate_tokens.return_value = GenerateResult(
+        tokens=(42,) * limit,
+        stop_reason=finish,
+    )
+    result = await policy.agenerate_tokens((1,), params)
+    assert len(result.tokens) == limit
+    assert inner.agenerate_tokens.call_args.args[1].max_tokens == limit
+    inner.agenerate_tokens.return_value = GenerateResult(
+        tokens=(42,) * (limit + 1),
+        stop_reason=finish,
+    )
+    with pytest.raises(ValueError, match="exceeded"):
+        await policy.agenerate_tokens((1,), params)
+    inner.agenerate_tokens.return_value = GenerateResult(
+        tokens=(42,) * (limit - 1),
+        stop_reason=finish,
+    )
+    if finish == "length":
+        with pytest.raises(ValueError, match="before the requested"):
+            await policy.agenerate_tokens((1,), params)
+    else:
+        assert len((await policy.agenerate_tokens((1,), params)).tokens) == limit - 1
+
+
+async def test_partial_override_keeps_the_default_token_limit():
+    inner = backend()
+    inner.default_params = SamplingParams(max_tokens=3, temperature=0.1)
+    inner.agenerate_tokens = AsyncMock(
+        return_value=GenerateResult(
+            tokens=(1, 2, 3),
+            stop_reason="length",
+        )
+    )
+    policy = TokenContinuationPolicy(inner)
+    await policy.agenerate_tokens(
+        (9,), SamplingParams(max_tokens=None, temperature=0.7)
+    )
+    effective = inner.agenerate_tokens.call_args.args[1]
+    assert effective.max_tokens == 3
+    assert effective.temperature == 0.7
 
 
 def test_configuration_registry_supports_the_same_customization():
-    parser = build(ActionParser, {"name": "token_chunk", "chunk_size": 32})
+    parser = build(ActionParser, {"name": "token_chunk"})
     assert isinstance(parser, TokenChunkParser)
-    assert parser.chunk_size == 32
     inner = backend()
     policy = build(Policy, {"name": "token_continuation", "backend": inner})
     assert isinstance(policy, TokenContinuationPolicy)
