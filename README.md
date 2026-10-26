@@ -34,3 +34,10 @@ uv run mypy
 uv run pytest -q
 uv build
 ```
+
+Qwen thinking and training provenance are a required compatibility contract.
+Run it independently with `uv run pytest -q tests/test_qwen_compatibility.py`.
+CI runs this offline suite on every push (including tags), pull request, and
+published release. The distribution build depends on it passing. Its frozen
+reference comes from the verified historical harness; failures require fixing
+the regression rather than regenerating expected output from current code.

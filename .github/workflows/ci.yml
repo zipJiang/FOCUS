@@ -1,11 +1,13 @@
 name: CI
 
-# Every push and every pull request runs the same four gates the README documents for
-# a local checkout -- format, lint, types, tests -- so "green locally" and "green in CI"
-# mean the same thing.
+# Qwen compatibility must pass before the quality gates and distribution build.
+# Every branch/tag push, pull request, and published release runs the contract.
 on:
   push:
   pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
 
 # A push to a branch with an open PR fires both triggers; keep only the newest run per
 # ref alive, since an older commit's verdict is never the one anyone acts on.
@@ -14,7 +16,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  qwen-compatibility:
+    name: Qwen compatibility (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install ${{ matrix.python-version }}
+      - run: uv sync --group dev
+      - name: Enforce Qwen prompt and training compatibility
+        run: uv run pytest -q tests/test_qwen_compatibility.py
+
   gates:
+    needs: qwen-compatibility
     name: gates (python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
