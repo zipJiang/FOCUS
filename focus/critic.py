@@ -48,9 +48,19 @@ class Critic(ABC):
         return None
 
     @staticmethod
-    def constant(value: float, *, timeout: float | None = None) -> Critic:
-        """Predict ``value`` everywhere -- the prior of a critic not yet trained."""
-        return _FunctionCritic(lambda contexts: [value] * len(contexts), timeout)
+    def constant(
+        value: float,
+        *,
+        context: Callable[[AnyRollout], str] | None = None,
+        timeout: float | None = None,
+    ) -> Critic:
+        """Predict ``value`` everywhere -- the prior of a critic not yet trained.
+
+        ``context`` renders the checkpoint contexts exported as critic inputs.
+        """
+        return _FunctionCritic(
+            lambda contexts: [value] * len(contexts), timeout, context
+        )
 
     @staticmethod
     def from_fn(
