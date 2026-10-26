@@ -5,10 +5,8 @@ import pytest
 from focus.harness.workspace import (
     InMemoryWorkspace,
     NullWorkspace,
-    Workspace,
     WorkspaceError,
 )
-from focus.registry import build
 
 
 def test_snapshot_is_empty_unless_the_backend_is_a_store() -> None:
@@ -60,18 +58,6 @@ def test_paths_lists_entries_in_write_order() -> None:
     assert ws.paths() == ("first", "second")
 
 
-def test_build_from_registry_by_name() -> None:
-    ws = build(Workspace, {"name": "memory"})
-    assert isinstance(ws, InMemoryWorkspace)
-    ws.write("k", "v")
-    assert ws.read("k") == "v"
-
-
-def test_build_passes_through_an_existing_workspace() -> None:
-    existing = InMemoryWorkspace()
-    assert build(Workspace, existing) is existing
-
-
 def test_fork_reproduces_contents_then_diverges_both_ways() -> None:
     parent = InMemoryWorkspace()
     parent.write("shared", "v0")
@@ -88,17 +74,6 @@ def test_fork_reproduces_contents_then_diverges_both_ways() -> None:
     assert not parent.exists("shared")
     assert child.read("shared") == "v1"
     assert not child.exists("parent_only")
-
-
-def test_fork_of_a_registry_built_workspace() -> None:
-    ws = build(Workspace, {"name": "memory"})
-    assert isinstance(ws, InMemoryWorkspace)  # what "memory" names in the registry
-    ws.write("k", "v")
-    clone = ws.fork()
-    assert isinstance(clone, InMemoryWorkspace)
-    assert clone.read("k") == "v"
-    clone.write("k", "changed")
-    assert ws.read("k") == "v"
 
 
 def test_clear_empties_the_workspace() -> None:

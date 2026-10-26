@@ -1,14 +1,8 @@
-"""Optional config helpers for experiment and CLI entry points.
+"""Search configuration records.
 
-:class:`~focus.config.rollout.RolloutConfig` is the authorable surface of a
-rollout -- every knob a config file may say -- and :class:`RolloutSpec` is that record
-plus the two inputs an actor's factory needs (``env``, ``system_prompt``). Both build
-themselves from a mapping through the registry.
-
-Implementations register themselves through the registry ``register`` free
-function (e.g. ``register(Policy, "name", ...)``); there are no per-type
-registration wrappers here. Pass a mapping to ``build`` to construct typed
-configuration objects.
+:class:`~focus.config.rollout.RolloutConfig` holds the search passes and reward
+settings of a collection, and :class:`RolloutSpec` is that record plus the two inputs
+an actor's factory needs (``env``, ``system_prompt``).
 """
 
 from focus.config.rollout import (

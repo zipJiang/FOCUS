@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from focus.reward.interfaces import AsyncRewardModel, register_reward
+from focus.reward.interfaces import AsyncRewardModel
 from focus.reward.types import RewardResult
 
 #: How to fold a list of floats into one scalar.
@@ -53,7 +53,6 @@ def _flatten(raw: Any) -> list[float]:
     return out
 
 
-@register_reward("vllm")
 class VLLMRewardModel(AsyncRewardModel):
     """Score serialized contexts against a vLLM reward model over ``/pooling``."""
 

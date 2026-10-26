@@ -129,26 +129,21 @@ def test_an_estimators_diagnostics_are_frozen_on_the_way_out() -> None:
         result.actor[0].diagnostics["advantage"] = 2.0  # type: ignore[index]
 
 
-def test_an_estimator_with_no_name_is_refused_before_any_record_is_written() -> None:
-    """The name is the only thing on a record saying which recipe scored the edge.
-
-    An estimator registered with bare ``register`` never gets one stamped on it, and the
-    empty string is not a bad label but no label at all: every lane in the batch comes
-    out indistinguishable, discovered at the trainer rather than here.
-    """
+def test_an_unnamed_estimator_is_labelled_by_its_class() -> None:
+    """The name says which recipe scored the edge; a subclass need not spell one."""
     shared = turn([-1.0])
     view, _, _ = _tree(rollout(shared), rollout(shared, turn([-3.0], done=True)))
 
     class Unnamed(RootReturn):
-        name = ""
+        pass
 
-    with pytest.raises(ValueError, match="register_estimator"):
-        prepare_samples(
-            view._state,
-            estimator=Unnamed(),
-            reward_config=RewardConfig(),
-            behavior_version="policy",
-        )
+    result = prepare_samples(
+        view._state,
+        estimator=Unnamed(),
+        reward_config=RewardConfig(),
+        behavior_version="policy",
+    )
+    assert {r.estimator for r in result.actor} == {"Unnamed"}
 
 
 def test_repreparing_an_estimator_creates_independent_records() -> None:

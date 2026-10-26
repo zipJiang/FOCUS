@@ -14,7 +14,6 @@ from focus.generation.policy import (
     Policy,
     PolicyFormat,
     PreparedPrompt,
-    register_policy,
 )
 from focus.generation.sglang import SGLangPolicy
 from focus.generation.slime import SlimePolicy
@@ -43,5 +42,4 @@ __all__ = [
     "TokenChunk",
     "TokenChunkParser",
     "TokenId",
-    "register_policy",
 ]

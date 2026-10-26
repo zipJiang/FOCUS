@@ -16,7 +16,6 @@ from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
 from focus.harness.rollout import AnyRollout
 from focus.harness.tools.dispatch import tool_reply
-from focus.registry import register
 
 if TYPE_CHECKING:
     from focus.harness.runner import Runner
@@ -102,7 +101,6 @@ class ContextProtocol:
         )
 
 
-@register(ContextProtocol, "append_only")
 class AppendOnly(ContextProtocol):
     """Retain context as chat turns or exact segments of one assistant response.
 

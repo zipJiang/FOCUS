@@ -16,7 +16,6 @@ from focus.harness import (
     Runner,
     StepResult,
 )
-from focus.registry import build
 from focus.scheduler import (
     AllocationSession,
     Budget,
@@ -29,7 +28,6 @@ from focus.scheduler import (
     Scheduler,
     SchedulerState,
     SchedulerView,
-    Termination,
     WidthGating,
 )
 from tests.helpers import (
@@ -276,15 +274,6 @@ async def test_the_turn_budget_counts_what_was_actually_generated() -> None:
 
 
 # -- registry, budget, goal -----------------------------------------------------------
-
-
-def test_strategies_build_via_registry() -> None:
-    from focus import Allocator, FifoAllocator
-
-    assert isinstance(build(Allocator, {"name": "fifo"}), FifoAllocator)
-    assert isinstance(
-        build(Termination, {"name": "budget", "max_rollouts": 4}), Termination
-    )
 
 
 @pytest.mark.asyncio

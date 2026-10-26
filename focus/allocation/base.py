@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from typing import Any
 
 from focus.allocation.evidence import RolloutLedger
 from focus.harness import AnyRollout
 from focus.harness.turn import TurnTag
-from focus.registry import register, registrable
 from focus.scheduler.core.allocation import (
     AllocationSession,
     FifoSession,
@@ -16,9 +15,14 @@ from focus.scheduler.core.allocation import (
 from focus.scheduler.core.tree import SchedulerView
 
 
-@registrable(slot="allocator")
 class Allocator(ABC):
+    #: Shown in search logs. Defaults to the class name.
     name: str = ""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if not cls.__dict__.get("name"):
+            cls.name = cls.__name__
 
     @abstractmethod
     def build(
@@ -26,24 +30,18 @@ class Allocator(ABC):
     ) -> AllocationSession[AnyRollout] | None: ...
 
 
-def register_allocator[A: Allocator](name: str) -> Callable[[type[A]], type[A]]:
-    def decorator(cls: type[A]) -> type[A]:
-        cls.name = name
-        return register(Allocator, name, cls)
-
-    return decorator
-
-
-@register_allocator("fifo")
 class FifoAllocator(Allocator):
+    name = "fifo"
+
     def build(
         self, view: SchedulerView[AnyRollout], ledger: RolloutLedger
     ) -> AllocationSession[AnyRollout]:
         return FifoSession(ledger)
 
 
-@register_allocator("windowed_token_entropy")
 class TokenEntropyAllocator(Allocator):
+    name = "windowed_token_entropy"
+
     def __init__(
         self,
         window: int = 8,

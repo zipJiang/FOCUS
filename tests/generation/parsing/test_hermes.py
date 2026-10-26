@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from focus.generation import GenerateResult
 from focus.generation.parsing import HermesToolCallParser, ToolCall
-from focus.generation.parsing.base import ActionParser
-from focus.registry import build
 
 
 def _result(text: str) -> GenerateResult:
@@ -84,7 +82,3 @@ def test_parse_unparseable_block_is_a_call_not_a_final_answer() -> None:
     )
     assert turn.tool_calls
     assert turn.tool_calls[0].name == ""
-
-
-def test_parser_from_registry() -> None:
-    assert isinstance(build(ActionParser, {"name": "hermes"}), HermesToolCallParser)

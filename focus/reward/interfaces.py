@@ -1,8 +1,7 @@
-"""Reward model interfaces and registry helpers.
+"""Reward model interfaces.
 
-Mirrors :mod:`focus.generation`: a registrable :class:`RewardModel` ABC
-callable sync or async, an async-primary :class:`AsyncRewardModel` variant, and a
-``register_reward`` thin wrapper over the registry. A reward model turns a *serialized
+A :class:`RewardModel` ABC callable sync or async, and an async-primary
+:class:`AsyncRewardModel` variant. A reward model turns a *serialized
 state context* (a string) into a sequence-level scalar :class:`RewardResult`.
 """
 
@@ -13,7 +12,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Coroutine, Sequence
 from typing import Any
 
-from focus.registry import registrable, registrar
 from focus.reward.types import RewardResult
 
 
@@ -28,7 +26,6 @@ def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     return asyncio.run(coro)
 
 
-@registrable(slot="reward model")
 class RewardModel(ABC):
     """Sequence-level reward for a serialized state context, callable sync or async.
 
@@ -92,14 +89,8 @@ class AsyncRewardModel(RewardModel):
         return list(await asyncio.gather(*(self.ascore(c) for c in contexts)))
 
 
-#: Register a reward-model implementation under :class:`RewardModel`, or return a
-#: decorator -- :func:`~focus.registry.register` with the interface bound.
-register_reward = registrar(RewardModel)
-
-
 __all__ = [
     "AsyncRewardModel",
     "RewardModel",
-    "register_reward",
     "run_async",
 ]

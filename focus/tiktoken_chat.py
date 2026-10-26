@@ -60,7 +60,7 @@ def _arguments_text(arguments: Any) -> str:
 class TiktokenChatTokenizer:
     """The :class:`~focus.codec.HFTokenizer` surface over a tiktoken encoding.
 
-    Structural, like every codec here: it is never registry-built, it is handed to
+    Structural, like every codec here: it is handed to
     ``ChatCodec(TiktokenChatTokenizer())`` and that is the whole wiring.
     """
 

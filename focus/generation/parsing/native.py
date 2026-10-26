@@ -20,10 +20,8 @@ from __future__ import annotations
 
 from focus.generation.parsing.base import ActionParser, ToolCall, ToolTurn
 from focus.generation.types import GenerateResult
-from focus.registry import register
 
 
-@register(ActionParser, "native")
 class NativeToolCallParser(ActionParser[ToolTurn]):
     """Read a backend's structured ``tool_calls`` into the env's :class:`ToolTurn`.
 

@@ -14,7 +14,6 @@ from focus.codec import Message
 from focus.harness.compaction.triggers import Trigger
 from focus.harness.turn import Turn
 from focus.harness.workspace import Workspace
-from focus.registry import registrable
 
 if TYPE_CHECKING:
     # Type-only: a fold *is* a rollout, so the runner imports this protocol module.
@@ -96,13 +95,12 @@ class CompactionResult[S]:
     turns: tuple[Turn[Any], ...] = ()
 
 
-@registrable(slot="compactor")
 class Compactor[S](ABC):
     """A trigger and a fold: *when* to compact, and *how*.
 
     Exactly two parts, and only one of them is this class's own. :attr:`trigger` is the
     cheap criterion the runner checks before every turn, and it is a
-    :class:`~...compaction.triggers.Trigger` -- an object with its own registry name
+    :class:`~...compaction.triggers.Trigger` -- an object
     that composes (``AnyOf``) -- rather than a method here, because *when* is the half
     an author varies without varying the fold at all. When it fires, the runner calls
     :meth:`compact` with a :class:`Compaction`, whose :class:`CompactionResult` gives

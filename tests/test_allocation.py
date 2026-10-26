@@ -12,7 +12,6 @@ from focus import (
     ConcurrencyGating,
 )
 from focus.allocation import (
-    Allocator,
     BetaBernoulli,
     CalibrationModel,
     Gaussian,
@@ -25,7 +24,6 @@ from focus.allocation import (
     retraining_gain,
 )
 from focus.harness import RolloutState
-from focus.registry import build
 from focus.reward.config import RewardConfig
 from focus.scheduler import (
     Budget,
@@ -330,20 +328,6 @@ def test_the_gaussian_model_refuses_priors_it_cannot_divide_by() -> None:
         Gaussian(v_prior=-1.0)
 
 
-@pytest.mark.parametrize("name", ["beta_bernoulli", "gaussian"])
-def test_every_calibration_model_round_trips_through_the_registry(name: str) -> None:
-    assert isinstance(build(CalibrationModel, {"name": name}), CalibrationModel)
-
-
-def test_a_calibration_model_carries_its_own_config_through_the_registry() -> None:
-    """The whole reason this is a slot: the Gaussian's priors are *its* config, so a
-    YAML run can author them without the allocator growing a knob for them."""
-    model = build(CalibrationModel, {"name": "gaussian", "var_floor": 0.05})
-
-    assert isinstance(model, Gaussian)
-    assert model.var_floor == pytest.approx(0.05)
-
-
 def test_the_gain_is_affine_in_the_squared_error() -> None:
     """The property the whole rewrite rests on: the myopically best node can be found
     from `E[e²]` alone, so no test statistic and no significance floor is needed."""
@@ -572,20 +556,11 @@ def test_refinement_refuses_a_pass_when_nothing_filled_the_value_channel() -> No
 
 
 def test_refinement_takes_its_model_by_config_or_already_built() -> None:
-    """A Python caller passes a built model or nothing; the `{"name": ...}` config
-    spelling goes through the registry's annotation walk, as the estimator's
-    configuration does -- no coercion of its own in `__init__`."""
+    """A caller passes a built model or nothing."""
     built = Gaussian(v_prior=0.5)
 
     assert isinstance(ValueRefinement().model, BetaBernoulli)
     assert ValueRefinement(model=built).model is built
-    configured = build(
-        Allocator,
-        {"name": "value_refinement", "model": {"name": "gaussian", "v_prior": 0.5}},
-    )
-    assert isinstance(configured, ValueRefinement)
-    assert isinstance(configured.model, Gaussian)
-    assert configured.model.v_prior == pytest.approx(0.5)
 
 
 def test_refinement_refuses_a_prior_strength_it_cannot_divide_by() -> None:

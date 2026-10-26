@@ -6,8 +6,6 @@ from focus.generation.parsing import (
     QwenXMLToolCallParser,
     ToolCall,
 )
-from focus.generation.parsing.base import ActionParser
-from focus.registry import build
 
 
 def _result(text: str) -> GenerateResult:
@@ -91,7 +89,3 @@ def test_parse_final_answer_has_no_calls() -> None:
     turn = QwenXMLToolCallParser().parse(_result("t</think>\n\nThe answer is 42"))
     assert turn.tool_calls == ()
     assert turn.text == "The answer is 42"
-
-
-def test_builds_from_the_registry_by_name() -> None:
-    assert isinstance(build(ActionParser, {"name": "qwen_xml"}), QwenXMLToolCallParser)

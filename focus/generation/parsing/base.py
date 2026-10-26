@@ -27,7 +27,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from focus.generation.types import GenerateResult
-from focus.registry import register, registrable
 
 
 @dataclass(frozen=True)
@@ -75,7 +74,6 @@ class ToolTurn:
 TOOL_CALL = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 
 
-@registrable(slot="action_parser")
 class ActionParser[A](ABC):
     """Decode a model :class:`GenerateResult` into a task action."""
 
@@ -103,7 +101,6 @@ class ActionParser[A](ABC):
         """Return the action ``result`` expresses (or a task-defined malformed one)."""
 
 
-@register(ActionParser, "text")
 class TextActionParser(ActionParser[str]):
     """The trivial parser: the action is the completion text, stripped."""
 

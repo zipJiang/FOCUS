@@ -5,9 +5,8 @@ from typing import Any
 
 import pytest
 
-from focus import Allocator, TokenEntropyAllocator
+from focus import TokenEntropyAllocator
 from focus.harness import RolloutState, Turn
-from focus.registry import build
 from focus.scheduler import (
     SchedulerState,
     SchedulerView,
@@ -183,10 +182,9 @@ def test_the_edge_ignores_logprobs_filed_under_another_version() -> None:
     assert _score(state, TokenEntropySession(version="other")) == math.inf
 
 
-def test_validation_and_registry() -> None:
+def test_validation() -> None:
     with pytest.raises(ValueError, match="window"):
         TokenEntropySession(window=0)
-    policy = build(Allocator, {"name": "windowed_token_entropy", "window": 16})
-    assert isinstance(policy, TokenEntropyAllocator)
+    assert TokenEntropyAllocator(window=16).name == "windowed_token_entropy"
     # it reads node.critic-free channels only: no backup or scorer requirement
     assert not TokenEntropySession().requires_scorer

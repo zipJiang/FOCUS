@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from focus.harness.workspace.base import Workspace
-from focus.registry import register
 
 _COMPACTION_GUIDANCE = """\
 There is no durable memory here: your reply is the only thing that survives this fold, \
@@ -24,7 +23,6 @@ recollection: what the notes leave open, re-establish from the task's own source
 """
 
 
-@register(Workspace, "null")
 class NullWorkspace(Workspace):
     """No tools, no store -- only fold advice that the reply is the memory."""
 

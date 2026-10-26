@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 from focus.generation.interfaces import prepare_generation
-from focus.generation.policy import Policy, PolicyFormat, register_policy
+from focus.generation.policy import Policy, PolicyFormat
 from focus.generation.sglang import (
     _parse_sglang_output,
     _sglang_payload,
@@ -28,7 +28,6 @@ from focus.generation.types import GenerateResult, SamplingParams, TokenId
 PostFn = Callable[..., Awaitable[Mapping[str, Any]]]
 
 
-@register_policy("slime")
 class SlimePolicy(Policy[Any]):
     """Token generation over an injected ``post`` against an SGLang ``/generate`` route.
 

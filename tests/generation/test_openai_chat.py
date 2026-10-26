@@ -9,11 +9,9 @@ import pytest
 
 from focus.generation import (
     NativeToolCall,
-    Policy,
     SamplingParams,
 )
 from focus.generation.openai_chat import OpenAIChatPolicy
-from focus.registry import build
 from tests.helpers import native_format
 
 
@@ -285,20 +283,6 @@ def test_missing_model_raises() -> None:
             format=native_format(ByteCodec()),
             default_params=SamplingParams(),
         )
-
-
-@pytest.mark.parametrize("name", ["openai_chat", "openai"])
-def test_registry_builds_via_from_params(name: str) -> None:
-    gen = build(
-        Policy,
-        {
-            "name": name,
-            "api_key": "k",
-            "model": "gpt-4o-mini",
-        },
-        format=native_format(ByteCodec()),
-    )
-    assert isinstance(gen, OpenAIChatPolicy)
 
 
 # -- the native tool-call channel -----------------------------------------------------

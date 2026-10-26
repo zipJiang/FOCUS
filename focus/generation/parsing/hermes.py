@@ -28,12 +28,10 @@ from focus.generation.parsing.base import (
     tool_turn,
 )
 from focus.generation.types import GenerateResult
-from focus.registry import register
 
 _DECODER = json.JSONDecoder()
 
 
-@register(ActionParser, "hermes")
 class HermesToolCallParser(ActionParser[ToolTurn]):
     """Parse a Hermes-style assistant turn: split reasoning, extract ``<tool_call>``s.
 

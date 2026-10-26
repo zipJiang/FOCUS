@@ -8,12 +8,10 @@ from typing import Any
 
 from focus.allocation import Allocator
 from focus.generation import SamplingParams
-from focus.registry import registrable
 from focus.reward.config import RewardConfig
 from focus.scheduler.core.gating import GatingPolicy
 
 
-@registrable(builds_self=True)
 @dataclass(frozen=True)
 class SearchPass:
     """One allocation algorithm with an explicit turn budget and branching gate.
@@ -35,7 +33,6 @@ class SearchPass:
             raise ValueError("SearchPass.budget must be a nonnegative integer")
 
 
-@registrable(builds_self=True)
 @dataclass(frozen=True, kw_only=True)
 class RolloutConfig:
     """Every knob one rollout is run with, with the value it runs at if unwritten.
@@ -44,15 +41,8 @@ class RolloutConfig:
     config read back after loading is the configuration, with nothing left to resolve
     somewhere downstream.
 
-    A ``builds_self`` registry namespace, so a nested mapping becomes this record
-    in one call -- ``build(RolloutConfig, mapping)``. Each field is annotated
-    with the interface it holds, which is what lets the registry turn a nested mapping
-    (a list of search passes, a ``reward_config:``
-    block) into the object the field is typed for, rather than leaving a ``dict`` that
-    would look configured and behave defaulted.
-
-    Keyword-only, like every self-building config record here: the fields are knobs in
-    no meaningful order, and the authored form is a mapping anyway. So there is no
+    Keyword-only: the fields are knobs in
+    no meaningful order. So there is no
     positional call to keep working -- and none to silently re-bind when a knob is
     added or two are reordered.
     """
@@ -66,13 +56,12 @@ class RolloutConfig:
             object.__setattr__(self, "passes", tuple(self.passes))
 
 
-@registrable(builds_self=True)
 @dataclass(frozen=True)
 class RolloutSpec:
     """The picklable whole of an experiment: what to run it on, and how to run it.
 
     Ships to a Ray actor unchanged, because nothing here is live: :attr:`env` is a
-    *registry config*, and the runner built from it -- with the actor's own generator
+    plain mapping, and the runner built from it -- with the actor's own generator
     and tokenizer -- belongs to the factory inside the actor.
 
     Three fields, and the third is the configuration entire: a spec is a

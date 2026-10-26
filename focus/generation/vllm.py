@@ -26,7 +26,6 @@ from focus.generation.policy import (
     Policy,
     PolicyFormat,
     PreparedPrompt,
-    register_policy,
 )
 from focus.generation.types import (
     GenerateResult,
@@ -45,15 +44,13 @@ _TOKEN_ID_RE = re.compile(r"^token_id:(\d+)$")
 logger = logging.getLogger(__name__)
 
 
-@register_policy("vllm", aliases=("openai_completion",))
 class VLLMPolicy(Policy[Any]):
     """vLLM completions generator for token rollout prompts.
 
     Speaks the OpenAI ``/v1/completions`` wire format but is vLLM-specific: it sends a
     token-id ``prompt`` plus vLLM ``extra_body`` (``return_token_ids`` etc.) and parses
     vLLM token ids back. It does **not** work against the hosted OpenAI API; for that
-    use :class:`~focus.generation.openai_chat.OpenAIChatPolicy`. The
-    ``openai_completion`` registry name is kept as a back-compat alias.
+    use :class:`~focus.generation.openai_chat.OpenAIChatPolicy`.
     """
 
     def __init__(

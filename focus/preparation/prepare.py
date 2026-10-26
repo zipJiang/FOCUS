@@ -41,11 +41,6 @@ def prepare_samples(
     """
     view = SchedulerView(state)
     evidence_of(view, reward_config)  # refuses trees searched under other rewards
-    if estimator is not None and not estimator.name:
-        raise ValueError(
-            f"{type(estimator).__name__} has no `name`; "
-            "use @register_estimator or set the name class attribute"
-        )
     actor: list[ActorSample] = []
     critic: list[CriticSample] = []
     for node, parent in _trainable_edges(view) if estimator is not None else ():

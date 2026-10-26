@@ -5,9 +5,7 @@ import pickle
 import pytest
 
 from focus import DirectBranchTdEstimator, prepare_samples
-from focus.preparation import AdvantageEstimator
 from focus.preparation.direct_branch import direct_branch_values
-from focus.registry import build
 from focus.reward.config import RewardConfig
 from tests.helpers import VERSION, turn
 from tests.test_preparation_estimators import score, setup
@@ -57,9 +55,7 @@ def test_critic_mean_is_not_actor_posterior_and_tree_is_unchanged():
         state, estimator=estimator, reward_config=config, behavior_version=VERSION
     )
     assert pickle.dumps(state) == before
-    assert (
-        build(AdvantageEstimator, {"name": "direct_branch_td"}).name == estimator.name
-    )
+    assert estimator.name == "direct_branch_td"
     targets = {r.node_id: r for r in batch.critic}
     assert set(targets) == {0, b.id}  # No terminal remaining-value supervision.
     assert targets[0].target == 0.75

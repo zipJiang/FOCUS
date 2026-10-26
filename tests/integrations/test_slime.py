@@ -34,7 +34,6 @@ from focus.harness import (
 from focus.integrations.slime import make_generate
 from focus.loop import Runtime
 from focus.preparation.records import ActorSample, CriticSample, PreparedBatch
-from focus.registry import build
 from tests.helpers import (
     DemoValue,
     FakeChatTokenizer,
@@ -429,12 +428,6 @@ async def test_the_spec_s_config_replaces_the_factory_s_and_the_live_objects_sta
 
     assert seen[0].config is spec.config
     assert seen[0].value_model is value_model
-
-
-def test_an_authored_empty_weighters_means_none_not_the_default_pair() -> None:
-    """Explicit critic-only preparation is supported by the integration."""
-    assert RolloutConfig().passes == ()
-    assert build(RolloutConfig, {"passes": []}).passes == ()
 
 
 # -- what a config file turns into ----------------------------------------------------

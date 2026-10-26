@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from focus.registry import registrable
-
 TokenId = int
 
 #: What the three always-set knobs fall back to. Named rather than written inline
@@ -18,7 +16,6 @@ DEFAULT_MAX_TOKENS = 512
 DEFAULT_TOP_P = 1.0
 
 
-@registrable(builds_self=True)
 @dataclass
 class SamplingParams:
     """Per-call generation knobs."""

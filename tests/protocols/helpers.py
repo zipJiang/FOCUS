@@ -5,12 +5,10 @@ from typing import Any
 
 from focus.harness.rollout import AnyRollout
 from focus.harness.runner import Runner
-from focus.protocols import ContextProtocol, ToolProtocol
+from focus.protocols import ToolProtocol
 from focus.protocols.base import ProtocolError, schema
-from focus.registry import register
 
 
-@register(ContextProtocol, "example_keep_recent")
 class KeepRecent(ToolProtocol):
     def schemas(self) -> tuple[dict[str, Any], ...]:
         return (

@@ -12,9 +12,7 @@ checked
   plain reset, or the seed plus what it chose to keep), along with any turns it
   generated getting there.
 
-Concrete strategies live as sibling modules (``agentic``, …). Import from
-this package -- or from :mod:`focus.harness` -- so registry registrations
-fire.
+Concrete strategies live as sibling modules (``agentic``, …).
 
 :class:`AgenticCompactor` is the general, LLM-driven strategy, and it is *the same
 machinery as the rollout*: a :class:`~focus.harness.runner.Runner` over a

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import time
 from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass, field, replace
@@ -16,7 +17,6 @@ from focus.execution.inference import (
 )
 from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, CapacityError, Owner
 from focus.generation import GenerateResult, Policy
-from focus.registry import construct_target
 from focus.reward import AsyncRewardModel, RewardResult
 
 
@@ -33,6 +33,20 @@ class RayServiceConfig:
     rewards: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
+def _construct(config: dict[str, Any]) -> Any:
+    """Call the ``_target_`` import path with the remaining keys as keyword arguments.
+
+    Backends and value models are built inside the coordinator process, so the
+    configuration names them rather than shipping live clients across Ray.
+    """
+    target = config.get("_target_")
+    if not isinstance(target, str) or "." not in target:
+        raise ValueError("_target_ must be an import path such as 'package.factory'")
+    module_name, _, attribute = target.rpartition(".")
+    factory = getattr(importlib.import_module(module_name), attribute)
+    return factory(**{k: v for k, v in config.items() if k != "_target_"})
+
+
 class _Coordinator:
     def __init__(self, config: RayServiceConfig):
         if config.lease_seconds <= 0 or config.request_seconds <= 0:
@@ -43,11 +57,9 @@ class _Coordinator:
             own_clients=True,
         )
         for backend in config.backends:
-            self.executor.bind(construct_target(backend))
+            self.executor.bind(_construct(backend))
         self.clients: dict[str, float] = {}
-        self.rewards = {
-            name: construct_target(cfg) for name, cfg in config.rewards.items()
-        }
+        self.rewards = {name: _construct(cfg) for name, cfg in config.rewards.items()}
 
     async def describe(self) -> RayServiceConfig:
         return self.config

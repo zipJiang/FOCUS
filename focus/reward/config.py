@@ -7,14 +7,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from focus.registry import registrable
-
 if TYPE_CHECKING:
     from focus.harness.env import StepResult
     from focus.harness.turn import Turn
 
 
-@registrable(builds_self=True)
 @dataclass(frozen=True, kw_only=True)
 class RewardConfig:
     """How raw rewards become one training number -- frozen for a whole batch.
@@ -29,12 +26,7 @@ class RewardConfig:
 
     ``value_version`` names the channel the critic's estimates are stored under.
 
-    A ``builds_self`` registry namespace, so an authored mapping (a YAML file, a
-    ``RolloutSpec`` field) is coerced into this frozen record rather than reaching a
-    consumer as a dict -- there is nothing here to *choose* between, only fields to
-    fill.
-
-    Keyword-only, like every self-building config record here: the fields are a bag of
+    Keyword-only: the fields are a bag of
     independent knobs in no meaningful order, so a positional caller is writing down an
     order that is not part of the design -- and reordering two floats would then change
     what an existing call *means* rather than failing it.

@@ -6,7 +6,7 @@ per node -- the posterior mean of the squared calibration error :math:`E[(V - V^
 about the tree. Both are statements about a *distribution over outcomes*, and which
 distribution that is is a fact about the task rather than a tuning: a {0,1} verifier
 outcome and a real-valued score are different models, not different constants in one. So
-the answer comes from a registrable slot, and the allocation score is the same function
+the answer comes from a pluggable model, and the allocation score is the same function
 of it either way.
 
 Nothing here reads the view or the node. A posterior is a function of ``(value, stats,
@@ -20,13 +20,11 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 
-from focus.registry import register, registrable
 from focus.statistics import RunningStats, refined_mean
 
 logger = logging.getLogger(__name__)
 
 
-@registrable(slot="calibration")
 class CalibrationModel(ABC):
     """A posterior over :math:`V^*(h)`, summarised for the allocation score.
 
@@ -65,7 +63,6 @@ class CalibrationModel(ABC):
         """
 
 
-@register(CalibrationModel, "beta_bernoulli")
 class BetaBernoulli(CalibrationModel):
     """The default: a Beta prior over a Bernoulli outcome, centred on the critic.
 
@@ -127,7 +124,6 @@ class BetaBernoulli(CalibrationModel):
         return e2, outcome_var
 
 
-@register(CalibrationModel, "gaussian")
 class Gaussian(CalibrationModel):
     """Conjugate normal: for returns that are not outcomes of a coin.
 

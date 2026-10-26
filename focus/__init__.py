@@ -6,7 +6,6 @@ from focus.allocation import (
     RolloutLedger,
     TokenEntropyAllocator,
     ValueRefinement,
-    register_allocator,
 )
 from focus.codec import ChatCodec, Message, TextCodec
 from focus.config import (
@@ -32,7 +31,6 @@ from focus.generation import (
     TokenChunkParser,
     TokenId,
     VLLMPolicy,
-    register_policy,
 )
 from focus.generation.parsing import (
     HermesToolCallParser,
@@ -71,22 +69,14 @@ from focus.preparation import (
     DirectBranchTdEstimator,
     GrpoEstimator,
     prepare_samples,
-    register_estimator,
 )
 from focus.preparation.records import ActorSample, CriticSample, PreparedBatch
 from focus.protocols import AppendOnly, ContextProtocol, Summary
-from focus.registry import (
-    build,
-    construct_target,
-    register,
-    registrable,
-)
 from focus.reward import (
     AsyncRewardModel,
     RewardModel,
     RewardResult,
     VLLMRewardModel,
-    register_reward,
 )
 from focus.reward.config import RewardConfig
 from focus.scheduler import (
@@ -119,7 +109,6 @@ __all__ = [
     "TokenEntropySession",
     "SearchPass",
     "FifoAllocator",
-    "register_allocator",
     "prepare_samples",
     "ExecutionServices",
     "AdmissionPool",
@@ -190,13 +179,11 @@ __all__ = [
     "TokenChunkParser",
     "TokenId",
     "VLLMPolicy",
-    "register_policy",
     # Scoring a finished rollout with a reward model.
     "AsyncRewardModel",
     "RewardModel",
     "RewardResult",
     "VLLMRewardModel",
-    "register_reward",
     # The shape of the search: how far an expansion rolls, how wide, under which law.
     "GatingPolicy",
     "ConcurrencyGating",
@@ -207,12 +194,7 @@ __all__ = [
     "DirectBranchTdEstimator",
     "GrpoEstimator",
     "ValueRefinement",
-    "register_estimator",
     # Saying all of the above in a config file, and building it from a name.
     "RolloutConfig",
     "RolloutSpec",
-    "build",
-    "construct_target",
-    "register",
-    "registrable",
 ]

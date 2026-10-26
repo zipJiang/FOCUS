@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, cast
 from focus.codec import ChatCodec, HFTokenizer, Message
 from focus.generation.interfaces import prepare_generation, run_async
 from focus.generation.types import GenerateResult, SamplingParams, TokenId
-from focus.registry import registrable, registrar
 
 if TYPE_CHECKING:
     from focus.generation.parsing.base import ActionParser
@@ -130,7 +129,6 @@ Completion = Callable[
 ]
 
 
-@registrable(slot="policy")
 class Policy[A]:
     """Own the model identity and every operation a rollout asks of that model.
 
@@ -271,6 +269,3 @@ class Policy[A]:
     async def aclose(self) -> None:
         """Async lifecycle hook for policies that own an async client."""
         self.close()
-
-
-register_policy = registrar(Policy)

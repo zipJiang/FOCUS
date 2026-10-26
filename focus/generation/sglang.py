@@ -17,7 +17,6 @@ from focus.generation.policy import (
     Policy,
     PolicyFormat,
     PreparedPrompt,
-    register_policy,
 )
 from focus.generation.types import GenerateResult, SamplingParams, TokenId
 
@@ -202,7 +201,6 @@ def _parse_sglang_output(
     )
 
 
-@register_policy("sglang")
 class SGLangPolicy(Policy[Any]):
     """Exact token generation through an independently hosted SGLang server.
 

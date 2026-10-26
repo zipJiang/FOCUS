@@ -7,7 +7,6 @@ import pytest
 from focus.generation import GenerateResult
 from focus.generation.parsing import ActionParser, TextActionParser
 from focus.harness import Env, StepResult
-from focus.registry import build, register
 
 
 @dataclass(frozen=True)
@@ -16,7 +15,6 @@ class CounterState:
     log: tuple[str, ...] = ()
 
 
-@register(Env, "toy")
 class ToyEnv(Env[CounterState, str]):
     """A pure env: each action appends to a log and increments; 'stop' ends it."""
 
@@ -92,10 +90,3 @@ async def test_parse_then_apply_seam_without_a_model() -> None:
     assert action == "stop"
     assert step.done
     assert step.reward == 1.0
-
-
-def test_build_env_and_parser_from_registry() -> None:
-    env = build(Env, {"name": "toy", "horizon": 5})
-    assert isinstance(env, ToyEnv)
-    parser = build(ActionParser, {"name": "text"})
-    assert isinstance(parser, TextActionParser)

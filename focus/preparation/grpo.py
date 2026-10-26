@@ -9,7 +9,6 @@ from focus.harness import AnyRollout
 from focus.preparation.base import (
     AdvantageEstimator,
     _resolved,
-    register_estimator,
 )
 from focus.preparation.records import ActorSample
 from focus.reward.config import RewardConfig
@@ -20,8 +19,9 @@ from focus.statistics import RunningStats
 _GRPO_STD_EPSILON = 1e-6
 
 
-@register_estimator("grpo")
 class GrpoEstimator(AdvantageEstimator):
+    name = "grpo"
+
     requires_completed_paths = True
 
     def assign(

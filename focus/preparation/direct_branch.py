@@ -11,7 +11,6 @@ from focus.harness import AnyRollout
 from focus.preparation.base import (
     AdvantageEstimator,
     _resolved,
-    register_estimator,
 )
 from focus.preparation.records import ActorSample, CriticSample
 from focus.reward.config import RewardConfig
@@ -98,9 +97,10 @@ def direct_branch_values(
     return values
 
 
-@register_estimator("direct_branch_td")
 class DirectBranchTdEstimator(AdvantageEstimator):
     """Segment TD advantages over refined direct-branch values (the paper's recipe)."""
+
+    name = "direct_branch_td"
 
     def assign(
         self,

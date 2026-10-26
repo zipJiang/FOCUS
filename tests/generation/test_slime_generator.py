@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from focus.generation import Policy, SamplingParams, SlimePolicy
-from focus.registry import build
+from focus.generation import SamplingParams, SlimePolicy
 from tests.helpers import test_format
 
 
@@ -181,16 +180,3 @@ def test_headers_are_forwarded_when_set() -> None:
     )
     asyncio.run(gen.agenerate_tokens((1,)))
     assert seen["headers"] == {"Authorization": "Bearer x"}
-
-
-def test_registered_under_slime_name() -> None:
-    async def fake_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        return _canned_output()
-
-    gen = build(
-        Policy,
-        {"name": "slime", "model": "m", "format": test_format()},
-        post=fake_post,
-        url="http://router/generate",
-    )
-    assert isinstance(gen, SlimePolicy)

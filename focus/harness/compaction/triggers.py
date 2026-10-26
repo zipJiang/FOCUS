@@ -30,10 +30,8 @@ from dataclasses import replace
 from typing import Any
 
 from focus.generation import TokenId
-from focus.registry import register, registrable
 
 
-@registrable(slot="trigger")
 class Trigger[S](ABC):
     """Whether to fold now, and what it takes to stop wanting to."""
 
@@ -65,7 +63,6 @@ class Trigger[S](ABC):
         return state
 
 
-@register(Trigger, "prompt_tokens")
 class PromptTokens(Trigger[Any]):
     """Fold once the rendered prompt exceeds ``max_prompt_tokens``.
 
@@ -82,7 +79,6 @@ class PromptTokens(Trigger[Any]):
         return len(prompt) > self._max_prompt_tokens
 
 
-@register(Trigger, "state_counter")
 class StateCounter(Trigger[Any]):
     """Fold once ``state.<remaining>`` is spent, then reset it from ``state.<maximum>``.
 
@@ -156,7 +152,6 @@ class StateCounter(Trigger[Any]):
         return replace(state, **updates)
 
 
-@register(Trigger, "any", constructor="of")
 class AnyOf(Trigger[Any]):
     """Fold when *any* member fires; relieve through every member, in order.
 
@@ -170,14 +165,7 @@ class AnyOf(Trigger[Any]):
 
     @classmethod
     def of(cls, triggers: Sequence[Trigger[Any]]) -> AnyOf:
-        """Build from a *sequence*, which is the only shape a config can express.
-
-        Varargs read better at every call site in Python (``AnyOf(a, b)``) and cannot be
-        filled from a mapping at all, so the registry is pointed here instead --
-        ``{"name": "any", "triggers": [{"name": "prompt_tokens"}, ...]}``. The members
-        are built from this annotation: ``Sequence[Trigger[Any]]`` says what each entry
-        of the list is, which is all the registry needs to descend into it.
-        """
+        """Build from a sequence of triggers."""
         return cls(*triggers)
 
     def fires(self, prompt: Sequence[TokenId], state: Any) -> bool:

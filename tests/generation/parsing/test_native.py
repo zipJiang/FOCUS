@@ -12,8 +12,6 @@ import pytest
 
 from focus.generation import GenerateResult, NativeToolCall
 from focus.generation.parsing import NativeToolCallParser, ToolCall
-from focus.generation.parsing.base import ActionParser
-from focus.registry import build
 
 
 def test_parse_maps_every_native_call_onto_the_turn() -> None:
@@ -65,9 +63,8 @@ def test_the_error_names_the_parsers_an_in_band_model_wants() -> None:
         NativeToolCallParser().parse(GenerateResult(text=""))
 
 
-def test_the_parser_is_registered_and_declares_itself_untrainable() -> None:
-    parser = build(ActionParser, {"name": "native"})
+def test_the_parser_declares_itself_untrainable() -> None:
+    parser = NativeToolCallParser()
 
-    assert isinstance(parser, NativeToolCallParser)
     # the actions were never in the tokens, so the tokens cannot be trained on
     assert parser.trainable is False

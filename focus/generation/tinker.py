@@ -12,7 +12,7 @@ from focus.generation.interfaces import (
     normalize_stop_reason,
     prepare_generation,
 )
-from focus.generation.policy import Policy, PolicyFormat, register_policy
+from focus.generation.policy import Policy, PolicyFormat
 from focus.generation.types import (
     GenerateResult,
     SamplingParams,
@@ -79,7 +79,6 @@ def _top_dict(entry: Sequence[tuple[int, float]] | None) -> dict[str, float] | N
     return {str(token_id): float(logprob) for token_id, logprob in entry or ()} or None
 
 
-@register_policy("tinker")
 class TinkerPolicy(Policy[Any]):
     """Token generation over a ``tinker.SamplingClient``.
 

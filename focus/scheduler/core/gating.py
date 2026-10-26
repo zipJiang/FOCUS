@@ -15,8 +15,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from focus.registry import register, registrable
-
 if TYPE_CHECKING:
     from focus.scheduler.core.tree import Node
 
@@ -57,7 +55,6 @@ class Gate:
         self._in_use -= 1
 
 
-@registrable(slot="gating")
 class GatingPolicy(ABC):
     """Mint a :class:`Gate` for each new node -- branch policy, decided per node."""
 
@@ -65,7 +62,6 @@ class GatingPolicy(ABC):
     def gate(self, node: Node[Any]) -> Gate: ...
 
 
-@register(GatingPolicy, "width")
 class WidthGating(GatingPolicy):
     """Cap *total* branches per node (children + in-flight) -- the classic width."""
 
@@ -76,7 +72,6 @@ class WidthGating(GatingPolicy):
         return Gate(self._width, count_children=True)
 
 
-@register(GatingPolicy, "concurrency")
 class ConcurrencyGating(GatingPolicy):
     """Cap only *concurrent* in-flight branches per node; total children unbounded."""
 

@@ -42,7 +42,6 @@ from focus.generation.parsing.base import (
     tool_turn,
 )
 from focus.generation.types import GenerateResult
-from focus.registry import register
 
 # Only what is *inside* the shared <tool_call> tag is this module's business; the tag
 # itself, and the reasoning split around it, are `parser.tool_turn`'s.
@@ -50,7 +49,6 @@ _FUNCTION = re.compile(r"<function=([^>\s]+)\s*>(.*?)</function>", re.DOTALL)
 _PARAMETER = re.compile(r"<parameter=([^>\s]+)\s*>\n?(.*?)\n?</parameter>", re.DOTALL)
 
 
-@register(ActionParser, "qwen_xml")
 class QwenXMLToolCallParser(ActionParser[ToolTurn]):
     """Parse Qwen3.5's XML tool calls into the ``ToolTurn`` the env takes.
 

@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from focus.registry import register
-
 if TYPE_CHECKING:
     from focus.harness.rollout import AnyRollout
 
@@ -32,7 +30,6 @@ class CheckpointPolicy(Protocol):
         ...
 
 
-@register(CheckpointPolicy, "sparse")
 class SparseCheckpoints:
     def eligible(self, state: AnyRollout) -> bool:
         if not state.turns:
@@ -49,7 +46,6 @@ class SparseCheckpoints:
         return False
 
 
-@register(CheckpointPolicy, "every_decision")
 class EveryDecision:
     def eligible(self, state: AnyRollout) -> bool:
         return True

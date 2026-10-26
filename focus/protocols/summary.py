@@ -11,13 +11,11 @@ from focus.harness.compaction.triggers import Trigger
 from focus.harness.rollout import AnyRollout
 from focus.harness.turn import Turn
 from focus.protocols.base import ContextProtocol
-from focus.registry import register
 
 if TYPE_CHECKING:
     from focus.harness.runner import Runner
 
 
-@register(ContextProtocol, "summary")
 class Summary(ContextProtocol):
     def __init__(self, compactor: Compactor[Any] | None = None):
         if compactor is not None and not isinstance(

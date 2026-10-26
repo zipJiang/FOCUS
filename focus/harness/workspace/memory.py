@@ -11,7 +11,6 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from focus.harness.workspace.base import Workspace, WorkspaceError
-from focus.registry import register
 
 if TYPE_CHECKING:
     from focus.harness.tools import Tool
@@ -42,7 +41,6 @@ contents back into it. Anything you neither store nor keep is gone.\
 """
 
 
-@register(Workspace, "memory")
 class InMemoryWorkspace(Workspace):
     """A path→text dict, exported to the model via :class:`~...storage.StorageTool`."""
 

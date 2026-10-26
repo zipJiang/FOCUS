@@ -22,8 +22,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from focus.registry import registrable
-
 if TYPE_CHECKING:
     from focus.harness.tools import Tool
 
@@ -32,7 +30,6 @@ class WorkspaceError(Exception):
     """Raised by a workspace or its tools when an operation cannot complete."""
 
 
-@registrable(slot="workspace")
 class Workspace(ABC):
     """Per-rollout scratch: tools, guidance, and fork -- nothing else mandated."""
 

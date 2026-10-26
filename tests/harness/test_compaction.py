@@ -31,7 +31,6 @@ from focus.harness import (
     StorageTool,
     SubmitFields,
     ToolEnv,
-    Trigger,
     Workspace,
     build_budget,
     regions,
@@ -39,7 +38,6 @@ from focus.harness import (
 from focus.harness.compaction.agentic import _EMPTY_KEPT
 from focus.harness.compaction.fold_env import STORE_FIRST
 from focus.harness.workspace.null import _FOLDED_GUIDANCE
-from focus.registry import build
 from tests.helpers import (
     FakeChatTokenizer,
     ScriptedGenerator,
@@ -219,14 +217,6 @@ def test_any_of_fires_on_either_and_relieves_through_both() -> None:
     assert trigger.fires((1,), BudgetState(remaining=0))
     assert not trigger.fires((1,), BudgetState(remaining=3))
     assert trigger.relieve(BudgetState(remaining=0)).remaining == 5
-
-
-def test_triggers_build_from_the_registry() -> None:
-    assert isinstance(build(Trigger, {"name": "prompt_tokens"}), PromptTokens)
-    assert isinstance(
-        build(Trigger, {"name": "state_counter", "remaining": "r", "maximum": "m"}),
-        StateCounter,
-    )
 
 
 # -- AgenticCompactor: the fold as a nested rollout ------------------------------------
@@ -448,7 +438,6 @@ async def test_custom_transcript_serialization_bounds_historical_text() -> None:
     ).compact(c)
     prompt = _decode(gen.prefixes[0])
     assert "HISTORY_START\nuser: old task\nHISTORY_END\nSummarize only." in prompt
-    assert build(Workspace, {"name": "null"}).tools() == ()
 
 
 class _ChannelScripted(ScriptedGenerator):
@@ -715,12 +704,6 @@ def test_the_default_trigger_only_fires_past_the_token_budget() -> None:
     assert compactor.trigger.fires(tuple(range(6)), None)
 
 
-def test_build_agentic_from_registry() -> None:
-    # no generator at construction -- it comes from the Compaction at compact time
-    compactor = build(Compactor, {"name": "agentic", "max_interactions": 4})
-    assert isinstance(compactor, AgenticCompactor)
-
-
 def test_workspace_exports_tools_and_null_exports_none() -> None:
     ws = InMemoryWorkspace()
     assert [t.name for t in ws.tools()] == ["storage"]
@@ -728,25 +711,6 @@ def test_workspace_exports_tools_and_null_exports_none() -> None:
     assert [t.name for t in ws.compaction_tools()] == ["storage"]
     assert NullWorkspace().tools() == ()
     assert NullWorkspace().compaction_tools() == ()
-
-
-def test_build_budget_from_registry() -> None:
-    """`budget` is a composition registered under a name, not a class to subclass."""
-    compactor = build(
-        Compactor, {"name": "budget", "remaining": "remaining", "maximum": "maximum"}
-    )
-
-    assert isinstance(compactor, AgenticCompactor)
-    assert compactor.trigger.fires((1,), BudgetState(remaining=0))
-    assert not compactor.trigger.fires((1,), BudgetState(remaining=3))
-    # ...and the token half of the composition is still there
-    assert compactor.trigger.fires(tuple(range(8193)), BudgetState(remaining=3))
-
-
-def test_build_budget_forwards_the_strategy_knobs() -> None:
-    compactor = build(Compactor, {"name": "budget", "max_interactions": 3})
-    assert isinstance(compactor, AgenticCompactor)
-    assert compactor._max_interactions == 3
 
 
 class _TriggerlessCompactor(Compactor[Any]):

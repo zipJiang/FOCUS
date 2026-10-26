@@ -16,7 +16,6 @@ from focus.generation.interfaces import (
     _validate_continuation_result,
     aclose_client,
 )
-from focus.registry import register
 from focus.reward import RewardModel, RewardResult
 
 
@@ -46,7 +45,6 @@ def policy_key(policy: Policy[Any]) -> str:
     return f"{policy.model}:{policy.version}:{policy.format.name}"
 
 
-@register(InferenceExecutor, "local")
 class LocalInferenceExecutor:
     def __init__(self, pool: AdmissionPool | None = None, *, own_clients: bool = False):
         self.pool = pool or AdmissionPool()

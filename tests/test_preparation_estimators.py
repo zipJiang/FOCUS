@@ -8,13 +8,10 @@ import pytest
 
 from focus import DirectBranchTdEstimator, GrpoEstimator, prepare_samples
 from focus.allocation.evidence import RolloutLedger, evidence_of
-from focus.preparation import AdvantageEstimator, register_estimator
 from focus.preparation.records import ActorSample
-from focus.registry import build
 from focus.reward.config import RewardConfig
 from focus.scheduler import SchedulerView
 from focus.scheduler.core.critic import VALUE_CONTEXTS_KEY
-from tests.estimators import FixedWeight
 from tests.helpers import VERSION, DemoValue, turn
 from tests.trees import search_payload, stamped_child
 from tests.trees import training_root_state as root_state
@@ -48,29 +45,6 @@ def assign(view, config, *nodes):
     records = [slot(n) for n in nodes]
     DirectBranchTdEstimator().assign(records, view=view, reward_config=config)
     return records
-
-
-@pytest.mark.parametrize("name", ["direct_branch_td", "grpo"])
-def test_registry(name):
-    assert build(AdvantageEstimator, {"name": name}).name == name
-
-
-@pytest.mark.parametrize(
-    "name", ["gae", "trajectory_return", "constant", "child_relative"]
-)
-def test_removed_estimators(name):
-    with pytest.raises(Exception, match="advantage_estimator"):
-        build(AdvantageEstimator, {"name": name})
-
-
-def test_custom_estimator():
-    @register_estimator("fixed_for_test")
-    class Custom(FixedWeight):
-        pass
-
-    assert (
-        build(AdvantageEstimator, {"name": "fixed_for_test"}).name == "fixed_for_test"
-    )
 
 
 def test_refined_terminal_weights_and_critic_contexts():

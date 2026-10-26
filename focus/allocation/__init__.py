@@ -6,7 +6,6 @@ from .base import (
     Allocator,
     FifoAllocator,
     TokenEntropyAllocator,
-    register_allocator,
 )
 from .calibration import BetaBernoulli, CalibrationModel, Gaussian
 from .evidence import NodeWorth, Observations, RolloutLedger, ScoredSession
@@ -18,7 +17,6 @@ __all__ = [
     "Reservation",
     "FifoAllocator",
     "TokenEntropyAllocator",
-    "register_allocator",
     "NodeWorth",
     "Observations",
     "RolloutLedger",

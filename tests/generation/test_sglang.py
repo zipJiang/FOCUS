@@ -8,8 +8,7 @@ from typing import Any
 
 import pytest
 
-from focus.generation import Policy, SamplingParams, SGLangPolicy
-from focus.registry import build
+from focus.generation import SamplingParams, SGLangPolicy
 from tests.helpers import test_format
 
 
@@ -211,16 +210,3 @@ def test_request_failure_has_actionable_context(
         match=r"SGLang /generate request failed.*prompt_tokens=3, max_tokens=9",
     ):
         policy.generate_tokens((1, 2, 3), SamplingParams(max_tokens=9))
-
-
-def test_registered_under_sglang_name() -> None:
-    policy = build(
-        Policy,
-        {
-            "name": "sglang",
-            "model": "m",
-            "format": test_format(),
-            "base_url": "http://router:30000",
-        },
-    )
-    assert isinstance(policy, SGLangPolicy)

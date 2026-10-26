@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 
 from focus.codec import Message
 from focus.harness.workspace import Workspace
-from focus.registry import registrable
 
 
 # ``S_co`` is covariant: a ``StepResult`` is frozen and only ever *yields* its state, so
@@ -53,7 +52,6 @@ class StepResult[S_co]:
         return self.reward_outcome + self.reward_step
 
 
-@registrable(slot="env")
 class Env[S, A](ABC):
     """Define the task's initial state and response to each parsed action.
 

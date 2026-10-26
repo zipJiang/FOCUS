@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterator, Sequence
-from typing import TYPE_CHECKING
+from collections.abc import Iterator, Sequence
+from typing import TYPE_CHECKING, Any
 
 from focus.harness import AnyRollout
-from focus.registry import register, registrable
 from focus.reward.config import RewardConfig
 from focus.scheduler.core.tree import Node, SchedulerView
 
@@ -15,7 +14,6 @@ if TYPE_CHECKING:
     from focus.preparation.records import ActorSample
 
 
-@registrable(slot="advantage_estimator")
 class AdvantageEstimator(ABC):
     """Assign training coefficients to a finished group of edge records.
 
@@ -23,9 +21,15 @@ class AdvantageEstimator(ABC):
     and optional diagnostics without adding, removing, or re-keying records.
     """
 
+    #: Recorded on every actor sample. Defaults to the class name.
     name: str = ""
     #: Outcome-based recipes may require a completed path through each actor edge.
     requires_completed_paths: bool = False
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if not cls.__dict__.get("name"):
+            cls.name = cls.__name__
 
     @abstractmethod
     def assign(
@@ -43,13 +47,3 @@ def _resolved(
     for record in records:
         if (node := view.node(record.node_id)) is not None:
             yield record, node
-
-
-def register_estimator[E: AdvantageEstimator](
-    name: str,
-) -> Callable[[type[E]], type[E]]:
-    def decorator(cls: type[E]) -> type[E]:
-        cls.name = name
-        return register(AdvantageEstimator, name, cls)
-
-    return decorator

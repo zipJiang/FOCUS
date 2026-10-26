@@ -24,7 +24,6 @@ from focus.harness.compaction.triggers import PromptTokens, Trigger
 from focus.harness.transcript import format_transcript
 from focus.harness.turn import Turn
 from focus.harness.workspace import Workspace
-from focus.registry import register
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +112,6 @@ under Open questions; the compactor was required to put every necessary reread t
 Do not reinterpret omitted transcript detail as an instruction to start over."""
 
 
-@register(Compactor, "agentic")
 class AgenticCompactor(Compactor[S]):
     """An LLM that compacts via the workspace's tools within a bounded call budget.
 

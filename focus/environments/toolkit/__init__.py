@@ -31,10 +31,7 @@ Building an env's tool list, then, is composition rather than subclassing::
         PythonTool(timeout=10.0),
     ]
 
-Tools are constructed, not registry-built: nothing in the package builds a tool from a
-config name (unlike ``Workspace`` or ``Compactor``), because a tool needs the task's own
-corpus and prose, which no name can carry. If that ever changes, the slot goes in
-:mod:`focus.harness.tools`, next to the protocol.
+Tools are constructed directly, because a tool needs the task's own corpus and prose.
 
 The modules' ``DEFAULT_DESCRIPTION`` constants are deliberately not re-exported here --
 they share a name; import them from :mod:`~.grep` / :mod:`~.list` / :mod:`~.read` when

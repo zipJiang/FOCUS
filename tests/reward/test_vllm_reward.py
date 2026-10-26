@@ -4,8 +4,7 @@ from typing import Any
 
 import pytest
 
-from focus.registry import build
-from focus.reward import RewardModel, RewardResult, VLLMRewardModel
+from focus.reward import RewardResult, VLLMRewardModel
 
 
 class FakeResponse:
@@ -87,11 +86,6 @@ async def test_reduce_strategies() -> None:
 def test_sync_bridge_matches_async() -> None:
     rm, _ = _model({"data": [{"index": 0, "data": [2.0]}]})
     assert rm.score("x").score == 2.0  # sync `score` bridges to `ascore` via run_async
-
-
-def test_registry_build() -> None:
-    rm = build(RewardModel, {"name": "vllm", "base_url": "http://h:8000", "model": "m"})
-    assert isinstance(rm, VLLMRewardModel)
 
 
 def test_bad_reduce_rejected() -> None:

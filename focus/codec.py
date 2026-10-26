@@ -6,8 +6,8 @@ text<->token seam used by the generation backends (satisfied by a HuggingFace
 HuggingFace tokenizer to render a conversation -- not just raw text -- into tokens,
 when that tokenizer carries a chat template.
 
-Codecs are structural, injected seams: they wrap a live tokenizer and are duck-typed,
-not built through the registry. This module depends on nothing else in the package, so
+Codecs are structural, injected seams: they wrap a live tokenizer and are duck-typed.
+This module depends on nothing else in the package, so
 both the generation backends and the harness can build on it without an import cycle.
 """
 

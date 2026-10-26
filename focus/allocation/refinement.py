@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from focus.allocation.base import Allocator, register_allocator
+from focus.allocation.base import Allocator
 from focus.allocation.calibration import BetaBernoulli, CalibrationModel
 from focus.allocation.evidence import (
     NodeWorth,
@@ -103,7 +103,6 @@ class ResidualWorth(NodeWorth):
         return retraining_gain(e2, outcome_var, counts.n_eff, self.kappa)
 
 
-@register_allocator("value_refinement")
 class ValueRefinement(Allocator):
     """Allocate where another sample is expected to improve the critic target.
 
@@ -112,6 +111,8 @@ class ValueRefinement(Allocator):
     RewardConfig.value_prior_strength sets the network prior's strength. This
     allocator gathers data; it does not retrain the network during search.
     """
+
+    name = "value_refinement"
 
     def __init__(
         self,

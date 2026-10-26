@@ -22,7 +22,6 @@ from focus.generation.interfaces import (
 from focus.generation.policy import (
     PolicyFormat,
     PreparedPrompt,
-    register_policy,
 )
 from focus.generation.types import (
     GenerateResult,
@@ -49,7 +48,6 @@ def _flatten_tool(schema: Mapping[str, Any]) -> dict[str, Any]:
     return {"type": "function", **dict(function)}
 
 
-@register_policy("openai_responses")
 class OpenAIResponsesPolicy(NativePolicy):
     """Token completion backed by the OpenAI Responses API.
 

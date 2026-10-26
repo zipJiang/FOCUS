@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
-from focus.registry import register, registrable
 from focus.scheduler.core.tree import (
     STAT_FAILURES,
     STAT_ROLLOUTS,
@@ -15,7 +14,6 @@ from focus.scheduler.core.tree import (
 )
 
 
-@registrable(slot="termination")
 class Termination[P: Payload](ABC):
     """Admission control for the scheduling loop: how many more rollouts may launch.
 
@@ -40,7 +38,6 @@ class Termination[P: Payload](ABC):
         """
 
 
-@register(Termination, "budget")
 class Budget[P: Payload](Termination[P]):
     """Stop on a spent budget (turns / rollout count / tree size), or on a goal.
 

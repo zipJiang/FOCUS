@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from focus.generation.parsing.base import ActionParser
 from focus.generation.types import GenerateResult, TokenId
-from focus.registry import register
 
 _TOKENS = "focus_continuation_tokens"
 
@@ -19,7 +18,6 @@ class TokenChunk:
     finished: bool
 
 
-@register(ActionParser, "token_chunk")
 class TokenChunkParser(ActionParser[TokenChunk]):
     """Extract original tokens and distinguish continuation from completion.
 

@@ -24,7 +24,6 @@ from focus.generation.interfaces import (
 from focus.generation.policy import (
     PolicyFormat,
     PreparedPrompt,
-    register_policy,
 )
 from focus.generation.types import (
     GenerateResult,
@@ -34,7 +33,6 @@ from focus.generation.types import (
 )
 
 
-@register_policy("openai_chat", aliases=("openai",))
 class OpenAIChatPolicy(NativePolicy):
     """Native Chat Completions with estimated local token accounting."""
 

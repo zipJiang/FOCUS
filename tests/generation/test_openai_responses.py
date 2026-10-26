@@ -19,11 +19,9 @@ import pytest
 
 from focus.generation import (
     NativeToolCall,
-    Policy,
     SamplingParams,
 )
 from focus.generation.openai_responses import OpenAIResponsesPolicy
-from focus.registry import build
 from tests.helpers import native_format
 
 
@@ -460,17 +458,3 @@ def test_the_capabilities_a_policy_is_bound_on() -> None:
 
     assert gen.provides_native_tool_calls
     assert not gen.provides_exact_tokens
-
-
-def test_registry_builds_via_from_params() -> None:
-    gen = build(
-        Policy,
-        {
-            "name": "openai_responses",
-            "api_key": "k",
-            "reasoning_effort": "low",
-            "model": "gpt-5.2",
-        },
-        format=native_format(ByteCodec()),
-    )
-    assert isinstance(gen, OpenAIResponsesPolicy)

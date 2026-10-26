@@ -10,18 +10,14 @@ import pytest
 
 from focus import (
     AppendOnly,
-    ContextProtocol,
     ExecutionServices,
     Policy,
-    PolicyFormat,
     PreparedPrompt,
     SamplingParams,
     TokenChunk,
     TokenChunkParser,
 )
 from focus.generation import GenerateResult
-from focus.generation.parsing import ActionParser
-from focus.registry import build
 from tests.helpers import test_format
 
 
@@ -242,16 +238,6 @@ async def test_partial_override_keeps_the_default_token_limit():
     effective = inner._complete.call_args.args[1]
     assert effective.max_tokens == 3
     assert effective.temperature == 0.7
-
-
-def test_configuration_registry_supports_the_same_customization():
-    parser = build(ActionParser, {"name": "token_chunk"})
-    assert isinstance(parser, TokenChunkParser)
-    format = PolicyFormat("test", test_format().codec, parser)
-    protocol = build(ContextProtocol, {"name": "append_only", "continuation": True})
-    assert isinstance(protocol, AppendOnly)
-    assert protocol.continuation
-    assert format.parser is parser
 
 
 @pytest.fixture(params=["vllm", "sglang", "slime", "tinker"])
