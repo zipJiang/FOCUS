@@ -41,7 +41,7 @@ async def test_mixed_mutations_are_rejected_without_partial_execution():
 
 
 async def test_programming_failures_are_not_reported_as_invalid_model_actions():
-    from focus.harness.context import ContextTools, schema
+    from focus.context.base import ContextTools, schema
 
     class Broken(ContextTools):
         def schemas(self):

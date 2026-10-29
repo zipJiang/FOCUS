@@ -8,23 +8,22 @@ from collections import Counter
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
+from focus.context import PromptTokens, Summarize
+from focus.context.base import AppendOnly
+from focus.context.compaction import DEFAULT_INSTRUCTION
 from focus.generation import Policy, SamplingParams
 from focus.generation.parsing import ToolTurn
 from focus.harness import (
     Agent,
     BaseTool,
     NullWorkspace,
-    PromptTokens,
     RolloutState,
     RoundBudget,
     StepResult,
-    Summarize,
     ToolEnv,
     ToolError,
     Workspace,
 )
-from focus.harness.compaction import DEFAULT_INSTRUCTION
-from focus.harness.context import AppendOnly
 from focus.harness.tools.submission import (
     SubmitTool,
     submission_payload,

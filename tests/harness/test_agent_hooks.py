@@ -8,18 +8,15 @@ from typing import Any
 
 import pytest
 
-from focus.generation import SamplingParams
-from focus.generation.parsing import HermesToolCallParser
-from focus.harness import (
+from focus.context import (
     Compaction,
     CompactionResult,
     ContextManager,
     IncompleteCompactionError,
-    InMemoryWorkspace,
-    StepResult,
-    StorageTool,
-    Turn,
 )
+from focus.generation import SamplingParams
+from focus.generation.parsing import HermesToolCallParser
+from focus.harness import InMemoryWorkspace, StepResult, StorageTool, Turn
 from tests.helpers import (
     ScriptedGenerator,
     SubmitEnv,

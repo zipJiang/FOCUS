@@ -20,7 +20,14 @@ from dataclasses import dataclass, field, replace
 from types import EllipsisType
 from typing import Any, Literal
 
+from focus.branching import BranchPoints
 from focus.codec import Message
+from focus.context.base import (
+    AppendOnly,
+    Compaction,
+    ContextManager,
+    IncompleteCompactionError,
+)
 from focus.execution import ExecutionServices, Owner
 from focus.execution.budget import ResourceBudget
 from focus.execution.pool import DEFAULT_OWNER
@@ -35,20 +42,10 @@ from focus.generation.interfaces import (
 )
 from focus.generation.parsing.base import ActionParser, TextActionParser
 from focus.generation.policy import Policy, PreparedPrompt
-from focus.harness.checkpoint import (
-    BranchPoints,
-    Effect,
-)
-from focus.harness.context import (
-    AppendOnly,
-    Compaction,
-    ContextManager,
-    IncompleteCompactionError,
-)
 from focus.harness.env import Env, StepResult
 from focus.harness.persistence import Checkpointer
 from focus.harness.rollout import RolloutState
-from focus.harness.turn import Turn
+from focus.harness.turn import Effect, Turn
 from focus.harness.workspace import (
     NullWorkspace,
     Workspace,

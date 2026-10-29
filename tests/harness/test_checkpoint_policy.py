@@ -4,9 +4,9 @@ from dataclasses import replace
 
 import pytest
 
+from focus.branching import BranchPoints
 from focus.extend import EveryDecision, SparseCheckpoints
 from focus.harness import InMemoryWorkspace
-from focus.harness.checkpoint import BranchPoints
 from focus.harness.rollout import AnyRollout
 from tests.harness.test_runner import QuietMemory, TalkativeCompactor, ToyCompactor
 from tests.helpers import ScriptedGenerator, ToyState, toy_runner

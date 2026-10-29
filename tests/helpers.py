@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from focus.codec import ChatCodec, Message
+from focus.context import Trigger
 from focus.critic import Critic
 from focus.generation import (
     GenerateResult,
@@ -38,7 +39,6 @@ from focus.harness import (
     StepResult,
     SubmitFields,
     ToolEnv,
-    Trigger,
     Turn,
     TurnTag,
     Workspace,

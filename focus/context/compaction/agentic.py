@@ -7,21 +7,21 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Literal, TypeVar
 
-from focus.generation import SamplingParams
-from focus.harness.compaction.fold_env import FoldEnv, FoldState
-from focus.harness.compaction.summary import (
-    REPAIR_INSTRUCTION,
-    SUMMARY_INSTRUCTION,
-    parse_summary,
-)
-from focus.harness.context import (
+from focus.context.base import (
     Compaction,
     CompactionResult,
     ContextManager,
     IncompleteCompactionError,
 )
+from focus.context.compaction.fold_env import FoldEnv, FoldState
+from focus.context.compaction.summary import (
+    REPAIR_INSTRUCTION,
+    SUMMARY_INSTRUCTION,
+    parse_summary,
+)
+from focus.context.triggers import PromptTokens, Trigger
+from focus.generation import SamplingParams
 from focus.harness.transcript import format_transcript
-from focus.harness.triggers import PromptTokens, Trigger
 from focus.harness.turn import Turn
 from focus.harness.workspace import Workspace
 

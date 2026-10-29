@@ -35,6 +35,21 @@ from typing import Any, Literal
 from focus.generation import SamplingParams, TokenId
 from focus.harness.env import StepResult
 
+
+@dataclass(frozen=True)
+class Effect:
+    """A committed operation, linked to the generation that requested it."""
+
+    kind: str
+    turn_index: int
+    context_before: int = 0
+    context_after: int = 0
+    detail: str = ""
+    invocation_id: str = "root"
+    #: Exclusive end of the committed operation in the rollout turn log.
+    turn_end: int = -1
+
+
 #: What kind of work a turn is: the task, or the agentic fold that rewrote its context.
 #:
 #: A closed set, and spelled as one: the two tags are read by name all over the engine

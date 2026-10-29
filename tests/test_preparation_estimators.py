@@ -10,7 +10,8 @@ import pytest
 
 from focus import DirectBranchTd, Grpo
 from focus.allocation.evidence import RolloutLedger, evidence_of
-from focus.preparation import Edge, prepare_samples
+from focus.estimation import Edge
+from focus.preparation import prepare_samples
 from focus.scheduler import SchedulerView
 from focus.scheduler.core.returns import edge_return
 from focus.values import RewardConfig, tree_values

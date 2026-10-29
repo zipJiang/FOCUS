@@ -1,8 +1,9 @@
 import pytest
 
-from focus.harness import NullWorkspace, Summarize
-from focus.harness.compaction.summary import parse_summary
-from focus.harness.context import IncompleteCompactionError
+from focus.context import Summarize
+from focus.context.base import IncompleteCompactionError
+from focus.context.compaction.summary import parse_summary
+from focus.harness import NullWorkspace
 from tests.harness.test_compaction import _compaction
 from tests.helpers import ScriptedGenerator
 

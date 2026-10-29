@@ -9,8 +9,8 @@ new context.
 
 :class:`AppendOnly` keeps the whole transcript; :class:`Segments` continues one
 assistant response in exact token segments;
-:class:`~focus.harness.compaction.Summarize` folds the transcript into notes when a
-:class:`~focus.harness.triggers.Trigger` fires. :class:`ContextTools` lets the model
+:class:`~focus.context.compaction.Summarize` folds the transcript into notes when a
+:class:`~focus.context.triggers.Trigger` fires. :class:`ContextTools` lets the model
 edit its own context through tools.
 """
 
@@ -22,21 +22,16 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from focus.branching import BranchPoints, EveryDecision, SparseCheckpoints
 from focus.codec import Message
+from focus.context.triggers import Trigger
 from focus.execution import Usage
 from focus.generation import GenerateResult, PreparedPrompt
 from focus.generation.parsing.base import ActionKind, ToolTurn
-from focus.harness.checkpoint import (
-    BranchPoints,
-    Effect,
-    EveryDecision,
-    SparseCheckpoints,
-)
 from focus.harness.env import StepResult
 from focus.harness.rollout import AnyRollout
 from focus.harness.tools.dispatch import tool_reply
-from focus.harness.triggers import Trigger
-from focus.harness.turn import Turn
+from focus.harness.turn import Effect, Turn
 from focus.harness.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -99,7 +94,7 @@ class CompactionResult[S]:
     Compaction is a state transition like ``env.step`` -- it reads ``state`` (via
     :class:`Compaction`) and returns a new one, so a context manager can reset the
     counters its trigger watched (e.g. a per-compaction search budget), which is what
-    :meth:`~focus.harness.triggers.Trigger.relieve` is for.
+    :meth:`~focus.context.triggers.Trigger.relieve` is for.
 
     ``turns`` are the turns a model-driven fold generated getting here --
     transition-free, because a fold rewrites the working context rather than acting on

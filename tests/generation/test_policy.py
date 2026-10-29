@@ -286,8 +286,8 @@ def _hermes_policy() -> Any:
 def test_the_parser_follows_the_declared_action_kinds() -> None:
     from focus import Agent, Segments
     from focus.backends import TokenChunkParser
+    from focus.context.compaction import FoldEnv
     from focus.generation.parsing import TextActionParser
-    from focus.harness.compaction import FoldEnv
     from tests.helpers import SubmitEnv, ToyEnv
 
     policy = _hermes_policy()
@@ -316,7 +316,7 @@ def test_the_parser_follows_the_declared_action_kinds() -> None:
 async def test_an_agent_never_copies_its_policy() -> None:
     """Choosing a parser leaves the policy's identity, routing, and accounting alone."""
     from focus import Agent
-    from focus.harness.compaction import FoldEnv
+    from focus.context.compaction import FoldEnv
     from tests.helpers import ToyEnv
 
     policy = _hermes_policy()

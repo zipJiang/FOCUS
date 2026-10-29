@@ -3,8 +3,8 @@
 from dataclasses import replace
 from typing import Any
 
+from focus.context.base import ContextError, ContextTools, schema
 from focus.harness.agent import Agent
-from focus.harness.context import ContextError, ContextTools, schema
 from focus.harness.rollout import AnyRollout
 
 

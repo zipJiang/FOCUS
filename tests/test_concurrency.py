@@ -36,6 +36,7 @@ import pytest
 from focus import Collector, Fifo, Phase, Search
 from focus.allocation import Observations, RolloutLedger
 from focus.codec import ChatCodec
+from focus.context import build_budget
 from focus.critic import Critic
 from focus.export import to_samples
 from focus.extend import NodeInfo, Priority
@@ -46,14 +47,7 @@ from focus.generation import (
     SamplingParams,
 )
 from focus.generation.parsing import HermesToolCallParser, ToolTurn
-from focus.harness import (
-    Agent,
-    Env,
-    RoundBudget,
-    StepResult,
-    Workspace,
-    build_budget,
-)
+from focus.harness import Agent, Env, RoundBudget, StepResult, Workspace
 from focus.harness.turn import Turn
 from focus.preparation.records import Batch
 from focus.scheduler import (
@@ -582,7 +576,7 @@ class RoundEnv(Env[Round, ToolTurn]):
 
     Over :class:`ToolTurn` rather than plain text because the fold is a rollout through
     the *same* parser: an agentic compactor drives a
-    :class:`~focus.harness.compaction.fold_env.FoldEnv`, which reads tool
+    :class:`~focus.context.compaction.fold_env.FoldEnv`, which reads tool
     calls off the turn, so a text parser here would fail inside the first fold.
     """
 

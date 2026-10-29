@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-from focus.preparation.base import Advantage, Edge, Estimator
+from focus.estimation.base import Advantage, Edge, Estimator
 from focus.scheduler.core.returns import edge_return, finished_below
 from focus.statistics import RunningStats
 from focus.values import TreeValues

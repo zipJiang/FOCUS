@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from focus.codec import ChatCodec
+from focus.context import Compaction, CompactionResult, ContextManager, Trigger
 from focus.generation import (
     GenerateResult,
     PolicyFormat,
@@ -19,16 +20,12 @@ from focus.generation.parsing import HermesToolCallParser, TextActionParser
 from focus.generation.policy import Policy
 from focus.harness import (
     Agent,
-    Compaction,
-    CompactionResult,
-    ContextManager,
     Env,
     InMemoryWorkspace,
     NullWorkspace,
     RolloutState,
     StepResult,
     StorageTool,
-    Trigger,
     Workspace,
     regions,
 )

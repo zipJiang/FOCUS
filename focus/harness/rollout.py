@@ -35,9 +35,9 @@ from uuid import uuid4
 from focus.codec import Message
 from focus.execution.budget import ResourceBudget
 from focus.execution.pool import Owner
-from focus.harness.checkpoint import Effect
 from focus.harness.env import StepResult
 from focus.harness.turn import (
+    Effect,
     Turn,
     TurnTag,
     trainable_logprobs,
@@ -80,7 +80,7 @@ class RolloutState[S]:
     Holds everything needed to *continue* a rollout: ``messages`` (the live
     conversation, the source of truth -- the token prefix is re-rendered from it, not
     stored); ``seed`` (the system + first user turn, what a fold folds back to -- see
-    :class:`~focus.harness.context.Compaction`); the env ``state``; the ``workspace``
+    :class:`~focus.context.base.Compaction`); the env ``state``; the ``workspace``
     (durable scratch); and ``turns`` -- the append-only log of
     :class:`~focus.harness.turn.Turn` s.
 

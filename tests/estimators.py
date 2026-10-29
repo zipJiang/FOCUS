@@ -1,6 +1,6 @@
 """Small custom estimators used to isolate export and integration tests."""
 
-from focus.preparation import Advantage, Estimator
+from focus.estimation import Advantage, Estimator
 
 
 class FixedWeight(Estimator):

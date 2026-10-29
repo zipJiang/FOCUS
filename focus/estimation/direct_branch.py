@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from focus.preparation.base import Advantage, Edge, Estimator
+from focus.estimation.base import Advantage, Edge, Estimator
 from focus.values import TreeValues
 
 

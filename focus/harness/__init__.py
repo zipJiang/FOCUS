@@ -1,17 +1,6 @@
 """Harness: the agent-facing runtime around the generation backends."""
 
 from focus.harness.agent import DEFAULT_FINISH_PROMPT, Agent, Execution
-from focus.harness.compaction import FoldEnv, FoldState, Summarize, build_budget
-from focus.harness.context import (
-    AppendOnly,
-    Compaction,
-    CompactionResult,
-    ContextError,
-    ContextManager,
-    ContextTools,
-    IncompleteCompactionError,
-    Segments,
-)
 from focus.harness.env import Env, StepResult
 from focus.harness.packing import PackedSequence, regions
 from focus.harness.persistence import (
@@ -38,7 +27,6 @@ from focus.harness.transcript import (
     flatten_tool_calls,
     format_transcript,
 )
-from focus.harness.triggers import AnyOf, PromptTokens, StateCounter, Trigger
 from focus.harness.turn import Turn, TurnTag, logprob, trainable_logprobs
 from focus.harness.workspace import (
     InMemoryWorkspace,
@@ -49,18 +37,8 @@ from focus.harness.workspace import (
 )
 
 __all__ = [
-    "AnyOf",
-    "AppendOnly",
-    "ContextError",
-    "ContextManager",
-    "ContextTools",
-    "IncompleteCompactionError",
-    "Segments",
-    "Summarize",
     "AnyRollout",
     "BaseTool",
-    "Compaction",
-    "CompactionResult",
     "Checkpointer",
     "CheckpointInfo",
     "CorruptCheckpoint",
@@ -68,18 +46,14 @@ __all__ = [
     "SQLiteCheckpointer",
     "DEFAULT_FINISH_PROMPT",
     "Env",
-    "FoldEnv",
-    "FoldState",
     "InMemoryWorkspace",
     "NullWorkspace",
     "PackedSequence",
-    "PromptTokens",
     "RolloutState",
     "RoundBudget",
     "Agent",
     "Execution",
     "SUBMIT",
-    "StateCounter",
     "StepResult",
     "StorageTool",
     "SubmitFields",
@@ -88,12 +62,10 @@ __all__ = [
     "Tool",
     "ToolEnv",
     "ToolError",
-    "Trigger",
     "Turn",
     "TurnTag",
     "Workspace",
     "WorkspaceError",
-    "build_budget",
     "dispatch",
     "tool",
     "FunctionTool",

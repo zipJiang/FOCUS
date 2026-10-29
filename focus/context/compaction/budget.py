@@ -10,12 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from focus.harness.compaction.agentic import Summarize
-from focus.harness.triggers import (
-    AnyOf,
-    PromptTokens,
-    StateCounter,
-)
+from focus.context.compaction.agentic import Summarize
+from focus.context.triggers import AnyOf, PromptTokens, StateCounter
 
 
 def build_budget(

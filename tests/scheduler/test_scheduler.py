@@ -7,15 +7,8 @@ from typing import Any
 
 import pytest
 
-from focus.harness import (
-    Agent,
-    Compaction,
-    CompactionResult,
-    ContextManager,
-    Env,
-    RolloutState,
-    StepResult,
-)
+from focus.context import Compaction, CompactionResult, ContextManager
+from focus.harness import Agent, Env, RolloutState, StepResult
 from focus.scheduler import (
     AllocationSession,
     Budget,

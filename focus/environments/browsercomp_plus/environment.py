@@ -9,23 +9,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
+from focus.context import AnyOf, PromptTokens, StateCounter, Summarize
+from focus.context.base import AppendOnly
+from focus.context.compaction.agentic import DEFAULT_INSTRUCTION
 from focus.generation import Policy, SamplingParams
 from focus.generation.parsing import ToolTurn
-from focus.harness import (
-    Agent,
-    AnyOf,
-    NullWorkspace,
-    PromptTokens,
-    RoundBudget,
-    StateCounter,
-    SubmitFields,
-    Summarize,
-    ToolEnv,
-)
-from focus.harness.compaction.agentic import DEFAULT_INSTRUCTION
-from focus.harness.context import (
-    AppendOnly,
-)
+from focus.harness import Agent, NullWorkspace, RoundBudget, SubmitFields, ToolEnv
 from focus.harness.env import StepResult
 from focus.harness.tools.dispatch import tool_reply
 

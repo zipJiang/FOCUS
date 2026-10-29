@@ -18,10 +18,11 @@ from typing import Any
 
 from focus.allocation.evidence import RolloutLedger
 from focus.critic import Critic
+from focus.estimation import DirectBranchTd, Estimator
 from focus.execution import Usage
 from focus.harness import Agent, AnyRollout, RolloutState
 from focus.harness.workspace import Workspace
-from focus.preparation import Batch, DirectBranchTd, Estimator, prepare_samples
+from focus.preparation import Batch, prepare_samples
 from focus.scheduler.core.critic import NodeScorer
 from focus.scheduler.core.gating import ConcurrencyGating
 from focus.scheduler.core.tree import (

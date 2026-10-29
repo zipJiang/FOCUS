@@ -13,6 +13,7 @@ import pytest
 from focus import Collector, DirectBranchTd, ErrorReduction, Fifo, Phase, Search
 from focus.allocation import Observations
 from focus.codec import ChatCodec
+from focus.context import Compaction, CompactionResult, ContextManager
 from focus.critic import Critic
 from focus.export import to_samples
 from focus.extend import NodeInfo, Priority
@@ -23,15 +24,7 @@ from focus.generation import (
     SamplingParams,
 )
 from focus.generation.parsing import TextActionParser
-from focus.harness import (
-    Agent,
-    Compaction,
-    CompactionResult,
-    ContextManager,
-    Env,
-    StepResult,
-    Workspace,
-)
+from focus.harness import Agent, Env, StepResult, Workspace
 from focus.harness.agent import Execution
 from focus.preparation import prepare_samples
 from focus.preparation.records import Batch

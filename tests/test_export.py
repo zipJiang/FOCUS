@@ -11,9 +11,10 @@ from typing import Any
 
 import pytest
 
+from focus.estimation import Advantage
 from focus.export import format_edges, format_tree, to_samples
 from focus.harness import PackedSequence, TurnTag
-from focus.preparation import Advantage, prepare_samples
+from focus.preparation import prepare_samples
 from focus.preparation.records import (
     ESTIMATOR_KEY,
     LANE_KEY,

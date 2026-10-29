@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 
+from focus.context.base import AppendOnly
 from focus.generation import SamplingParams
 from focus.harness import (
     Agent,
@@ -15,7 +16,6 @@ from focus.harness import (
     TurnTag,
 )
 from focus.harness.agent import Execution
-from focus.harness.context import AppendOnly
 from focus.scheduler import (
     PASS_KEY,
     Budget,

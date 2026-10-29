@@ -36,7 +36,7 @@ class RoundBudget:
     Mixing this in supplies the fields and, with them, the decrement:
     :meth:`~focus.harness.tools.environment.ToolEnv.on_tool_calls` charges
     ``calls_remaining`` one per dispatched call when the state carries it, and
-    :meth:`~focus.harness.compaction.triggers.StateCounter.relieve` refills it
+    :meth:`~focus.context.compaction.triggers.StateCounter.relieve` refills it
     from ``calls_max`` at each fold. A task that wants different field names keeps
     naming them to ``StateCounter`` and does its own charging, exactly as before.
 

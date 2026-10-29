@@ -38,6 +38,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
+from focus.context import PromptTokens, Summarize
+from focus.context.base import AppendOnly
+from focus.context.compaction import DEFAULT_INSTRUCTION
 from focus.environments.toolkit import (
     Corpus,
     GrepTool,
@@ -54,16 +57,12 @@ from focus.harness import (
     Agent,
     InMemoryWorkspace,
     NullWorkspace,
-    PromptTokens,
     RoundBudget,
     SubmitFields,
-    Summarize,
     Tool,
     ToolEnv,
     Workspace,
 )
-from focus.harness.compaction import DEFAULT_INSTRUCTION
-from focus.harness.context import AppendOnly
 from focus.harness.tools.submission import submission_payload, submitted_call
 
 # -- the case ------------------------------------------------------------------------

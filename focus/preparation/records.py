@@ -42,7 +42,7 @@ class ActorSample:
     """One edge the actor may train on, under the weight its estimator wrote.
 
     One scalar reaches the loss, and the estimator's
-    :meth:`~focus.preparation.base.Estimator.advantages` supplies it. Export
+    :meth:`~focus.estimation.base.Estimator.advantages` supplies it. Export
     composes nothing out of parts -- a confidence times an advantage would make every
     recipe declare a factor it may have no opinion about and put an arithmetic step
     between what an estimator

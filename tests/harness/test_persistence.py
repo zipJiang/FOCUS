@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import pytest
 
+from focus.context.base import AppendOnly
 from focus.execution.budget import ResourceBudget
 from focus.generation.parsing import HermesToolCallParser
 from focus.harness import (
@@ -16,7 +17,6 @@ from focus.harness import (
     SQLiteCheckpointer,
     regions,
 )
-from focus.harness.context import AppendOnly
 from tests.harness.test_runner import QuietMemory, ToyCompactor
 from tests.helpers import ScriptedGenerator, ToyEnv, tool_call, toy_runner
 from tests.protocols.helpers import KeepRecent
@@ -275,7 +275,7 @@ async def test_summary_failure_retries_whole_fold_without_partial_workspace(auto
 
 
 async def test_continuation_horizon_survives_crash_and_restore():
-    from focus.harness.checkpoint import EveryDecision
+    from focus.branching import EveryDecision
 
     store = MemoryCheckpointer()
     runner = toy_runner(

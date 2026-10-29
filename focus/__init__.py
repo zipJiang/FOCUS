@@ -8,21 +8,13 @@ prompt -- continuing the checkpoints its :class:`Search` ranks highest, scored b
 """
 
 from focus.collector import Collector, Tree
+from focus.context import AppendOnly, Segments, Summarize
 from focus.critic import Critic
-from focus.harness import (
-    Agent,
-    AppendOnly,
-    Env,
-    Execution,
-    Segments,
-    StepResult,
-    Summarize,
-    ToolEnv,
-    ToolError,
-    tool,
-)
-from focus.preparation import ActorSample, Batch, CriticSample, DirectBranchTd, Grpo
-from focus.search import ErrorReduction, Fifo, Phase, Search, Selective, TokenEntropy
+from focus.estimation import DirectBranchTd, Grpo
+from focus.harness import Agent, Env, Execution, StepResult, ToolEnv, ToolError, tool
+from focus.preparation import ActorSample, Batch, CriticSample
+from focus.priority import ErrorReduction, Fifo, TokenEntropy
+from focus.search import Phase, Search, Selective
 from focus.values import RewardConfig
 
 # Grouped in the order the documentation introduces them.

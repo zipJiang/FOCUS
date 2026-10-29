@@ -6,6 +6,20 @@ from typing import Any
 import pytest
 
 from focus.codec import ChatCodec, Message
+from focus.context import (
+    AnyOf,
+    Compaction,
+    CompactionResult,
+    ContextManager,
+    FoldEnv,
+    FoldState,
+    PromptTokens,
+    StateCounter,
+    Summarize,
+    build_budget,
+)
+from focus.context.compaction.agentic import _EMPTY_KEPT
+from focus.context.compaction.fold_env import STORE_FIRST
 from focus.generation import GenerateResult
 from focus.generation.parsing import (
     ActionParser,
@@ -15,28 +29,16 @@ from focus.generation.parsing import (
 )
 from focus.harness import (
     Agent,
-    AnyOf,
     BaseTool,
-    Compaction,
-    CompactionResult,
-    ContextManager,
-    FoldEnv,
-    FoldState,
     InMemoryWorkspace,
     NullWorkspace,
-    PromptTokens,
     RoundBudget,
-    StateCounter,
     StorageTool,
     SubmitFields,
-    Summarize,
     ToolEnv,
     Workspace,
-    build_budget,
     regions,
 )
-from focus.harness.compaction.agentic import _EMPTY_KEPT
-from focus.harness.compaction.fold_env import STORE_FIRST
 from focus.harness.workspace.null import _FOLDED_GUIDANCE
 from tests.helpers import (
     FakeChatTokenizer,
