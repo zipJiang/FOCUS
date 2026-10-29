@@ -1,43 +1,27 @@
 # FOCUS: Active Critic Learning for Long-Horizon Language Model Agents
 
-FOCUS uses critic predictions and observed outcomes to choose where additional
-rollouts can improve value estimates. It branches from reusable agent states,
-refines values from the resulting rollout tree, and prepares actor and critic
-training samples.
+[Paper](https://arxiv.org/abs/2610.35801) · [Documentation](https://zipJiang.github.io/FOCUS/)
 
-This repository contains the Python library, benchmark environments, tests,
-packaging metadata, and CI.
+## Abstract
 
-## Documentation
+Sparse outcome rewards make it difficult for long-horizon language-model agents to assign credit to earlier actions. Learned critics provide value estimates for intermediate states, but these estimates can be inaccurate, while estimating intermediate values with repetitive continuation samples from points within a trajectory incurs substantial costs. To mitigate these issues, we introduce FOCUS, an RL method that uses selective branching to help the critic network learn its value estimator. The rollout controller facilitates active learning for the critic by sampling continuations from states that are expected to most reduce the critic's estimation error. These refined value estimates then score the segment between consecutive states with a TD($\lambda$) advantage, while the sampled evidence supplies training targets for the critic. FOCUS supports long-horizon agentic reinforcement learning through a modular context-management interface that decouples context management from rollout allocation. Our experiments show that using compaction-induced segment boundaries for value estimation and credit assignment, FOCUS outperforms GRPO and VinePPO with matched per-step generation budgets on legal reasoning, deep search, and code localization benchmarks, improving held-out accuracy at Qwen3.5-9B scale by 7.2 points over the strongest baseline on BrowseComp-Plus (55.4 vs. 48.2) and by 4.1 points on DeonticBench (56.5 vs. 52.4).
 
-The Astro + Starlight website is the single source for installation instructions,
-API reference, and task tutorials. Its source and runnable examples live in the
-companion `focus-publishing` workspace under `docs/`.
+## Pipeline
 
-To preview the website from that workspace:
+![FOCUS expands a rollout tree, scores saved states with the critic, estimates the benefit of another continuation, and branches from the selected state.](assets/focus-system.svg)
 
-```bash
-cd docs
-npm ci
-npm run dev
+## Citation
+
+```bibtex
+@misc{jiang2026focus,
+  title = {{FOCUS}: Active Critic Learning for
+           Long-Horizon Language Model Agents},
+  author = {Jiang, Zhengping and Jurayj, William and Wang, Liaoyaqi and
+            Zuo, Chunsheng and Liu, Anqi and Van Durme, Benjamin},
+  year = {2026},
+  eprint = {2610.35801},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG},
+  url = {https://arxiv.org/abs/2610.35801}
+}
 ```
-
-## Development
-
-FOCUS requires Python 3.12 or newer.
-
-```bash
-uv sync --group dev
-uv run ruff format --check
-uv run ruff check
-uv run mypy
-uv run pytest -q
-uv build
-```
-
-Qwen thinking and training provenance are a required compatibility contract.
-Run it independently with `uv run pytest -q tests/test_qwen_compatibility.py`.
-CI runs this offline suite on every push (including tags), pull request, and
-published release. The distribution build depends on it passing. Its frozen
-reference comes from the verified historical harness; failures require fixing
-the regression rather than regenerating expected output from current code.
