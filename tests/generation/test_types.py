@@ -99,3 +99,51 @@ def test_a_merged_result_never_carries_an_unset_knob() -> None:
     )
 
     assert (merged.temperature, merged.max_tokens, merged.top_p) == (0.7, 512, 1.0)
+
+
+@pytest.mark.parametrize(
+    "override", [None, SamplingParams(temperature=None, max_tokens=64, top_p=None)]
+)
+def test_sampling_resolution_preserves_optional_fields(override) -> None:
+    defaults = SamplingParams(
+        temperature=0.0,
+        max_tokens=128,
+        top_p=0.0,
+        top_k=12,
+        stop=["END"],
+        logprobs=0,
+        prompt_logprobs=3,
+        repetition_penalty=1.1,
+        seed=0,
+    )
+    merged = merge_sampling_params(defaults, override)
+
+    assert merged == SamplingParams(
+        temperature=0.0,
+        max_tokens=128 if override is None else 64,
+        top_p=0.0,
+        top_k=12,
+        stop=["END"],
+        logprobs=0,
+        prompt_logprobs=3,
+        repetition_penalty=1.1,
+        seed=0,
+    )
+    assert defaults.max_tokens == 128
+
+
+def test_sampling_overrides_keep_empty_and_zero_values() -> None:
+    defaults = SamplingParams(stop=["END"], top_k=12, logprobs=3, seed=9)
+    override = SamplingParams(
+        temperature=0.0,
+        max_tokens=8,
+        top_p=0.0,
+        top_k=-1,
+        stop=[],
+        logprobs=0,
+        prompt_logprobs=0,
+        repetition_penalty=1.0,
+        seed=0,
+    )
+    assert merge_sampling_params(defaults, override) == override
+    assert defaults.stop == ["END"]

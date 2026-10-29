@@ -20,7 +20,6 @@ from focus.generation.interfaces import (
     finite_logprobs,
     prepare_generation,
     run_async,
-    settled_knobs,
 )
 from focus.generation.policy import (
     Policy,
@@ -193,18 +192,19 @@ class VLLMPolicy(Policy[Any]):
         prefix_tokens: tuple[TokenId, ...],
         params: SamplingParams,
     ) -> dict[str, Any]:
-        # The three blankable knobs, read through the typed face of the settle rule --
-        # never off the fields, where `| None` invites re-spelled defaults per backend.
-        raw_temperature, raw_max_tokens, raw_top_p = settled_knobs(params)
+        # prepare_generation has resolved the required sampling fields.
+        assert params.temperature is not None
+        assert params.max_tokens is not None
+        assert params.top_p is not None
         kwargs: dict[str, Any] = {
             "model": model,
             "prompt": list(prefix_tokens),
-            "max_tokens": _checked("max_tokens", int(raw_max_tokens)),
+            "max_tokens": _checked("max_tokens", int(params.max_tokens)),
         }
-        temperature = _checked("temperature", float(raw_temperature))
+        temperature = _checked("temperature", float(params.temperature))
         if temperature != _DEFAULT_SAMPLING.temperature:
             kwargs["temperature"] = temperature
-        top_p = _checked("top_p", float(raw_top_p))
+        top_p = _checked("top_p", float(params.top_p))
         if top_p != _DEFAULT_SAMPLING.top_p:
             kwargs["top_p"] = top_p
         stop = _normalize_stop(params.stop)

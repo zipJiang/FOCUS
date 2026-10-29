@@ -11,7 +11,6 @@ from focus.generation.interfaces import (
     normalize_stop_reason,
     prepare_generation,
     run_async,
-    settled_knobs,
 )
 from focus.generation.policy import (
     Policy,
@@ -39,11 +38,10 @@ def _generate_url(base_url: str) -> str:
 
 
 def _sglang_sampling_params(params: SamplingParams) -> dict[str, Any]:
-    temperature, max_tokens, top_p = settled_knobs(params)
     kwargs: dict[str, Any] = {
-        "max_new_tokens": max_tokens,
-        "temperature": temperature,
-        "top_p": top_p,
+        "max_new_tokens": params.max_tokens,
+        "temperature": params.temperature,
+        "top_p": params.top_p,
     }
     if params.top_k is not None:
         kwargs["top_k"] = params.top_k
@@ -311,11 +309,10 @@ class SGLangPolicy(Policy[Any]):
         prefix: tuple[TokenId, ...],
         params: SamplingParams,
     ) -> RuntimeError:
-        _, max_tokens, _ = settled_knobs(params)
         return RuntimeError(
             "SGLang /generate request failed "
             + f"for {self.url!r}: {type(exc).__name__}: {exc}; "
-            + f"prompt_tokens={len(prefix)}, max_tokens={max_tokens}"
+            + f"prompt_tokens={len(prefix)}, max_tokens={params.max_tokens}"
         )
 
     def close(self) -> None:

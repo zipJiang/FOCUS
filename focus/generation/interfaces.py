@@ -46,39 +46,20 @@ def merge_sampling_params(
     default_params: SamplingParams,
     sampling_params: SamplingParams | None,
 ) -> SamplingParams:
-    """Overlay each non-``None`` per-call param onto ``default_params``.
+    """Merge request overrides and return the complete resolved settings.
 
-    Shared by every backend generator: a call with no per-call params keeps the
-    defaults, otherwise any set field (``stop`` included) overrides. ``None`` is
-    therefore how an overlay says *not this field* -- which is the only way to overlay
-    one knob (a fold's ``max_tokens``) without also pinning the sampling law to
-    :class:`SamplingParams`' own defaults.
-
-    What comes back is settled rather than partial: the three always-set knobs are
-    filled from the constants they default to when neither side named one, so a backend
-    reads a temperature and a token budget off any merged result and never has to ask
-    whether the number it was given means "unset".
+    Each non-None request field overrides the corresponding default. Temperature,
+    max_tokens, and top_p receive library defaults if neither input sets them.
+    Other unset fields remain None for the backend to handle.
     """
-    if sampling_params is None:
-        return settled(default_params)
-    updates = {
-        name: value
-        for name in _SAMPLING_FIELD_NAMES
-        if (value := getattr(sampling_params, name)) is not None
-    }
-    return settled(replace(default_params, **updates))
-
-
-def settled(params: SamplingParams) -> SamplingParams:
-    """``params`` with the three overlay-blankable knobs resolved to real numbers.
-
-    The one boundary between the two modes a :class:`SamplingParams` can be in --
-    *overlay* (``None`` legal, meaning "not this field") and *settled* (every knob a
-    number). Everything a backend receives has passed through here via
-    :func:`merge_sampling_params`. The early return is for identity, not speed: the
-    common case is already settled, and handing back the same object keeps "merge then
-    read" from allocating a copy per generate call.
-    """
+    params = default_params
+    if sampling_params is not None:
+        updates = {
+            name: value
+            for name in _SAMPLING_FIELD_NAMES
+            if (value := getattr(sampling_params, name)) is not None
+        }
+        params = replace(default_params, **updates)
     if (
         params.temperature is not None
         and params.max_tokens is not None
@@ -95,22 +76,6 @@ def settled(params: SamplingParams) -> SamplingParams:
         ),
         top_p=DEFAULT_TOP_P if params.top_p is None else params.top_p,
     )
-
-
-def settled_knobs(params: SamplingParams) -> tuple[float, int, float]:
-    """``(temperature, max_tokens, top_p)`` as the numbers a backend sends on the wire.
-
-    The typed face of :func:`settled`: mypy cannot see that a merged
-    :class:`SamplingParams` carries no ``None``, so a backend reading the fields
-    directly must either assert three times or respell the defaults -- the duplication
-    that produced an ``or``-fallback quietly treating ``0`` as unset. Read the knobs
-    through this instead; the ``| None`` never escapes.
-    """
-    resolved = settled(params)
-    assert resolved.temperature is not None  # settled: narrowing, not runtime
-    assert resolved.max_tokens is not None
-    assert resolved.top_p is not None
-    return resolved.temperature, resolved.max_tokens, resolved.top_p
 
 
 def prepare_generation(
