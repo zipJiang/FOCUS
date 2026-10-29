@@ -77,7 +77,7 @@ class Collector:
         self.own = own
 
     async def __aenter__(self) -> Collector:
-        await self.agent.services.astart()
+        await self.agent.__aenter__()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -86,7 +86,7 @@ class Collector:
 
     async def aclose(self) -> None:
         """Close the agent's execution services."""
-        await self.agent.services.aclose()
+        await self.agent.aclose()
 
     async def collect(
         self, prompt: str | AnyRollout, *, workspace: Workspace | None = None

@@ -194,6 +194,11 @@ class Agent[S, A]:
     ``execution`` groups services, persistence, retries, resource budgets, and the
     generation timeout. Subclass _advance, _compact, or _finish to keep custom behavior
     within the commit/retry boundary.
+
+    ``async with agent`` starts its execution services and closes them on exit,
+    including when the block fails or is cancelled. Policy clients belong to the
+    caller. When agents share services, use one outer lifecycle scope for all of
+    them; derived agents run within that scope.
     """
 
     def __init__(
@@ -250,6 +255,22 @@ class Agent[S, A]:
         names = [tool["function"]["name"] for tool in self._tools]
         if len(names) != len(set(names)):
             raise ValueError("context and task tool names collide")
+
+    async def __aenter__(self) -> Agent[S, A]:
+        await self.services.astart()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        """Cancel and await outstanding requests, then leave services closed.
+
+        This closes the shared execution services, not the policy client or
+        checkpoint storage. Call only after all agents using these services have
+        finished, or when deliberately cancelling their remaining work.
+        """
+        await self.services.aclose()
 
     @property
     def services(self) -> ExecutionServices:
