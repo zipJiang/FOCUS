@@ -40,7 +40,7 @@ class TextCodec(Protocol):
     def decode(self, tokens: Sequence[int]) -> str: ...
 
 
-def decode_text(
+def _decode_text(
     codec: TextCodec, ids: Sequence[int], *, skip_special_tokens: bool = False
 ) -> str:
     """Decode ids, passing ``skip_special_tokens`` only to codecs accepting it (HF)."""
@@ -52,7 +52,7 @@ def decode_text(
         return codec.decode(list(ids))
 
 
-def encode_text(codec: TextCodec, text: str) -> list[int]:
+def _encode_text(codec: TextCodec, text: str) -> list[int]:
     """Encode text, tolerating special-token strings (``tiktoken`` raises otherwise)."""
     try:
         return list(codec.encode(text, disallowed_special=()))  # type: ignore[call-arg]
@@ -159,11 +159,4 @@ class ChatCodec:
         )
 
 
-__all__ = [
-    "ChatCodec",
-    "HFTokenizer",
-    "Message",
-    "TextCodec",
-    "decode_text",
-    "encode_text",
-]
+__all__ = ["ChatCodec", "HFTokenizer", "Message", "TextCodec"]

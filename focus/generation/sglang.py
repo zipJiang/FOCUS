@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from focus.generation.interfaces import (
+from focus.generation._common import (
     close_client,
     normalize_stop_reason,
     prepare_generation,

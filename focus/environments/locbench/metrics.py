@@ -107,3 +107,6 @@ def aggregate(records: Iterable[dict[str, float | None]]) -> dict[str, Any]:
         for key in keys
     }
     return {"cases": len(rows), "means": means, "eligible_cases": counts}
+
+
+__all__ = ["Gold", "aggregate", "score"]

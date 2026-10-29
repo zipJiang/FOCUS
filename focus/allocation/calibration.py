@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 
-from focus.statistics import RunningStats, refined_mean
+from focus.statistics import RunningStats, _refined_mean
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class BetaBernoulli(CalibrationModel):
         alpha = kappa * v + wins
         beta = kappa * (1.0 - v) + (stats.n - wins)
         total = alpha + beta  # == kappa + stats.n, so > 0 whenever kappa > 0
-        mu = refined_mean(
+        mu = _refined_mean(
             v, RunningStats(n=stats.n, mean=min(1.0, max(0.0, stats.mean))), kappa
         )
         # E[(v - p)^2] = (v - E p)^2 + Var(p), with Var(p) = mu(1-mu)/(total+1).
@@ -156,7 +156,7 @@ class Gaussian(CalibrationModel):
         self, value: float, stats: RunningStats, kappa: float
     ) -> tuple[float, float]:
         sigma2 = max(stats.variance, self.var_floor) if stats.n >= 2 else self.v_prior
-        mu = refined_mean(value, stats, kappa)
+        mu = _refined_mean(value, stats, kappa)
         e2 = (value - mu) ** 2 + sigma2 / (kappa + stats.n)
         # Predictive: the draw's own spread plus the spread of the mean it is drawn
         # around, `sigma2/(kappa + n)` -- the same posterior variance that sits in `e2`.

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from focus.codec import HFTokenizer
-from focus.generation.interfaces import (
+from focus.generation._common import (
     close_client,
     finite_logprobs,
     normalize_stop_reason,

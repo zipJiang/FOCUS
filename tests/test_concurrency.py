@@ -36,7 +36,6 @@ import pytest
 from focus import Collector, Fifo, Phase, Search
 from focus.allocation import Observations, RolloutLedger
 from focus.codec import ChatCodec
-from focus.context import build_budget
 from focus.critic import Critic
 from focus.export import to_samples
 from focus.extend import NodeInfo, Priority
@@ -66,6 +65,7 @@ from focus.scheduler import (
 from focus.values import RewardConfig
 from tests.estimators import FixedWeight
 from tests.helpers import FakeChatTokenizer, prepared
+from tests.helpers import budget_context as build_budget
 
 #: Ten interleavings per scenario. Each is a whole run of the loop under test, so the
 #: count is a trade against the module's own budget (< 3s); ten has been enough to
@@ -576,7 +576,7 @@ class RoundEnv(Env[Round, ToolTurn]):
 
     Over :class:`ToolTurn` rather than plain text because the fold is a rollout through
     the *same* parser: an agentic compactor drives a
-    :class:`~focus.context.compaction.fold_env.FoldEnv`, which reads tool
+    :class:`~focus.context.compaction._env.FoldEnv`, which reads tool
     calls off the turn, so a text parser here would fail inside the first fold.
     """
 

@@ -9,8 +9,8 @@ from focus.codec import (
     ChatCodec,
     Message,
     TextCodec,
-    decode_text,
-    encode_text,
+    _decode_text,
+    _encode_text,
 )
 
 
@@ -27,7 +27,7 @@ class ByteCodec:
 
 
 class StrictByteCodec(ByteCodec):
-    """Rejects the optional kwargs, exercising the encode_text/decode_text fallback."""
+    """Reject optional keyword arguments to exercise codec fallbacks."""
 
     def encode(self, text: str) -> list[int]:  # type: ignore[override]
         return list(text.encode("utf-8"))
@@ -42,9 +42,9 @@ def test_bytecodec_satisfies_the_textcodec_protocol() -> None:
 
 def test_encode_text_round_trips_and_tolerates_kwargs() -> None:
     for codec in (ByteCodec(), StrictByteCodec()):
-        ids = encode_text(codec, "hi")
+        ids = _encode_text(codec, "hi")
         assert ids == list(b"hi")
-        assert decode_text(codec, ids, skip_special_tokens=True) == "hi"
+        assert _decode_text(codec, ids, skip_special_tokens=True) == "hi"
 
 
 class FakeChatTokenizer:

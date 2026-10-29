@@ -10,14 +10,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from focus.codec import Message, encode_text
+from focus.codec import Message, _encode_text
+from focus.generation._common import (
+    merge_sampling_params,
+    normalize_stop_reason,
+)
 from focus.generation._openai_shared import (
     NativePolicy,
     _request_error,
-)
-from focus.generation.interfaces import (
-    merge_sampling_params,
-    normalize_stop_reason,
 )
 from focus.generation.policy import (
     PolicyFormat,
@@ -174,7 +174,7 @@ class OpenAIResponsesPolicy(NativePolicy):
                 texts.append(_message_text(item))
         text = "".join(texts)
         return GenerateResult(
-            tokens=tuple(encode_text(self._codec, text)),
+            tokens=tuple(_encode_text(self._codec, text)),
             prefix_tokens=prefix_tuple,
             text=text,
             stop_reason=_stop_reason(response),

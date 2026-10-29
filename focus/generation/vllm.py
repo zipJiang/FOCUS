@@ -8,18 +8,18 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from focus.generation._openai_shared import (
-    _import_async_openai,
-    _import_openai,
-    _request_error,
-    _startup_error,
-)
-from focus.generation.interfaces import (
+from focus.generation._common import (
     aclose_client,
     close_client,
     finite_logprobs,
     prepare_generation,
     run_async,
+)
+from focus.generation._openai_shared import (
+    _import_async_openai,
+    _import_openai,
+    _request_error,
+    _startup_error,
 )
 from focus.generation.policy import (
     Policy,

@@ -108,3 +108,6 @@ def load_cases(path: Path) -> list[Case]:
     if len({case.id for case in cases}) != len(cases):
         raise ValueError("duplicate instance_id in dataset")
     return cases
+
+
+__all__ = ["Case", "load_cases"]

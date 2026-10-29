@@ -67,16 +67,16 @@ def native_format(codec: Any) -> PolicyFormat[Any]:
 
     class EstimateTokenizer(FakeChatTokenizer):
         def encode(self, text: str, *, add_special_tokens: bool = True) -> list[int]:
-            from focus.codec import encode_text
+            from focus.codec import _encode_text
 
-            return list(encode_text(codec, text))
+            return list(_encode_text(codec, text))
 
         def decode(
             self, token_ids: Sequence[int], *, skip_special_tokens: bool = False
         ) -> str:
-            from focus.codec import decode_text
+            from focus.codec import _decode_text
 
-            return decode_text(codec, token_ids)
+            return _decode_text(codec, token_ids)
 
         def encode_single_token(self, raw: bytes) -> int:
             if not hasattr(codec, "encode_single_token"):
@@ -532,4 +532,22 @@ async def prepared(prompt: Any, collector: Any, *, estimator: Any = None) -> Any
     tree = await collector.search(prompt)
     return collector.prepare(
         tree, estimator=estimator if estimator is not None else DirectBranchTd()
+    )
+
+
+def budget_context(
+    *,
+    remaining: str = "calls_remaining",
+    maximum: str = "calls_max",
+    max_prompt_tokens: int = 8192,
+    **kwargs: Any,
+) -> Any:
+    """Compose the token and task-counter triggers used by budget tests."""
+    from focus.context import AnyOf, PromptTokens, StateCounter, Summarize
+
+    return Summarize(
+        trigger=AnyOf(
+            PromptTokens(max_prompt_tokens), StateCounter(remaining, maximum)
+        ),
+        **kwargs,
     )

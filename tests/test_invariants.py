@@ -38,7 +38,7 @@ from focus.harness import (
 from focus.harness.packing import PackedSequence
 from focus.harness.turn import logprob, trainable_logprobs
 from focus.preparation import prepare_samples
-from focus.preparation.records import spans_of
+from focus.preparation.records import _spans_of
 from focus.scheduler import SchedulerState, SchedulerView
 from focus.values import RewardConfig
 from tests.estimators import FixedWeight, RootReturn
@@ -635,7 +635,7 @@ def test_a_record_is_the_regions_of_its_edge_and_the_return_over_it(
             assert node.parent_id is not None
             parent = state.nodes[node.parent_id]
             edge = node.payload.edge(parent.payload)
-            assert record.spans == spans_of(edge), case
+            assert record.spans == _spans_of(edge), case
             assert record.edge_tokens == len(_generated(edge)), case
 
         expanded = {

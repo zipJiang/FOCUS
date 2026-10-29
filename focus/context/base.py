@@ -481,19 +481,13 @@ class ContextTools(ContextManager[Any]):
         )
 
 
-def schema(
-    name: str, description: str, properties: dict[str, Any], required: list[str]
-) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-                "additionalProperties": False,
-            },
-        },
-    }
+__all__ = [
+    "AppendOnly",
+    "Compaction",
+    "CompactionResult",
+    "ContextError",
+    "ContextManager",
+    "ContextTools",
+    "IncompleteCompactionError",
+    "Segments",
+]

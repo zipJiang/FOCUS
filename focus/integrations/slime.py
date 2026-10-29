@@ -59,7 +59,7 @@ def _tokenizer(checkpoint: str) -> Any:
     return AutoTokenizer.from_pretrained(checkpoint)
 
 
-def policy_for(args: Any, *, profile: str | None = None) -> SlimePolicy:
+def _policy_for(args: Any, *, profile: str | None = None) -> SlimePolicy:
     """The policy Slime's router serves: ``args.hf_checkpoint`` behind its URL."""
     from slime.utils.http_utils import post
 
@@ -71,7 +71,7 @@ def policy_for(args: Any, *, profile: str | None = None) -> SlimePolicy:
     return SlimePolicy(post, url, model=checkpoint, format=format)
 
 
-def problem_of(sample: Any) -> Problem:
+def _problem_of(sample: Any) -> Problem:
     """A Slime sample as a :class:`Problem`: its prompt, label, index, and metadata."""
     return Problem(
         prompt=sample.prompt,
@@ -142,8 +142,8 @@ def make_generate(
         from slime.utils.types import Sample
 
         del sampling_params
-        policy = policy_for(args, profile=profile)
-        problem = problem_of(sample)
+        policy = _policy_for(args, profile=profile)
+        problem = _problem_of(sample)
         actor, critic = await collect_records(
             collector_for(policy, problem),
             problem,
@@ -179,8 +179,8 @@ def make_evaluate(
         from slime.utils.types import Sample
 
         del sampling_params
-        policy = policy_for(args, profile=profile)
-        problem = problem_of(sample)
+        policy = _policy_for(args, profile=profile)
+        problem = _problem_of(sample)
         collector = collector_for(policy, problem)
         workspace = None if workspace_for is None else workspace_for(problem)
         async with collector:
@@ -268,9 +268,7 @@ __all__ = [
     "advantages",
     "make_evaluate",
     "make_generate",
-    "policy_for",
     "preserve_advantages",
-    "problem_of",
     "sum_policy_tokens",
     "to_sample",
 ]

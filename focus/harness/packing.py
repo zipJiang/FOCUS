@@ -22,8 +22,8 @@ A turn is *in* a pack whatever it holds. A turn with an empty prefix and an empt
 completion -- nothing conditioned on, nothing generated -- still gets a span, and if it
 is alone in its pack that pack has no tokens at all. The alternative, dropping such a
 turn, would make ``spans`` stop indexing the turn log. A zero-token pack costs nothing
-to carry and nothing reads it (:func:`~focus.export.spans_of` keeps only packs that hold
-tokens), so the emptiness stays where it came from instead of turning into a gap.
+to carry and nothing reads it (training preparation keeps only packs with tokens).
+The empty pack preserves the position of its turn.
 
 The agent produces exactly one such turn, and on purpose: the marker a silent fold
 leaves (:meth:`~focus.harness.agent.Agent._fold`), which is how a fold that

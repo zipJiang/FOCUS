@@ -30,3 +30,6 @@ class ResourceBudget:
                     raise CapacityError(f"rollout {name} budget exhausted")
                 updated[name] = remaining - cost
         return replace(self, **updated)
+
+
+__all__ = ["ResourceBudget"]

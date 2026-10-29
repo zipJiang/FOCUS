@@ -11,15 +11,15 @@ from typing import Any
 
 from focus.codec import (
     Message,
-    encode_text,
+    _encode_text,
+)
+from focus.generation._common import (
+    merge_sampling_params,
+    normalize_stop_reason,
 )
 from focus.generation._openai_shared import (
     NativePolicy,
     _request_error,
-)
-from focus.generation.interfaces import (
-    merge_sampling_params,
-    normalize_stop_reason,
 )
 from focus.generation.policy import (
     PolicyFormat,
@@ -180,7 +180,7 @@ class OpenAIChatPolicy(NativePolicy):
         if not entries:
             # No per-token logprobs to align to: re-encode the whole completion and
             # leave logprobs empty (an empty list skips the alignment check).
-            return tuple(encode_text(self._codec, content)), []
+            return tuple(_encode_text(self._codec, content)), []
 
         tokens: list[TokenId] = []
         logprobs: list[float] = []
@@ -208,7 +208,7 @@ class OpenAIChatPolicy(NativePolicy):
                 return [self._encode_single(bytes(raw_bytes))]
             except (KeyError, ValueError):
                 pass
-        return encode_text(self._codec, getattr(entry, "token", "") or "")
+        return _encode_text(self._codec, getattr(entry, "token", "") or "")
 
 
 __all__ = [

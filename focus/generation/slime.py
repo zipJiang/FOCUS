@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
-from focus.generation.interfaces import prepare_generation
+from focus.generation._common import prepare_generation
 from focus.generation.policy import Policy, PolicyFormat
 from focus.generation.sglang import (
     _parse_sglang_output,

@@ -2,7 +2,7 @@ import pytest
 
 from focus.context import Summarize
 from focus.context.base import IncompleteCompactionError
-from focus.context.compaction.summary import parse_summary
+from focus.context.compaction._summary import parse_summary
 from focus.harness import NullWorkspace
 from tests.harness.test_compaction import _compaction
 from tests.helpers import ScriptedGenerator

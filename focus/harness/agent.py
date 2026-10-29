@@ -36,10 +36,10 @@ from focus.generation import (
     SamplingParams,
     TokenId,
 )
-from focus.generation.continuation import TokenChunkParser
-from focus.generation.interfaces import (
+from focus.generation._common import (
     merge_sampling_params,
 )
+from focus.generation.continuation import TokenChunkParser
 from focus.generation.parsing.base import ActionParser, TextActionParser
 from focus.generation.policy import Policy, PreparedPrompt
 from focus.harness.env import Env, StepResult

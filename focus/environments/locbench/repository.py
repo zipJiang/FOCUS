@@ -266,3 +266,6 @@ class Repository:
             if total > max_hits
             else "",
         }
+
+
+__all__ = ["Entry", "Repository"]

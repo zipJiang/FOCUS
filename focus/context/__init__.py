@@ -10,7 +10,7 @@ from focus.context.base import (
     IncompleteCompactionError,
     Segments,
 )
-from focus.context.compaction import FoldEnv, FoldState, Summarize, build_budget
+from focus.context.compaction import Summarize
 from focus.context.triggers import AnyOf, PromptTokens, StateCounter, Trigger
 
 __all__ = [
@@ -27,7 +27,4 @@ __all__ = [
     "AnyOf",
     "PromptTokens",
     "StateCounter",
-    "FoldEnv",
-    "FoldState",
-    "build_budget",
 ]

@@ -1,6 +1,6 @@
 import pytest
 
-from focus.generation.interfaces import finite_logprobs
+from focus.generation._common import finite_logprobs
 from focus.harness import Turn
 from focus.harness.packing import regions
 from focus.harness.turn import logprob

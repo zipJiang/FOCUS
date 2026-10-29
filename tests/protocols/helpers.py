@@ -3,7 +3,7 @@
 from dataclasses import replace
 from typing import Any
 
-from focus.context.base import ContextError, ContextTools, schema
+from focus.context.base import ContextError, ContextTools
 from focus.harness.agent import Agent
 from focus.harness.rollout import AnyRollout
 
@@ -39,3 +39,21 @@ class KeepRecent(ContextTools):
             "Retained.",
             "context",
         )
+
+
+def schema(
+    name: str, description: str, properties: dict[str, Any], required: list[str]
+) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+                "additionalProperties": False,
+            },
+        },
+    }

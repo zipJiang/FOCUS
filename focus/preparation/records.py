@@ -32,7 +32,7 @@ ESTIMATOR_KEY = "estimator"
 _NO_DIAGNOSTICS: Mapping[str, float] = MappingProxyType({})
 
 
-def trainable_tokens(spans: Sequence[PackedSequence]) -> int:
+def _trainable_tokens(spans: Sequence[PackedSequence]) -> int:
     """Tokens the actor takes a gradient on across ``spans`` -- the size of the edge."""
     return sum(sum(span.trainable) for span in spans)
 
@@ -74,7 +74,7 @@ class ActorSample:
         A trainer normalising loss per *sample* needs this to normalise per edge
         instead, because the span count is a property of the template, not of the edge.
         """
-        return trainable_tokens(self.spans)
+        return _trainable_tokens(self.spans)
 
     def __getstate__(self) -> dict[str, Any]:
         """Pickle with a plain dict where the live record holds a read-only proxy.
@@ -184,7 +184,7 @@ class Batch:
         object.__setattr__(self, "stats", MappingProxyType(state["stats"]))
 
 
-def spans_of(turns: Sequence[Turn[object]], /) -> tuple[PackedSequence, ...]:
+def _spans_of(turns: Sequence[Turn[object]], /) -> tuple[PackedSequence, ...]:
     """The regions of a run of turns that hold any tokens.
 
     A :class:`~focus.harness.packing.PackedSequence` already *is* the
@@ -198,7 +198,7 @@ def spans_of(turns: Sequence[Turn[object]], /) -> tuple[PackedSequence, ...]:
     return tuple(seq for seq in regions(turns) if seq.tokens and seq.actor)
 
 
-def edge_spans(
+def _edge_spans(
     node: Node[AnyRollout], parent: Node[AnyRollout]
 ) -> tuple[PackedSequence, ...]:
     """Every token-bearing region on the edge into ``node``.
@@ -207,7 +207,7 @@ def edge_spans(
     so a fork's shared history is excluded structurally rather than by comparing what
     the parent already had.
     """
-    return spans_of(node.payload.edge(parent.payload))
+    return _spans_of(node.payload.edge(parent.payload))
 
 
 def _trainable_edges(
@@ -259,3 +259,6 @@ def _refuse_non_finite(record: ActorSample | CriticSample) -> None:
                 + f"node {record.node_id}. Export will not write a zero in its place: "
                 + "check the env's rewards and the critic's predictions."
             )
+
+
+__all__ = ["ActorSample", "Batch", "CriticSample"]

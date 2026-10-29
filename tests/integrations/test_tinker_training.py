@@ -16,8 +16,8 @@ import pytest
 from focus.integrations import Problem
 from focus.integrations import tinker as tinker_integration
 from focus.integrations.tinker import (
-    CollectedBatch,
-    next_token_inputs,
+    _CollectedBatch,
+    _next_token_inputs,
     train,
 )
 
@@ -35,7 +35,7 @@ def _actor(reward: float = 0.3) -> dict[str, Any]:
 
 
 def test_next_token_inputs_shift_targets_probabilities_and_advantages() -> None:
-    inputs, loss = next_token_inputs(_actor())
+    inputs, loss = _next_token_inputs(_actor())
     assert inputs == [5, 6, 7]
     assert loss == {
         "target_tokens": [6, 7, 8],
@@ -48,7 +48,7 @@ def test_next_token_inputs_shift_targets_probabilities_and_advantages() -> None:
         {**_actor(), "logprobs": [0.0]},
     ):
         with pytest.raises(ValueError, match=r"actor lane|conditioning|aligned"):
-            next_token_inputs(bad)
+            _next_token_inputs(bad)
 
 
 def test_to_datum_builds_tinker_s_record() -> None:
@@ -130,7 +130,7 @@ class Loop:
             },
             "target": 0.5,
         }
-        return CollectedBatch(index, behavior_step, [record])
+        return _CollectedBatch(index, behavior_step, [record])
 
     async def update(self, training, records, **kwargs):
         self.events.append(("update", self.weights))
@@ -293,7 +293,7 @@ async def test_stale_or_out_of_order_batch_is_rejected(
     loop = Loop()
 
     async def collector(*args, **kwargs):
-        return CollectedBatch(index, step, [])
+        return _CollectedBatch(index, step, [])
 
     with pytest.raises(ValueError, match="Unexpected batch or policy lag"):
         await loop.run(monkeypatch, collector=collector)

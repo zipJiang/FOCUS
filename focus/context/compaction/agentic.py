@@ -13,8 +13,8 @@ from focus.context.base import (
     ContextManager,
     IncompleteCompactionError,
 )
-from focus.context.compaction.fold_env import FoldEnv, FoldState
-from focus.context.compaction.summary import (
+from focus.context.compaction._env import FoldEnv, FoldState
+from focus.context.compaction._summary import (
     REPAIR_INSTRUCTION,
     SUMMARY_INSTRUCTION,
     parse_summary,

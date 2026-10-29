@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 PPO_CLIP: Mapping[str, float] = {"clip_low_threshold": 0.8, "clip_high_threshold": 1.2}
 
 
-def next_token_inputs(
+def _next_token_inputs(
     record: Mapping[str, Any],
 ) -> tuple[list[int], dict[str, list[Any]]]:
     """Shift an actor record into Tinker's model input and per-token loss inputs.
@@ -60,7 +60,7 @@ def to_datum(record: Mapping[str, Any]) -> Any:
     """One actor record as a ``tinker.types.Datum``."""
     from tinker import types
 
-    inputs, loss_inputs = next_token_inputs(record)
+    inputs, loss_inputs = _next_token_inputs(record)
     # Tinker converts plain lists to its tensor type on validation.
     loss_fn_inputs: Any = loss_inputs
     return types.Datum(
@@ -98,7 +98,7 @@ async def update_actor(
 
 
 @dataclass(frozen=True)
-class CollectedBatch:
+class _CollectedBatch:
     """One problem's records, collected under the sampler of ``behavior_step``."""
 
     index: int
@@ -129,7 +129,7 @@ async def _collect_batch(
     workspace_for: Callable[[Problem], Workspace] | None,
     min_abs_advantage: float | None,
     allow_partial: bool,
-) -> CollectedBatch:
+) -> _CollectedBatch:
     """Collect ``problem`` with one immutable sampler for the whole tree."""
     # The constructor reads the sampler's tokenizer, a blocking SDK call.
     policy = await asyncio.to_thread(
@@ -150,7 +150,7 @@ async def _collect_batch(
             "problem_id": problem.id if problem.id is not None else index,
             "behavior_step": behavior_step,
         }
-    return CollectedBatch(index, behavior_step, records)
+    return _CollectedBatch(index, behavior_step, records)
 
 
 async def _publish_sampler(training_client: Any) -> Any:
@@ -259,12 +259,4 @@ async def train(
     return reports
 
 
-__all__ = [
-    "PPO_CLIP",
-    "CollectedBatch",
-    "StepReport",
-    "next_token_inputs",
-    "to_datum",
-    "train",
-    "update_actor",
-]
+__all__ = ["PPO_CLIP", "StepReport", "to_datum", "train", "update_actor"]

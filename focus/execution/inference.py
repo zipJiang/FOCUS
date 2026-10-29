@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from focus.execution.budget import ResourceBudget
 from focus.execution.pool import DEFAULT_OWNER, AdmissionPool, Owner
 from focus.generation import GenerateResult, Policy, PreparedPrompt, SamplingParams
-from focus.generation.interfaces import (
+from focus.generation._common import (
     _continuation_params,
     _validate_continuation_result,
 )
@@ -132,3 +132,6 @@ class ExecutionServices:
     async def aclose(self) -> None:
         """Cancel owned requests. Policy and critic clients belong to the caller."""
         await self.pool.aclose()
+
+
+__all__ = ["ExecutionServices", "Usage"]

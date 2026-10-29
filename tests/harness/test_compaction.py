@@ -11,15 +11,12 @@ from focus.context import (
     Compaction,
     CompactionResult,
     ContextManager,
-    FoldEnv,
-    FoldState,
     PromptTokens,
     StateCounter,
     Summarize,
-    build_budget,
 )
+from focus.context.compaction._env import STORE_FIRST, FoldEnv, FoldState
 from focus.context.compaction.agentic import _EMPTY_KEPT
-from focus.context.compaction.fold_env import STORE_FIRST
 from focus.generation import GenerateResult
 from focus.generation.parsing import (
     ActionParser,
@@ -47,6 +44,7 @@ from tests.helpers import (
     tool_call,
     toy_runner,
 )
+from tests.helpers import budget_context as build_budget
 
 
 def _turn(*calls: str) -> str:

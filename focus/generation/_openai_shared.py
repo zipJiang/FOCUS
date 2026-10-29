@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from focus.codec import Message
-from focus.generation.interfaces import aclose_client, run_async
+from focus.generation._common import aclose_client, run_async
 from focus.generation.policy import Policy, PolicyFormat
 from focus.generation.types import SamplingParams, TokenId
 

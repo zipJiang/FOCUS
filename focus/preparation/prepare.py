@@ -14,9 +14,9 @@ from focus.preparation.records import (
     ActorSample,
     Batch,
     CriticSample,
+    _edge_spans,
     _refuse_non_finite,
     _trainable_edges,
-    edge_spans,
 )
 from focus.scheduler.core.execution import PASS_KEY
 from focus.scheduler.core.returns import (
@@ -76,7 +76,7 @@ def _actor_samples(
     for node, parent in _trainable_edges(view):
         if estimator.requires_completed_paths and not finished_through(view, node):
             continue
-        spans = edge_spans(node, parent)
+        spans = _edge_spans(node, parent)
         if not spans:
             continue
         if any(not span.exact for span in spans):
@@ -154,3 +154,6 @@ def prepare_samples(
         len(result.failures),
     )
     return result
+
+
+__all__ = ["critic_targets", "prepare_samples"]

@@ -54,3 +54,6 @@ searches or reads merely because the raw transcript was compacted. Reread only f
 specific item listed under Open questions. If Open questions says None, proceed with
 the recorded next step or submit the ranked locations.
 """
+
+
+__all__ = []

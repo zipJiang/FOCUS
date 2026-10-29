@@ -52,3 +52,6 @@ class ListTool(BaseTool):
     def call(self, params: str | dict[str, Any], **kwargs: Any) -> str:
         self.verify_args(params)
         return self._corpus.manifest(label=self._label) or "no files are mounted"
+
+
+__all__ = ["ListTool"]

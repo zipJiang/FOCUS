@@ -10,7 +10,7 @@ from focus.generation import (
     NativeToolCall,
     SamplingParams,
 )
-from focus.generation.interfaces import (
+from focus.generation._common import (
     merge_sampling_params,
     run_async,
 )

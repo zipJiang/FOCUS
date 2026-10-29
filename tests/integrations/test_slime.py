@@ -21,11 +21,11 @@ from focus.extend import InMemoryWorkspace, PackedSequence, StorageTool
 from focus.integrations import Problem
 from focus.integrations import slime as slime_integration
 from focus.integrations.slime import (
+    _policy_for,
+    _problem_of,
     make_evaluate,
     make_generate,
-    policy_for,
     preserve_advantages,
-    problem_of,
     to_sample,
 )
 from focus.preparation.records import ActorSample, Batch, CriticSample
@@ -61,7 +61,7 @@ def slime_modules(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
     async def post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         posted.append((url, payload))
-        raise AssertionError("tests that generate replace policy_for")
+        raise AssertionError("tests that generate replace _policy_for")
 
     monkeypatch.setitem(sys.modules, "slime", SimpleNamespace())
     monkeypatch.setitem(sys.modules, "slime.utils", SimpleNamespace())
@@ -98,7 +98,7 @@ async def test_generate_turns_one_prompt_into_slime_samples(
     slime_modules: list[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     policy = _scripted(*[_submit()] * 4)
-    monkeypatch.setattr(slime_integration, "policy_for", lambda args, **_: policy)
+    monkeypatch.setattr(slime_integration, "_policy_for", lambda args, **_: policy)
     problems: list[Problem] = []
     critic: list[Any] = []
 
@@ -125,7 +125,7 @@ async def test_concurrent_prompts_each_get_their_own_collector(
     """Each sample's problem reaches its own collector, so reference answers never
     cross between concurrent prompts."""
     monkeypatch.setattr(
-        slime_integration, "policy_for", lambda args, **_: _scripted(*[_submit()] * 4)
+        slime_integration, "_policy_for", lambda args, **_: _scripted(*[_submit()] * 4)
     )
     labels: list[str] = []
     first_ready, release = asyncio.Event(), asyncio.Event()
@@ -165,7 +165,7 @@ async def test_workspace_for_gives_each_prompt_its_own_store(
 ) -> None:
     put = "r</think>" + tool_call("storage", operate="put", key="k", value="v")
     monkeypatch.setattr(
-        slime_integration, "policy_for", lambda args, **_: _scripted(put, _submit())
+        slime_integration, "_policy_for", lambda args, **_: _scripted(put, _submit())
     )
     seen: list[Problem] = []
 
@@ -199,7 +199,7 @@ def _batch(*, failures: float = 0.0) -> Batch:
 async def test_partial_collections_and_filters_are_explicit(
     slime_modules: list[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(slime_integration, "policy_for", lambda args, **_: _scripted())
+    monkeypatch.setattr(slime_integration, "_policy_for", lambda args, **_: _scripted())
     failures = 1.0
 
     async def collect(self: Collector, prompt: Any, *, workspace: Any = None) -> Batch:
@@ -237,7 +237,7 @@ async def test_the_collector_lifecycle_is_the_factory_s(
             await super().aclose()
 
     services = Services()
-    monkeypatch.setattr(slime_integration, "policy_for", lambda args, **_: _scripted())
+    monkeypatch.setattr(slime_integration, "_policy_for", lambda args, **_: _scripted())
 
     async def collect(self: Collector, prompt: Any, *, workspace: Any = None) -> Batch:
         return _batch()
@@ -292,7 +292,7 @@ async def test_evaluate_scores_one_unbranched_rollout(
     slime_modules: list[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        slime_integration, "policy_for", lambda args, **_: _scripted(_submit())
+        slime_integration, "_policy_for", lambda args, **_: _scripted(_submit())
     )
     built: list[Problem] = []
 
@@ -317,14 +317,14 @@ def test_policy_for_serves_slime_s_router(
     args = SimpleNamespace(
         hf_checkpoint="org/model", sglang_router_ip="router", sglang_router_port=9000
     )
-    policy = policy_for(args, profile="hermes")
+    policy = _policy_for(args, profile="hermes")
     assert policy.model == "org/model"
     assert policy._url == "http://router:9000/generate"
     assert isinstance(policy.format.parser, HermesToolCallParser)
 
 
 def test_problem_of_reads_slime_s_sample() -> None:
-    problem = problem_of(Sample(index=4, metadata={"k": "v"}))
+    problem = _problem_of(Sample(index=4, metadata={"k": "v"}))
     assert problem == Problem("solve it", "42", 4, {"k": "v"})
 
 

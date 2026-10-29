@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from focus.codec import ChatCodec, HFTokenizer, Message
-from focus.generation.interfaces import prepare_generation, run_async
+from focus.generation._common import prepare_generation, run_async
 from focus.generation.types import GenerateResult, SamplingParams, TokenId
 
 if TYPE_CHECKING:
@@ -274,3 +274,6 @@ class Policy[A]:
     async def aclose(self) -> None:
         """Async lifecycle hook for policies that own an async client."""
         self.close()
+
+
+__all__ = ["Policy", "PolicyFormat", "PreparedPrompt"]

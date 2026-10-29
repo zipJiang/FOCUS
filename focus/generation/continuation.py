@@ -31,3 +31,6 @@ class TokenChunkParser(ActionParser[TokenChunk]):
         if result.stop_reason not in {"length", "stop"}:
             raise ValueError(f"Unexpected finish reason: {result.stop_reason}")
         return TokenChunk(tuple(result.tokens), result.stop_reason == "stop")
+
+
+__all__ = ["TokenChunk", "TokenChunkParser"]

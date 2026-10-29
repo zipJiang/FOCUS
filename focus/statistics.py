@@ -61,6 +61,9 @@ class RunningStats:
         return self.m2 / (self.n - 1) if self.n >= 2 else 0.0
 
 
-def refined_mean(value: float, stats: RunningStats, strength: float) -> float:
+def _refined_mean(value: float, stats: RunningStats, strength: float) -> float:
     """Posterior mean with ``strength`` prior observations at ``value``."""
     return (strength * value + stats.n * stats.mean) / (strength + stats.n)
+
+
+__all__ = ["RunningStats"]

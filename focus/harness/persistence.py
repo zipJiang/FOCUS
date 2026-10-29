@@ -254,3 +254,12 @@ class SQLiteCheckpointer(Checkpointer):
                 (episode_id, branch_id, invocation_id),
             ).fetchall()
         return tuple(CheckpointInfo(*row) for row in rows)
+
+
+__all__ = [
+    "CheckpointInfo",
+    "Checkpointer",
+    "CorruptCheckpoint",
+    "MemoryCheckpointer",
+    "SQLiteCheckpointer",
+]

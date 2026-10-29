@@ -21,7 +21,7 @@ from focus.preparation.records import (
     ActorSample,
     Batch,
     CriticSample,
-    edge_spans,
+    _edge_spans,
 )
 from focus.scheduler import SchedulerView
 from focus.values import RewardConfig
@@ -47,7 +47,7 @@ def test_edge_spans_are_the_regions_of_the_edge_and_carry_their_tags() -> None:
     )
     _, parent, child = _tree(parent_state, child_state)
 
-    spans = edge_spans(child, parent)
+    spans = _edge_spans(child, parent)
 
     assert [s.tag for s in spans] == ["fold", "task"]  # the shared turn is not on it
     assert [s.logprobs for s in spans] == [(-2.0,), (-3.0,)]
@@ -87,7 +87,7 @@ def test_an_estimator_fills_actor_records_over_the_same_spans() -> None:
     )
 
     assert [r.node_id for r in result.actor] == [child.id]
-    assert result.actor[0].spans == edge_spans(child, view.root)
+    assert result.actor[0].spans == _edge_spans(child, view.root)
     # what the estimator wrote is what export carries: the whole return, against a
     # root with no baseline
     assert result.actor[0].weight == pytest.approx(1.0)

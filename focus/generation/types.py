@@ -9,7 +9,7 @@ TokenId = int
 
 #: What the three always-set knobs fall back to. Named rather than written inline
 #: because they are read twice: as this class's field defaults, and by
-#: :func:`~focus.generation.interfaces.merge_sampling_params` filling in a
+#: :func:`~focus.generation._common.merge_sampling_params` filling in a
 #: partial overlay that deliberately left one unset.
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_MAX_TOKENS = 512
