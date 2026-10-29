@@ -1,0 +1,4 @@
+env_vars:
+  PYTHONPATH: /data/focus-hooks:/root/slime:/root/Megatron-LM
+  FOCUS_CRITIC_OUTPUT: /data/focus-slime-math/critic-targets
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
